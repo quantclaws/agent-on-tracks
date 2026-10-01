@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -644,6 +645,7 @@ class ExecTestRunMixin:
         all_legit = True
         oob_files = self._oob_accepted_test_files()
         guard_nodes = self._red_check_guard_nodes()
+        expected_green = self._expected_green_nodes()
         seen = {
             node for nodes in selected_by_layer.values() for node in (nodes or [])
         }
@@ -656,7 +658,7 @@ class ExecTestRunMixin:
             if not self._record_layer_outcomes(
                 nodes,
                 self._run_layer_command(cmd, name, section, nodes, staged_results, logs),
-                outcomes, findings, oob_files, guard_nodes
+                outcomes, findings, oob_files, guard_nodes, expected_green
             ):
                 all_legit = False
         # IF-GREENGUARD-001 §1u.2 fail-closed: a §8.1 entry that never
@@ -743,26 +745,65 @@ class ExecTestRunMixin:
             return _version_guard_nodes(vdir_getter())
         return set()
 
+    def _expected_green_nodes(self) -> frozenset[str]:
+        """#211 gap 2: the green set MEASURED at the latest baseline capture
+        (persisted by ExecTestCollectMixin._measure_expected_green on re-entry
+        after a mid-implementation rollback). First entry captured no set —
+        the legacy unconditional must-be-red window applies (empty here)."""
+        capture = next(
+            (
+                ev.payload
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "test.baseline_captured"
+                and ev.payload.get("status") == "passed"
+            ),
+            None,
+        )
+        if not capture:
+            return frozenset()
+        blob_ref = capture.get("expected_green_blob")
+        if not blob_ref:
+            return frozenset()
+        # Prism B2 (2026-10-02): read through the STORE channel, never a
+        # repo-relative path -- TRACKS_HOME can redirect the store home away
+        # from <repo>/.tracks, and a path mismatch here would silently
+        # degrade every redirected re-entry to the stale must-be-red window.
+        try:
+            data = self.store.load_payload({"$ref": Path(blob_ref).name})
+        except (OSError, json.JSONDecodeError):
+            return frozenset()
+        return frozenset(n for n in data if isinstance(n, str))
+
     @staticmethod
     def _record_layer_outcomes(
         nodes, mapping, outcomes: list[dict], findings: list[dict], oob_files: set[str],
         guard_nodes: set[str] | None = None,
+        expected_green: frozenset[str] | set[str] = frozenset(),
     ) -> bool:
         """Append one normalized outcome + finding per selected node (the
         {result} test result record is the sole per-node authority; stdout/stderr
         are logs only). Returns True when every node classified as legal Red;
         an unexpected pass/skip classifies unexpected_pass -- unless the node's
         file is OOB-declared (see _oob_accepted_test_files), in which case
-        green-on-arrival is legal (oob_verified), or the node is an §8.1
+        green-on-arrival is legal (oob_verified), the node is an §8.1
         arrival-green guard (IF-GREENGUARD-001 §1u.3): a passing guard is
         guard_verified (legal), a failing/absent guard is guard_failed (a
-        real regression -- fail-closed, never "not yet implemented")."""
+        real regression -- fail-closed, never "not yet implemented"), or the
+        node measured green at THIS capture after a mid-implementation
+        re-entry (#211 gap 2): retained_green is the measured arrival-green
+        of a delivered-and-retained feature; the same expectation turning
+        red classifies regression (fail-closed, Shield/DIAGNOSE domain)."""
         guards = guard_nodes or set()
         layer_legit = True
         for node in nodes:
             case = mapping[node]
-            klass = ExecTestRunMixin._classify_node(node, case, guards, oob_files)
-            if klass not in _LEGIT_RED and klass not in ("oob_verified", "guard_verified"):
+            klass = ExecTestRunMixin._classify_node(
+                node, case, guards, oob_files, expected_green
+            )
+            if (
+                klass not in _LEGIT_RED
+                and klass not in ("oob_verified", "guard_verified", "retained_green")
+            ):
                 layer_legit = False
             outcomes.append(
                 {
@@ -782,19 +823,37 @@ class ExecTestRunMixin:
         return layer_legit
 
     @staticmethod
-    def _classify_node(node, case, guards: set[str], oob_files: set[str]) -> str:
+    def _classify_node(
+        node, case, guards: set[str], oob_files: set[str],
+        expected_green: frozenset[str] | set[str] = frozenset(),
+    ) -> str:
         """One node's RED_CHECK classification (IF-GREENGUARD-001 §1u.3 +
-        the OOB-file exemption + the legacy must-be-red default).
+        the OOB-file exemption + the #211-gap-2 re-entry expectation +
+        the legacy must-be-red default).
 
         OOB212-B2: the locked contract legalizes only PASSING guards — a
         skipped guard is absence-of-execution, not a verified landed fact,
-        and fails closed alongside failures."""
+        and fails closed alongside failures.
+
+        #211 gap 2 (2026-10-02, Prism-consulted): priority is
+        guard > oob > retained > red-default. ``expected_green`` carries the
+        colors MEASURED at this capture (see _measure_expected_green): a node
+        that measured green then and is green now is retained_green (the
+        measured arrival-green of a feature delivered before a
+        mid-implementation rollback and retained through it); the same node
+        turning RED now is regression (fail-closed -- in the frozen
+        M-TEST window a green-to-red flip can only come from Shield edits
+        or a real product break, never from "not yet implemented")."""
         if node in guards:
             return "guard_verified" if case.status == "passed" else "guard_failed"
         if case.status in ("passed", "skipped"):
             if node.split("::")[0] in oob_files:
                 return "oob_verified"
+            if node in expected_green:
+                return "retained_green"
             return "unexpected_pass"
+        if node in expected_green:
+            return "regression"
         return classify_red_detail(case.detail or "", case.status)
 
     def _emit_red_check_invalid(

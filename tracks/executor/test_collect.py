@@ -323,6 +323,36 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         if blob_ref is None:
             self._emit_baseline_failed(cmd, state, ["node digest blob write failed"])
             return
+        # #211 gap 2 (2026-10-02, Prism-consulted): on re-entry (a rollback
+        # returned here mid-implementation), nodes that were legal-red at the
+        # FIRST freeze may already be green -- their features were implemented
+        # and RETAINED through the rollback (quarantined=[]). The RED_CHECK
+        # expectation must anchor to colors MEASURED AT THIS CAPTURE, not to
+        # the stale first-freeze marking: measure every node that carries a
+        # prior color record (this run's earlier red.validated findings)
+        # through the layer's run_selected contract and persist the green set.
+        # First entry has no prior records -> empty set -> zero behavior
+        # change; the measurement inherits the battery timeout (P0-2) and
+        # fails closed like any other capture step (FRB-G).
+        expected_green, measure_error = self._measure_expected_green(
+            cmd, node_layer
+        )
+        if measure_error is not None:
+            self._emit_baseline_failed(cmd, state, [measure_error])
+            return
+        green_blob = (
+            self.store.write_audit_blob(sorted(expected_green))
+            if expected_green else None
+        )
+        # Prism B1 (2026-10-02): write_audit_blob is best-effort by contract;
+        # a NON-EMPTY measurement whose blob write failed must fail the
+        # capture -- otherwise the re-entry silently degrades to the stale
+        # must-be-red window and the #211 deadlock resurfaces.
+        if expected_green and green_blob is None:
+            self._emit_baseline_failed(
+                cmd, state, ["expected-green blob write failed"]
+            )
+            return
         self._emit(
             "test.baseline_captured",
             {
@@ -333,10 +363,60 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
                 "nodes_count": len(snapshot.node_digests),
                 "empty_baseline": snapshot.empty_baseline,
                 "node_digest_blob": f".tracks/runtime/blobs/{blob_ref}",
+                "expected_green_count": len(expected_green),
+                "expected_green_blob": (
+                    f".tracks/runtime/blobs/{green_blob}" if green_blob else None
+                ),
                 "errors": [],
             },
             command_id=cmd.command_id,
         )
+
+    def _measure_expected_green(
+        self, cmd, node_layer: dict[str, str]
+    ) -> tuple[set[str], str | None]:
+        """Re-entry expectation anchoring (#211 gap 2): run every node that
+        has a prior color record (an earlier red.validated finding in this
+        run) through its layer's run_selected contract and return the set
+        measuring green NOW. No prior records -> (empty, None): first entry
+        keeps the legacy unconditional must-be-red window."""
+        prior_nodes: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "red.validated":
+                continue
+            for finding in ev.payload.get("findings") or []:
+                node = finding.get("test_id")
+                if node:
+                    prior_nodes.add(node)
+        if not prior_nodes:
+            return set(), None
+        contract = load_contract(Path(self.repo))
+        sections = _contract_sections(contract)
+        staged: list[Path] = []
+        logs: dict[str, dict] = {}
+        green: set[str] = set()
+        try:
+            for name, section in sections:
+                nodes = sorted(
+                    n for n in prior_nodes if node_layer.get(n) == name
+                )
+                if not nodes:
+                    continue
+                mapping = self._run_layer_command(
+                    cmd, name, section, nodes, staged, logs
+                )
+                green.update(
+                    n for n, case in mapping.items()
+                    if case.status in ("passed", "skipped")
+                )
+        except Exception as exc:  # noqa: BLE001 -- fail closed on any layer error
+            return set(), (
+                f"expected-green measurement failed: {type(exc).__name__}: {exc}"
+            )
+        finally:
+            for path in staged:
+                path.unlink(missing_ok=True)
+        return green, None
 
     def _baseline_entries(
         self, all_nodes: list[str], node_layer: dict[str, str], digests: dict[str, str]

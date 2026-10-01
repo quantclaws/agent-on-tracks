@@ -12,8 +12,8 @@ reviewer_dispatched stayed True (decide() returns None, "awaiting verdict"),
 and the drive loop exited silently with no park, no escalation, no failure.
 """
 
-from tracks.kernel.machine import State, apply
 from tests.unit.helpers import ev
+from tracks.kernel.machine import State, apply
 
 _CID = "01M3RTYDQNCKAHDTJSV2G7FQ8X"
 

@@ -103,7 +103,7 @@ def _fake_subprocess(monkeypatch, dispatch):
     through to the real runner (tree identity reads inside the handlers)."""
     real_run = subprocess.run
 
-    def _run(argv, cwd=None, capture_output=True, text=True):
+    def _run(argv, cwd=None, capture_output=True, text=True, **kwargs):
         argv = list(argv)
         if argv and argv[0] == "git":
             return real_run(argv, cwd=cwd, capture_output=capture_output, text=text)
