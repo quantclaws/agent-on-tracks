@@ -117,6 +117,12 @@
           {"patch": "ce_ac-fr0331-01.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback", "outcome": "killed"},
           {"patch": "ce_ac-fr0331-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, ui-e2e channel state verification (chromium installed per contract 1t/2.5)",
+        "date": "2026-10-01",
+        "note": "the ui-e2e channel was executed locally for the first time in this run: the declared chromium binary was installed (playwright install chromium, headless-shell v1243) and all 22 ui-marker nodes ran - every one fails as the EXPECTED legal Red because the browser-side workbench surface (tracks/server/static/app/ shell.js and client modules, the IF-WORKBENCH-001/IF-DOCCENTER-001 client faces reserved for M-IMPL) is not yet delivered in this tree; the server shell HTML serves correctly (login-error testid present, styles same-origin) and the journeys time out waiting for client-rendered test ids, exactly the undelivered-client-surface signature. Consequence for the ledger: the fr0320-01 binding's kill (login renders a single pane instead of the dual-column shell) is not executable until the ui surface lands and its bound journey reaches a green baseline - the binding stays bound to the ui-e2e channel; all 27 integration bindings carry delivered-tree kills as of session 11",
+        "executed_kills": []
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
