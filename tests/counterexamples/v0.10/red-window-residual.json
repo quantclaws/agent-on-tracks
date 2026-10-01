@@ -1,0 +1,87 @@
+{
+ "version": "v0.10",
+ "basis": "red.validated of run 01M3E7SAANXKW1V73W8B8Q3G86 (2026-10-01, seq 3729/3730, 46-node r2 selection at the delivered implementation tree) cross-referenced against the delivered-tree kill verifications in kill-manifest.json sessions 6-11 and the ui-e2e channel state record",
+ "purpose": "Shield-side grounding for the red-window residual: which acceptance anchors are green because M-IMPL delivered them (the unexpected_pass set - a classification-semantics matter for the runtime's expectation machinery, not an asset defect), which remain legal Red, and which channel each remaining verification binds to",
+ "legal_red_residual": [
+  {
+   "test_id": "tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected",
+   "ac": "AC-FR0323-01",
+   "owner_task": "T-004 (save face; per T-003 deferred_refs the save/conflict anchors of test_docs_center.py belong to T-004)",
+   "detail": "the explicit-save channel must project a new revision and stale approvals must stay rejected (IF-DOCSAVE-001 1o.1)"
+  },
+  {
+   "test_id": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained",
+   "ac": "AC-FR0323-02",
+   "owner_task": "T-004 (conflict two-option face; IF-DOCSAVE-001 1o.2 current_revision)",
+   "detail": "the 409 must carry the server's current_revision for the reload-discard/force-overwrite options"
+  },
+  {
+   "test_id": "ui channel: all 22 ui-marker nodes",
+   "ac": "AC-FR0316-01 through AC-FR0326-01 (ui halves)",
+   "owner_task": "the browser-side workbench surface (tracks/server/static/app/) is undelivered; channel state recorded in kill-manifest.json session 12",
+   "detail": "22/22 ui journeys fail awaiting client-rendered test ids - the expected legal Red for an undelivered client surface"
+  }
+ ],
+ "green_by_delivery_unexpected_pass": [
+  "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie",
+  "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion",
+  "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity",
+  "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears",
+  "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state",
+  "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read",
+  "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance",
+  "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle",
+  "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts",
+  "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists",
+  "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion",
+  "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback",
+  "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next",
+  "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency",
+  "tests/integration/test_run_timeline_api.py::test_timeline_entry_present",
+  "tests/integration/test_version_gate.py::test_version_bindings_enforced",
+  "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf",
+  "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm",
+  "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections"
+ ],
+ "guards_verified": [
+  "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint",
+  "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next",
+  "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored",
+  "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared",
+  "tests/integration/test_workbench_shell.py::test_ui_tests_bind_data_testid"
+ ],
+ "oob_verified": [
+  "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open",
+  "tests/unit/test_expected_green_quadrants.py::test_empty_expectation_zero_behavior_change",
+  "tests/unit/test_expected_green_quadrants.py::test_expected_green_blob_roundtrip",
+  "tests/unit/test_expected_green_quadrants.py::test_green_now_expected_green_is_retained",
+  "tests/unit/test_expected_green_quadrants.py::test_green_now_expected_red_stays_unexpected_pass",
+  "tests/unit/test_expected_green_quadrants.py::test_layer_outcome_legality_takes_retained",
+  "tests/unit/test_expected_green_quadrants.py::test_priority_guard_beats_expected_green",
+  "tests/unit/test_expected_green_quadrants.py::test_priority_oob_beats_retained",
+  "tests/unit/test_expected_green_quadrants.py::test_red_now_expected_green_is_regression",
+  "tests/unit/test_expected_green_quadrants.py::test_red_now_expected_red_stays_classic",
+  "tests/unit/test_greenguard_oob_backfill.py::test_backfill_emits_missing_trailer_commits_idempotent",
+  "tests/unit/test_greenguard_oob_backfill.py::test_backfill_noop_without_checkpoint_bound",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_absence_findings_production_path",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_absent_declared_but_not_executed_fails_closed",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_fail_classifies_guard_failed_not_legit",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_nodes_missing_plan_or_section_is_empty",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_nodes_parse_from_section_8_1",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_pass_classifies_guard_verified_legit",
+  "tests/unit/test_greenguard_oob_backfill.py::test_guard_skipped_is_not_guard_verified",
+  "tests/unit/test_greenguard_oob_backfill.py::test_oob_file_pass_stays_oob_verified",
+  "tests/unit/test_greenguard_oob_backfill.py::test_unlisted_pass_stays_unexpected_pass",
+  "tests/unit/test_shield_manifest_reconcile.py::test_confined_repo_path_normalizes_and_rejects_escape",
+  "tests/unit/test_shield_manifest_reconcile.py::test_include_paths_confine_traversal_entries",
+  "tests/unit/test_shield_manifest_reconcile.py::test_missing_clean_tracked_path_still_fails",
+  "tests/unit/test_shield_manifest_reconcile.py::test_partial_window_diff_tolerates_stranded_dirty_manifest_paths",
+  "tests/unit/test_shield_manifest_reconcile.py::test_prompt_docs_set_rebased_to_worktree_root",
+  "tests/unit/test_shield_manifest_reconcile.py::test_prompt_rebases_doc_path_to_worktree_root",
+  "tests/unit/test_shield_manifest_reconcile.py::test_prompt_without_root_keeps_main_tree_target",
+  "tests/unit/test_shield_manifest_reconcile.py::test_symlinked_manifest_path_not_tolerated",
+  "tests/unit/test_t010_lex_review_park_red.py::test_cmd_review_admits_review_pending_threads"
+ ],
+ "kill_evidence_state": "every integration binding carries a delivered-tree kill verification (kill-manifest.json sessions 6-11: 15/15 applicable patches plus 12/13 stale bindings as documented equivalents; fr0320-01 is the sole ui-channel binding and stays bound to the ui-e2e channel until the client surface lands)",
+ "note": "the two assertion_failure nodes are the last legal Reds of the window and both belong to T-004's save face; the 19 green-by-delivery anchors are correct passing acceptance behavior of the delivered implementation"
+}
