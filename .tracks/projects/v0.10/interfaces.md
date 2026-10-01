@@ -232,6 +232,8 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 
 ### 4a. HTTP/CLI 出口
 
+> **Prism:** BLOCKER, review of the docs_revision re-draft (e987707): the assertion-basis table 4a was not updated for endpoint 35. Row 1 still enumerates the new-endpoint outlet as '2b #29-34' — the new project-domain WRITE face 35 (POST /api/projects/{pid}/docs/{version}/{doc}/edits) is absent from the only table test-plan 6.5 designates as the assertion basis for HTTP outlets, so the Shield re-entry revision of the two AC-FR0323 anchors (test-plan 11 row 6) would be asserting a 35-shaped endpoint with no 4a outlet row. Row 2 still frames current_revision as an appended field of the EXISTING endpoints #1/#17/#11 only, while the authoritative form is now a response-body TOP-LEVEL field on both edit faces (17 carries the trio digest, 35 carries docs_revision) and 35 additionally owns the 422 no_editable_run reason that belongs in row 1's error-reason closed set. Expected revision @Archer, all one-line edits inside interfaces.md: (1) 4a row 1 enumerate #29-35 and add no_editable_run to the error reasons; (2) 4a row 2 restate current_revision as the top-level 409 field of BOTH edit faces per 1o.2; (3) 0.1 row 2 update the endpoint summary ('project-domain 4' predates 35 — row 15 declares it but the summary enumeration contradicts it). The normative sections 1o/2b/1n and the closures are consistent and complete; this is derived-layer convergence only, but a stale assertion basis is exactly the two-readable shape that produced the T-004 DIAGNOSE, so it should not ride an advisory into M-TEST re-entry.
+
 | # | outlet | assertions |
 |:--|:--|:--|
 | 1 | §2b #29-34 新端点的 JSON schema/状态码 | 逐端点；错误 reason 封闭集；tree 版本逆序；discussions 线程字段；timeline `stage_order` 为 §1q.1 十三阶段序 |
