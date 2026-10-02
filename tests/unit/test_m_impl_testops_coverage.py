@@ -381,7 +381,11 @@ def test_r_tests_in_working_tree_branches(tmp_path: Path, monkeypatch):
         "git",
         lambda repo, *a, check=False: SimpleNamespace(returncode=0, stdout="src/app.py\n"),
     )
-    assert host._r_tests_in_working_tree("R") is False
+    # #220 (2026-10-02): an anchor-typed R with zero tests/ files is
+    # VACUOUSLY "all present" — the gate stays on the observed main-tree
+    # candidate instead of forcing worktree assembly whose R cherry-pick
+    # conflicts with the candidate diff (T-004 live fire).
+    assert host._r_tests_in_working_tree("R") is True
 
     monkeypatch.setattr(
         testops,

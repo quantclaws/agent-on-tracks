@@ -388,7 +388,16 @@ class MImplTestOpsMixin:
         rels = [
             line.strip() for line in proc.stdout.splitlines() if line.strip().startswith("tests/")
         ]
-        return bool(rels) and all(os.path.isfile(os.path.join(str(self.repo), rel)) for rel in rels)
+        # #220 (2026-10-02, T-004 live fire): an anchor-typed R carries NO
+        # tests/ files -- "every tests/ file in the R is present in the
+        # working tree" is VACUOUSLY true, and the gate must run against
+        # the observed main-tree candidate (which holds the replayed Green
+        # impl). The previous `bool(rels) and ...` inverted this: an empty
+        # test set forced worktree assembly, whose cherry-pick of the R
+        # (anchor Rs may carry product-WIP residue -- checkpoint_red has no
+        # product-file contamination guard, the B59 analog) deterministically
+        # conflicted with the candidate diff on the same files.
+        return not rels or all(os.path.isfile(os.path.join(str(self.repo), rel)) for rel in rels)
 
     def _path_in_tree(self, sha: str, path: str) -> bool:
         """Whether ``path`` exists in the ``sha`` commit tree. Fail-open on git
