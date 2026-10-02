@@ -26,8 +26,14 @@ Response envelope: ``CommandResponse(status_code, payload)`` — starlette-free
 so the package stays importable without starlette (unit level); the app
 factory maps it onto a JSONResponse.
 
+The docs-centre edit face (``edit_project_doc``, §2b #35) resolves the
+version's editable run and submits the same ``edit_material`` command with
+``revision_kind="docs"`` (docs_revision token); the run-domain face stays
+trio-only. Both edit faces append the face's live token as the top-level 409
+``current_revision`` (§1o.2).
+
 Contract tokens: IF-WEBGATE-001, IF-CMDSVC-001, IF-CMDGUARD-001,
-IF-WEBAUTH-001, IF-SECRECY-001, IF-DOCREV-001.
+IF-WEBAUTH-001, IF-SECRECY-001, IF-DOCREV-001, IF-DOCSAVE-001.
 """
 
 from __future__ import annotations
@@ -44,17 +50,28 @@ from typing import Any
 import tomllib
 
 from tracks import paths
-from tracks.baseline import _TRIO
+from tracks.baseline import _TRIO, revision_digest
 from tracks.frontmatter import split_frontmatter
 from tracks.paths import tracks_home
 from tracks.server import auth, guard, projections
 from tracks.server.api_query import _DOC_FILES
 from tracks.supervisor import db as sdb
 from tracks.supervisor import readiness
-from tracks.supervisor.service import Rejection
+from tracks.supervisor.service import Rejection, docs_revision
 
 _SESSION_COOKIE = "trac_session"
 _LOCAL_HOME_SENTINEL = "unknown"
+
+# Run-domain edit face doc set (interfaces §1o.1b): the trio only; design
+# documents live on the docs-centre face #35, whose docs_revision token
+# resolves the structural impossibility the v0.9 aliased face had.
+_TRIO_DOCS = frozenset({"story", "spec", "acceptance"})
+_DOCS_EDIT_PATH = "/api/projects/{pid}/docs/{version}/{doc}/edits"
+_DOCS_CENTRE_HINT = (
+    "run-domain edits are trio-only (story/spec/acceptance); design documents"
+    " are edited via the docs-centre face POST"
+    " /api/projects/{pid}/docs/{version}/{doc}/edits (interfaces §1o.1b)"
+)
 
 # Closed Rejection reason -> HTTP status (§1b.1, §2b failure column).
 _STATUS_BY_REASON = {
@@ -235,6 +252,32 @@ async def _mutate(
         return _error(401, "unauthenticated", "an authenticated session is required")
     if not auth.check_csrf(session, request.headers.get("X-Trac-CSRF")):
         return _csrf_rejection(request, session, kind, params.get("run_id"))
+    return _validated_mutate(
+        request,
+        session,
+        kind,
+        params,
+        guard_params=guard_params,
+        preflight=preflight,
+        respond=respond,
+    )
+
+
+def _validated_mutate(
+    request: Any,
+    session: Any,
+    kind: str,
+    params: dict,
+    *,
+    guard_params: dict | None = None,
+    preflight: Any = None,
+    respond: Any = None,
+) -> CommandResponse:
+    """Guard -> preflight -> accept tail for an already-resolved session.
+
+    The docs-centre face (#35) resolves its project version and editable run
+    before entering this shared tail, so the accept/binding path stays one.
+    """
     try:
         guard.validate_command_payload(kind, guard_params if guard_params is not None else params)
     except guard.GuardRejection as rejection:
@@ -284,7 +327,7 @@ def _run_scoped(kind: str):
     return preflight
 
 
-# -- projected material revision (§2b #17 new_revision) ------------------------
+# -- material revisions (§2b #17 new_revision / §1o.2) -------------------------
 
 
 def _projected_revision(repo: Path, version: str | None, doc: str | None, content: str) -> str:
@@ -301,6 +344,59 @@ def _projected_revision(repo: Path, version: str | None, doc: str | None, conten
             body = split_frontmatter(text)[1]
         pieces.append(f"{label}:{hashlib.sha256(body.encode('utf-8')).hexdigest()}")
     return hashlib.sha256("\n".join(pieces).encode("utf-8")).hexdigest()
+
+
+def _material_context(request: Any, run_id: Any) -> tuple[Path | None, str | None]:
+    """(repo, version) of a run's material; repo None when unresolvable.
+
+    One resolution site for the edit response and the stale-409 enrichment:
+    the projected run version, then the registered project's version.
+    """
+    ctx = _run_context(_home(request), run_id)
+    if ctx is None:
+        return None, None
+    project, repo, state, _events = ctx
+    version = state.version or project.get("version")
+    return repo, str(version) if version else None
+
+
+def _current_material_revision(request: Any, run_id: Any) -> str | None:
+    """The live trio digest of a run's material (the #17 face token, §1o.2)."""
+    repo, version = _material_context(request, run_id)
+    if repo is None or version is None:
+        return None
+    try:
+        return revision_digest(paths.version_dir(tracks_home(repo), version))
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _docs_revision_or_none(version_dir: Path | None) -> str | None:
+    """The live docs_revision of a version dir (the #35 face token, §1o.2)."""
+    if version_dir is None:
+        return None
+    try:
+        return docs_revision(version_dir)
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _with_current_revision(response: CommandResponse, current: str | None) -> CommandResponse:
+    """§1o.2: a 409 ``stale_revision`` carries the face's live token.
+
+    The token is appended **top-level** next to the existing error envelope
+    (never nested inside ``error`` — the sole authoritative form); the editor
+    offers reload-discard / force-overwrite from it instead of silently
+    overwriting the server content. Every other rejection envelope is
+    returned untouched.
+    """
+    payload = response.payload
+    if response.status_code != 409 or not isinstance(payload, dict) or current is None:
+        return response
+    error = payload.get("error")
+    if not isinstance(error, dict) or error.get("reason") != "stale_revision":
+        return response
+    return CommandResponse(response.status_code, {**payload, "current_revision": current})
 
 
 # -- short tasks: registration (§2b #5) and readiness (§2b #7) -----------------
@@ -464,28 +560,134 @@ async def submit_clarification(request: Any) -> CommandResponse:
 
 
 async def edit_material(request: Any) -> CommandResponse:
-    """POST /api/runs/{run_id}/docs/{doc}/edits -> edit_material (§1b #5)."""
+    """POST /api/runs/{run_id}/docs/{doc}/edits -> edit_material (§1b #5).
+
+    The run-domain face is trio-only (interfaces §1o.1b): ``design`` and the
+    three design document names answer 422 pointing at the docs-centre face,
+    whose docs_revision token can actually move for design saves.
+    """
     run_id = request.path_params.get("run_id")
     doc = request.path_params.get("doc")
     params = {**await _json_body(request), "run_id": run_id, "doc": doc}
 
     def respond(_receipt: Any) -> dict:
-        ctx = _run_context(_home(request), run_id)
-        if ctx is None:
+        repo, version = _material_context(request, run_id)
+        if repo is None:
             return {"new_revision": ""}
-        project, repo, state, _events = ctx
-        # Same version resolution as the read path and the accept-time
-        # binding: the projected run version, then the registered project's.
-        version = state.version or project.get("version")
         return {"new_revision": _projected_revision(repo, version, doc, params.get("content", ""))}
 
-    return await _mutate(
+    def trio_only(rq: Any, session: Any, payload: dict) -> CommandResponse | None:
+        if str(payload.get("doc") or "") not in _TRIO_DOCS:
+            return _rejection_audit(
+                rq,
+                session,
+                "edit_material",
+                payload,
+                "validation_failed",
+                _DOCS_CENTRE_HINT,
+                status=422,
+            )
+        return None
+
+    def preflight(rq: Any, session: Any, payload: dict) -> CommandResponse | None:
+        failure = _run_scoped("edit_material")(rq, session, payload)
+        if failure is not None:
+            return failure
+        return trio_only(rq, session, payload)
+
+    response = await _mutate(
         request,
         "edit_material",
         params,
+        preflight=preflight,
+        respond=respond,
+    )
+    return _with_current_revision(response, _current_material_revision(request, run_id))
+
+
+def _project_row(request: Any, project_id: str) -> dict | None:
+    """The registered projects row for pid, or None."""
+    conn = projections._service_db(_home(request))
+    try:
+        return projections._project_by_id(conn, project_id)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _project_version_entry(request: Any, pid: str, version: str) -> dict | None:
+    """The docs-tree version entry for (pid, version), or None."""
+    payload = projections.project_docs_tree(_home(request), pid)
+    if payload is None:
+        return None
+    for entry in payload.get("versions") or ():
+        if entry.get("version") == version:
+            return entry
+    return None
+
+
+async def edit_project_doc(request: Any) -> CommandResponse:
+    """POST /api/projects/{pid}/docs/{version}/{doc}/edits (§2b #35).
+
+    The docs-centre edit face: base/new revision are the six-piece
+    docs_revision token. It resolves the version's ``editable_run_id``
+    (none -> 422 ``no_editable_run``) and submits the same ``edit_material``
+    command with ``revision_kind="docs"`` through the shared accept path
+    (§1o.1b).
+    """
+    session = _authenticated(request)
+    if session is None:
+        return _error(401, "unauthenticated", "an authenticated session is required")
+    pid = str(request.path_params.get("pid") or "")
+    version = str(request.path_params.get("version") or "")
+    doc = str(request.path_params.get("doc") or "")
+    body = await _json_body(request)
+    if not auth.check_csrf(session, request.headers.get("X-Trac-CSRF")):
+        return _csrf_rejection(request, session, "edit_material", None)
+    if doc not in _DOC_FILES:
+        return _error(404, "not_found", f"document {doc!r} is not a six-piece member")
+    entry = _project_version_entry(request, pid, version)
+    if entry is None:
+        return _error(404, "not_found", f"project {pid!r} version {version!r} is not registered")
+    params = {
+        "run_id": entry.get("editable_run_id"),
+        "doc": doc,
+        "base_revision": body.get("base_revision"),
+        "content": body.get("content"),
+        "revision_kind": "docs",
+    }
+    if not params["run_id"]:
+        return _rejection_audit(
+            request,
+            session,
+            "edit_material",
+            params,
+            "no_editable_run",
+            f"version {version!r} has no editable run; a non-terminal run of the"
+            " version is required (interfaces §1o.1b)",
+            status=422,
+        )
+    project = _project_row(request, pid)
+    version_dir = (
+        paths.version_dir(tracks_home(Path(project["repo_path"])), version)
+        if project is not None
+        else None
+    )
+    guard_params = {key: params[key] for key in ("run_id", "doc", "base_revision", "content")}
+
+    def respond(_receipt: Any) -> dict:
+        return {"new_revision": _docs_revision_or_none(version_dir) or ""}
+
+    response = _validated_mutate(
+        request,
+        session,
+        "edit_material",
+        params,
+        guard_params=guard_params,
         preflight=_run_scoped("edit_material"),
         respond=respond,
     )
+    return _with_current_revision(response, _docs_revision_or_none(version_dir))
 
 
 async def record_approval(request: Any) -> CommandResponse:
@@ -563,3 +765,10 @@ async def retry_run(request: Any) -> CommandResponse:
         params,
         guard_params={"run_id": params["run_id"]},
     )
+
+
+# CORE-02-style extension seam: the composition root merges the declared
+# routes so the §2b #35 docs-centre edit face lands without re-touching app.py.
+EXTENSION_ROUTES = (
+    (_DOCS_EDIT_PATH, edit_project_doc, ("POST",)),
+)

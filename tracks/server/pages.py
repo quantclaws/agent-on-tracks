@@ -6,7 +6,12 @@ v0.10 converges the server-rendered page surface to two HTML documents:
   column (image + slogan + image attribution) next to the login panel
   (credential form + inline error line + the hidden name-collection step
   that the client reveals when the login response carries
-  ``name_required`` — E-02, §1m.2);
+  ``name_required`` — E-02, §1m.2). The auth shell also bootstraps the
+  shared native ES-module entry (``/static/app/shell.js``, §1l.2), so the
+  login/name flow runs in-page through the browser client — the name step
+  expands in place and the inline error line is carried by the JS flow
+  rather than a full-page navigation (the credential seeding + name flow
+  body lives in the app layer);
 - the seven workbench entries (E-01) render ONE shared workbench shell
   document carrying the ``data-route`` deep link plus run_id/project_id
   parameters, the three-zone chrome skeleton (tab bar + sidebar + multi-tab
@@ -20,7 +25,7 @@ unchanged. The docs view injects the vendored Vditor build from the same
 origin on demand (interfaces §1n.3) — the server shell no longer inlines the
 editor assets, so the material review entry renders the shared shell too.
 
-Contract tokens: IF-WORKBENCH-001, IF-SECRECY-001.
+Contract tokens: IF-WORKBENCH-001, IF-AUTHNAME-001, IF-SECRECY-001.
 """
 
 from __future__ import annotations
@@ -120,7 +125,13 @@ def render_page(name: str, context: dict) -> str:
 
 
 def _login_body() -> str:
-    """Dual-column auth shell (E-02 / §1m.1)."""
+    """Dual-column auth shell (E-02 / §1m.1).
+
+    The name step exposes the frozen browser-contract locators
+    (``name-input``/``name-submit``) on the input/control so the UI e2e binds
+    the real elements, alongside the shell's own field anchors
+    (``login-name``/``login-name-continue``) the page-shell contract carries.
+    """
     return "\n".join(
         [
             '<main class="auth-shell" data-testid="login-shell">',
@@ -140,13 +151,15 @@ def _login_body() -> str:
             "</form>",
             '<p class="auth-error" data-testid="login-error" role="alert" hidden></p>',
             '<form class="auth-form" data-testid="login-name-form" hidden>',
-            '<label for="display-name">Display name</label>',
-            '<input id="display-name" name="name" data-testid="login-name"'
+            '<label for="display-name" data-testid="login-name">Display name</label>',
+            '<input id="display-name" name="name" data-testid="name-input"'
             ' maxlength="64" required>',
-            '<button type="button" data-testid="login-name-continue">Continue</button>',
+            '<button type="button" data-testid="name-submit">'
+            '<span data-testid="login-name-continue">Continue</span></button>',
             "</form>",
             "</section>",
             "</main>",
+            '<script type="module" src="/static/app/shell.js"></script>',
         ]
     )
 

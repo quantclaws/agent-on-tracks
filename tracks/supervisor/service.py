@@ -38,6 +38,7 @@ from tracks.discuss.locate import token_for
 from tracks.discuss.model import Thread, speaker_key
 from tracks.discuss.parser import parse_tag, parse_threads
 from tracks.executor.release_authorization import assess_release, validate_authorization
+from tracks.frontmatter import doc_body_sha
 from tracks.kernel.events import EventEnvelope
 from tracks.store import Store
 from tracks.supervisor.db import ServiceDB
@@ -273,20 +274,46 @@ def _current_revision(repo: Path, version: str | None) -> str | None:
         return None
 
 
-# Material document set of the review face (interfaces §2b #15): the trio
-# members carry the revision digest an approval binds; the design entry is the
-# primary design document.
-_MATERIAL_FILES = {
-    "story": "story.md",
-    "spec": "spec.md",
-    "acceptance": "acceptance.md",
-    "design": "architecture.md",
-}
+# docs-centre revision identity (interfaces §1o.1a): six-piece material set in
+# the canonical docs_revision order plus the `design` alias for the docs-centre
+# face; the trio subset is the approval-bound run-domain set.
+_DOCS_MATERIALS = (
+    ("story", "story.md"), ("spec", "spec.md"), ("acc", "acceptance.md"),
+    ("architecture", "architecture.md"), ("interfaces", "interfaces.md"),
+    ("test_plan", "test-plan.md"),
+)
+_DOCS_MATERIAL_FILES = dict(_DOCS_MATERIALS, design="architecture.md")
+_TRIO_MATERIAL_FILES = {"story": "story.md", "spec": "spec.md", "acceptance": "acceptance.md"}
 
 
-def _material_file(repo: Path, version: str | None, doc: Any) -> Path | None:
+def docs_revision(vdir: Path) -> str:
+    """Six-piece docs-centre revision identity (interfaces §1o.1a): the same
+    label:body_sha construction as baseline.revision_digest over the
+    docs-centre order; any six-piece body change moves it. The trio digest
+    (FR-0308 approval binding) stays in tracks/baseline.py, untouched here."""
+    joined = "\n".join(f"{label}:{doc_body_sha(vdir / name)}" for label, name in _DOCS_MATERIALS)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
+def _docs_revision_or_none(repo: Path, version: str | None) -> str | None:
+    """docs_revision of a version dir; None when absent or unreadable."""
+    if not version:
+        return None
+    try:
+        return docs_revision(paths.version_dir(paths.tracks_home(repo), str(version)))
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _material_files(kind: str) -> dict[str, str]:
+    return _DOCS_MATERIAL_FILES if kind == "docs" else _TRIO_MATERIAL_FILES
+
+
+def _material_file(
+    repo: Path, version: str | None, doc: Any, kind: str = "trio"
+) -> Path | None:
     """The version-dir document a material edit targets, or None."""
-    name = _MATERIAL_FILES.get(str(doc))
+    name = _material_files(kind).get(str(doc))
     if name is None or not version:
         return None
     return paths.version_dir(paths.tracks_home(repo), str(version)) / name
@@ -345,15 +372,21 @@ def _run_material_version(repo: Path, run_id: str, project: dict) -> str | None:
 
 
 def _require_reviewed_revision(
-    repo: Path, version: str | None, submitted: Any, deny: RejectFn, label: str
+    repo: Path,
+    version: str | None,
+    submitted: Any,
+    deny: RejectFn,
+    label: str,
+    current_fn: Callable[..., str | None] = _current_revision,
 ) -> None:
-    """Reject unless ``submitted`` is the live material revision.
+    """Reject unless ``submitted`` is the live face revision token.
 
-    Shared by the approval (FR-0308) and edit (FR-0294.3) bindings: both bind
-    the revision the user actually reviewed, so a stale submission is refused
-    identically before anything persists (SM-01.5).
+    Shared by the approval (FR-0308) and edit bindings: both bind the revision
+    the user actually reviewed, so a stale submission is refused identically
+    before anything persists (SM-01.5). ``current_fn`` selects the face token
+    (trio digest, or docs_revision on the docs-centre face, §1o.1b).
     """
-    current = _current_revision(repo, version)
+    current = current_fn(repo, version)
     if current is None or submitted != current:
         deny(
             "stale_revision",
@@ -370,17 +403,26 @@ def _bind_approval(
     _require_reviewed_revision(repo, version, request.get("expected_revision"), deny, "approval")
 
 
-def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict) -> None:
-    """FR-0294.3: the edit binds the revision the user actually reviewed.
+def _edit_revision_kind(request: dict, deny: RejectFn) -> str:
+    """The closed ``revision_kind`` enum (interfaces §1o.1b); default trio."""
+    kind = str(request.get("revision_kind") or "trio")
+    if kind not in ("trio", "docs"):
+        deny("validation_failed", f"unknown revision_kind {kind!r}; closed enum is trio|docs")
+    return kind
 
-    A stale base revision is rejected before anything persists (SM-01.5);
-    the acceptance then applies the edit through the existing revision flow.
-    """
+
+def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict) -> None:
+    """The edit binds its face's revision token (§1o.1b); a stale base is
+    rejected before anything persists (SM-01.5)."""
+    kind = _edit_revision_kind(request, deny)
     version = _run_material_version(repo, run_id, project)
-    doc_file = _material_file(repo, version, request.get("doc"))
+    doc_file = _material_file(repo, version, request.get("doc"), kind)
     if doc_file is None or not doc_file.is_file():
         deny("not_found", f"material {request.get('doc')!r} has no editable document")
-    _require_reviewed_revision(repo, version, request.get("base_revision"), deny, "edit")
+    current_fn = _docs_revision_or_none if kind == "docs" else _current_revision
+    _require_reviewed_revision(
+        repo, version, request.get("base_revision"), deny, "edit", current_fn
+    )
 
 
 def _latest_preview(events: list[EventEnvelope]) -> EventEnvelope | None:
@@ -868,9 +910,9 @@ class CommandService:
         SM-01.1 is already honored (command.accepted persisted); the new
         revision is content-addressed: the document is written, the run repo
         records the revision, and ``material.edited`` (interfaces §1a #22)
-        carries the from/to pair the approval binding then holds the reviewer
-        to. The preflight bound the submitted base revision, so a resolvable
-        document is guaranteed here.
+        carries the from/to pair of the face token (trio digest on the #17
+        face, docs_revision on the #35 face, §1o.1b). The preflight bound the
+        submitted base revision, so a resolvable document is guaranteed here.
         """
         run_id = request.get("run_id")
         project = self._project_for_run(store, run_id)
@@ -878,12 +920,14 @@ class CommandService:
             return
         repo = Path(str(project["repo_path"]))
         version = _material_version(project, self._run_state(store, run_id))
-        doc_file = _material_file(repo, version, request.get("doc"))
+        kind = str(request.get("revision_kind") or "trio")
+        doc_file = _material_file(repo, version, request.get("doc"), kind)
         if doc_file is None or not doc_file.is_file():
             return
-        from_revision = _current_revision(repo, version) or request.get("base_revision")
+        revision_of = _docs_revision_or_none if kind == "docs" else _current_revision
+        from_revision = revision_of(repo, version) or request.get("base_revision")
         _write_material(doc_file, str(request.get("content") or ""))
-        to_revision = _current_revision(repo, version)
+        to_revision = revision_of(repo, version)
         _commit_material(repo, doc_file, str(request.get("doc") or ""), actor)
         store.append_event(
             "material.edited",

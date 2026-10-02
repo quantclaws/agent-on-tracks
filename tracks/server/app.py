@@ -10,8 +10,9 @@ v0.10 adds the name-binding auth face (IF-WEBAUTH-001 / IF-AUTHNAME-001):
 ``POST /api/auth/name`` + ``GET /api/auth/profile`` (§2b #29-30), the login
 response's ``name_required`` flag (§2b #1), the §1m.2 name gate on workbench
 page entries, logout cookie clearing (§1m.4), and the CORE-02 route seam
-merging api_query-side extension routes (§2b #31-34 arrive without
-re-touching this root).
+merging the api_query read faces (§2b #31-34) plus the api_command
+docs-centre edit face (§2b #35) — the extension routes arrive without
+re-touching this root.
 
 The module stays importable without starlette (unit layer): the Starlette
 imports live inside the composing functions. The request seam is the one
@@ -22,7 +23,8 @@ every handler envelope (``QueryResponse`` / ``CommandResponse`` /
 boundary (§1f.3) guards everything except ``/healthz``, the login face and
 ``/static``: API misses get 401 JSON, page misses a 302 to ``/login``.
 
-Contract tokens: IF-SERVE-001, IF-WEBAUTH-001, IF-QUERY-001, IF-STREAM-001.
+Contract tokens: IF-SERVE-001, IF-WEBAUTH-001, IF-QUERY-001, IF-STREAM-001,
+IF-DOCCENTER-001, IF-DOCSAVE-001.
 """
 
 from __future__ import annotations
@@ -124,10 +126,15 @@ def _build_routes(glue: _AuthGlue) -> list:
     from starlette.routing import Mount, Route
     from starlette.staticfiles import StaticFiles
 
-    # CORE-02 extension seam: routes the api_query side declares merge into
-    # the assembly (empty until that face exists), so later tasks land the
-    # §2b #31-34 read endpoints without re-touching this composition root.
-    api_table = _ROUTES + tuple(getattr(api_query, "EXTENSION_ROUTES", ()))
+    # CORE-02 extension seam: each handler module declares its own routes and
+    # the composition root merges both tables — the api_query read faces
+    # (§2b #31-34) and the api_command docs-centre edit face (§2b #35) land
+    # without re-touching this root.
+    api_table = (
+        _ROUTES
+        + tuple(getattr(api_query, "EXTENSION_ROUTES", ()))
+        + tuple(getattr(api_command, "EXTENSION_ROUTES", ()))
+    )
     routes = [
         Route(path, _endpoint(handler), methods=list(methods))
         for path, handler, methods in api_table
