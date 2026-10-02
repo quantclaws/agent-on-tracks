@@ -363,7 +363,7 @@ def test_do_commit_taskgraph_error_and_probe_paths(tmp_path: Path, monkeypatch):
     host3._taskgraph_errors = lambda *a: []
     monkeypatch.setattr(ledger, "validate_acceptance_coverage", lambda tasks, plan: (True, []))
     host3._b89_planning_gate = lambda *a: ({"violations": []}, [])
-    host3._probe_anchor_types = lambda tasks: SimpleNamespace(errors=["anchor red"], advisory=lambda: [])
+    host3._probe_anchor_types = lambda tasks, exempt_ids=frozenset(): SimpleNamespace(errors=["anchor red"], advisory=lambda: [])
     host3._emit_taskgraph_failure = lambda cmd, state, reason, evidence="": host3.emitted.append(
         ("failure", {"reason": reason, "evidence": evidence}, {})
     )
@@ -378,7 +378,7 @@ def test_do_commit_taskgraph_success_payload(tmp_path: Path, monkeypatch):
     host._taskgraph_errors = lambda *a: []
     monkeypatch.setattr(ledger, "validate_acceptance_coverage", lambda tasks, plan: (True, []))
     host._b89_planning_gate = lambda *a: ({"violations": [], "advisories": []}, ["adv"])
-    host._probe_anchor_types = lambda tasks: SimpleNamespace(
+    host._probe_anchor_types = lambda tasks, exempt_ids=frozenset(): SimpleNamespace(
         errors=[], advisory=lambda: ["[taskgraph] advisory line"]
     )
     monkeypatch.setattr(ledger, "probe_summary", lambda report: {"probe": True})
@@ -472,7 +472,10 @@ def test_probe_anchor_types_missing_contract(tmp_path: Path, monkeypatch):
     report = host._probe_anchor_types([_task()])
     assert report.skipped_reason
     monkeypatch.setattr(ledger, "load_contract", lambda repo: object())
-    monkeypatch.setattr(ledger, "probe_task_anchors", lambda repo, tasks, contract: "probed")
+    monkeypatch.setattr(
+        ledger, "probe_task_anchors",
+        lambda repo, tasks, contract, exempt_ids=frozenset(): "probed",
+    )
     assert host._probe_anchor_types([_task()]) == "probed"
 
 

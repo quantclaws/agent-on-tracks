@@ -125,7 +125,7 @@ def _run_with_argv(argv: list[str], cwd: Path) -> AnchorProbe:
     return AnchorProbe("", status, (), detail)
 
 
-def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
+def probe_task_anchors(repo: Path, tasks, contract, exempt_ids=frozenset()) -> ProbeReport:
     """对每个任务实跑 test_refs（合同 run 命令 + refs 收窄）。
 
     仅 framework 合同实测；其余跳过。任务无 test_refs
@@ -146,8 +146,10 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
         return report
     base_argv, cwd, int_probe_ctx, unit_probe_ctx = probe_ctx
     for task in tasks:
+        exempt = task.task_id in exempt_ids
         _probe_one_task(
-            report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx
+            report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx,
+            exempt,
         )
     return report
 
@@ -205,7 +207,8 @@ def _probe_skip_reason(contract) -> str:
 
 
 def _probe_one_task(
-    report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx
+    report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx,
+    exempt=False,
 ) -> None:
     """Probe one task's acceptance anchors + on-tree unit anchors (E1)."""
     refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
@@ -226,7 +229,7 @@ def _probe_one_task(
         if probe is not None:
             probe.task_id = task.task_id
             probe.refs = refs
-            _apply_type_rule(report, probe, task, "test_refs")
+            _apply_type_rule(report, probe, task, "test_refs", exempt=exempt)
     # E1 (split-RED fix): ALSO probe unit_refs whose test files already
     # exist on the tree — a green on-arrival unit anchor means the RED
     # precondition is structurally unsatisfiable (retry/split residual).
@@ -238,7 +241,9 @@ def _probe_one_task(
             unit_probe.task_id = task.task_id
             unit_probe.refs = tuple(existing_units)
             if unit_probe.status == "green":
-                _apply_type_rule(report, unit_probe, task, "unit_refs")
+                _apply_type_rule(
+                    report, unit_probe, task, "unit_refs", exempt=exempt
+                )
             else:
                 report.probes.append(unit_probe)
     if not refs and not existing_units:
@@ -270,12 +275,18 @@ def _run_unit_probe(ctx, nodes: list[str]):
 
 
 def _apply_type_rule(
-    report: ProbeReport, probe: AnchorProbe, task, ref_kind: str = "test_refs"
+    report: ProbeReport, probe: AnchorProbe, task, ref_kind: str = "test_refs",
+    exempt=False,
 ) -> None:
     """规则 1：锚已绿 + 非 verification-only → 硬门禁（r1 回滚 #2）。
-    OOB-A-3: ref_kind names what was measured (test_refs vs unit_refs)."""
+    OOB-A-3: ref_kind names what was measured (test_refs vs unit_refs).
+    #222: retained-completion tasks are exempt — they are never dispatched
+    (selection excludes the B83 projection), so the standard-RGR green-anchor
+    danger rule 1 guards against cannot arise for them; the probe result is
+    still recorded (planning-time confirmation that delivered anchors stay
+    green is signal, not noise)."""
     is_verification = _is_verification_marked(task.description or "")
-    if probe.status == "green" and not is_verification:
+    if probe.status == "green" and not is_verification and not exempt:
         report.errors.append(
             f"TG 任务型裁定（#34）：{task.task_id} 的 {ref_kind} 在规划期实测"
             f"已全部通过（green），但任务型不是 verification-only——标准 "

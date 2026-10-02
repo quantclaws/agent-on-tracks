@@ -229,3 +229,39 @@ def test_acceptance_probe_uses_run_selected_not_directory_union(tmp_path, monkey
     assert "--dir" not in seen["argv"], (
         f"acceptance probe must not carry the directory run argv: {seen['argv']}"
     )
+
+
+def test_retained_task_exempt_from_rule1(tmp_path, monkeypatch):
+    """#222: a retained-completion task (green anchors, standard-RGR type)
+    is exempt from rule 1 — the B83 projection is never dispatched again,
+    so the green-anchor danger rule 1 guards against cannot arise. The
+    probe result is still recorded."""
+    from types import SimpleNamespace
+
+    import tracks.executor.anchor_probe as ap
+
+    report = ap.ProbeReport()
+    task = SimpleNamespace(
+        task_id="T-RETAINED", description="标准 RGR 任务（已交付保留）",
+    )
+    probe = ap.AnchorProbe("T-RETAINED", "green", ("a::b",), "")
+    ap._apply_type_rule(report, probe, task, "test_refs", exempt=True)
+    assert report.errors == [], report.errors
+    assert len(report.probes) == 1  # evidence retained
+
+
+def test_redefined_task_not_exempt_still_rejected():
+    """The true-positive face stays: a non-exempt task with green anchors
+    and a standard-RGR type is still hard-rejected."""
+    from types import SimpleNamespace
+
+    import tracks.executor.anchor_probe as ap
+
+    report = ap.ProbeReport()
+    task = SimpleNamespace(
+        task_id="T-NEW", description="全新标准 RGR 任务",
+    )
+    probe = ap.AnchorProbe("T-NEW", "green", ("a::b",), "")
+    ap._apply_type_rule(report, probe, task, "test_refs")
+    assert len(report.errors) == 1
+    assert "T-NEW" in report.errors[0]

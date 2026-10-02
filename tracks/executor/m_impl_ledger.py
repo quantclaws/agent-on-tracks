@@ -324,7 +324,19 @@ class MImplLedgerMixin:
             return
         # B33（#34）：规划期锚点实测——任务型裁定机械化（r1 回滚 #2 的
         # 拦截：锚已绿的任务不得排成标准 RGR/preset-anchor）。
-        probe_report = self._probe_anchor_types(tasks)
+        # #222 (2026-10-02, Prism-adjudicated): rule 1 is exempted for the
+        # B83 retained-completion projection — retained tasks are never
+        # dispatched again (selection excludes them), so the danger rule 1
+        # guards against (anchor_red on a standard-RGR dispatch) is hollow
+        # for them, and firing there rejects every replan that retains
+        # delivered tasks whose anchors are (correctly) green. The exempt
+        # set is the payload-equivalence projection of THIS graph —
+        # redefined tasks fall out of it and stay covered (T-003
+        # seq-48481 discipline keeps its machine signal).
+        retained_before_probe = self._retained_completed_ids(tasks)
+        probe_report = self._probe_anchor_types(
+            tasks, exempt_ids=frozenset(retained_before_probe)
+        )
         if probe_report.errors:
             self._emit_taskgraph_failure(
                 cmd,
@@ -482,13 +494,15 @@ class MImplLedgerMixin:
             print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
             return {"violations": [], "advisories": [], "skipped": f"infra: {exc}"}, []
 
-    def _probe_anchor_types(self, tasks):
+    def _probe_anchor_types(self, tasks, exempt_ids=frozenset()):
         """B33（#34）：load_contract 失败（宿主无合同）时跳过实测。"""
         try:
             contract = load_contract(self.repo)
         except ContractError:
             return ProbeReport(skipped_reason="anchor probe skipped: no project contract")
-        return probe_task_anchors(Path(self.repo), tasks, contract)
+        return probe_task_anchors(
+            Path(self.repo), tasks, contract, exempt_ids=exempt_ids
+        )
 
     def _current_tree_stamp(self, repo: Path) -> str:
         """Current dirty tree stamp (executor's, fallback to surface's)."""
