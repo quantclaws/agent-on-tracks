@@ -127,6 +127,15 @@ def _trio_digest(vdir: Path) -> str:
     return revision_digest(vdir)
 
 
+def _docs_revision(vdir: Path) -> str:
+    """The docs-centre revision identity (§1o.1a: six-piece fixed-order
+    label:body_sha digest, defined as the pure function in
+    tracks/supervisor/service.py)."""
+    from tracks.supervisor.service import docs_revision
+
+    return docs_revision(vdir)
+
+
 def _post_json(base_url: str, path: str, payload: dict, *, cookies: str, csrf: str, key: str):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
@@ -215,10 +224,13 @@ def test_tree_version_desc_and_six_piece_read(tmp_path: Path):
 
 # AC-FR0323-01@v0.10 TRACKS-TRACE save produces revision; stale approval rejected
 def test_save_produces_revision_and_stale_approval_rejected(tmp_path: Path):
-    """AC-FR0323-01: an explicit save through the revision channel produces a
-    new revision for the six-piece doc set and audits the edit; an approval
-    bound to the superseded revision is rejected — the binding is never
-    bypassed."""
+    """AC-FR0323-01: an explicit save through the docs-centre edit face
+    (§2b #35, docs_revision token, §1o.1a/1b) produces a new revision for the
+    six-piece doc set and audits the edit; a design-document save moves the
+    docs identity without touching the trio digest (§1o.3), and a trio save
+    through the run-domain face (§2b #17) moves the approval-bound token — an
+    approval bound to the superseded trio revision is rejected; the binding is
+    never bypassed."""
     proc, home, repo = _start_docs_serve(tmp_path)
     try:
         base = parse_base_url(wait_for_port_line(proc))
@@ -228,13 +240,16 @@ def test_save_produces_revision_and_stale_approval_rejected(tmp_path: Path):
         _seed_project(home, repo, "proj-docs-1", "v1.0")
         _seed_run(home, repo, run_id, "v1.0")
         vdir = _write_version(repo, "v1.0", _SIX_PIECE)
-        before = _trio_digest(vdir)
+        docs_before = _docs_revision(vdir)
+        trio_before = _trio_digest(vdir)
 
+        # the six-piece save runs on the docs-centre face with the
+        # docs_revision token (§2b #35)
         status, body = _post_json(
             base,
-            f"/api/runs/{run_id}/docs/interfaces/edits",
+            "/api/projects/proj-docs-1/docs/v1.0/interfaces/edits",
             {
-                "base_revision": before,
+                "base_revision": docs_before,
                 "content": "---\nenvelope: tracks-envelope:v2\n---\n\n# v1.0 interfaces\n\nedited body\n",
             },
             cookies=cookie,
@@ -244,12 +259,13 @@ def test_save_produces_revision_and_stale_approval_rejected(tmp_path: Path):
         assert status == 202, f"the six-piece save must be accepted: {body[:200]}"
         receipt = json.loads(body)
         assert receipt["command_id"]
-        assert receipt["new_revision"] and receipt["new_revision"] != before, (
-            "the accepted edit must project a new revision"
+        assert receipt["new_revision"] and receipt["new_revision"] != docs_before, (
+            "the accepted edit must project a new docs revision"
         )
 
         # the supervisor applies the accepted command: the material moves and
-        # the edit is audited on the service plane
+        # the docs identity moves while the trio digest is untouched (a design
+        # document carries no approval binding, §1o.3)
         deadline = time.time() + 10
         applied = False
         while time.time() < deadline:
@@ -258,15 +274,43 @@ def test_save_produces_revision_and_stale_approval_rejected(tmp_path: Path):
                 break
             time.sleep(0.2)
         assert applied, "the accepted edit must be applied by the supervisor"
-        assert _trio_digest(vdir) != before, "the revision must move past the base"
+        docs_after = _docs_revision(vdir)
+        assert docs_after != docs_before, "the docs revision must move past the base"
+        assert _trio_digest(vdir) == trio_before, (
+            "a design-document save must not move the trio digest (§1o.3)"
+        )
 
-        # an approval bound to the superseded revision is rejected
+        # the stale-approval leg is carried by a trio save: the run-domain
+        # face (§2b #17) moves the approval-bound trio token
+        status, body = _post_json(
+            base,
+            f"/api/runs/{run_id}/docs/spec/edits",
+            {
+                "base_revision": trio_before,
+                "content": "---\nenvelope: tracks-envelope:v2\n---\n\n# v1.0 spec\n\nsave probe\n",
+            },
+            cookies=cookie,
+            csrf=csrf,
+            key="docs-save-trio-1",
+        )
+        assert status == 202, f"the trio save must be accepted: {body[:200]}"
+        deadline = time.time() + 10
+        applied = False
+        while time.time() < deadline:
+            if "save probe" in (vdir / "spec.md").read_text(encoding="utf-8"):
+                applied = True
+                break
+            time.sleep(0.2)
+        assert applied, "the accepted trio edit must be applied by the supervisor"
+        assert _trio_digest(vdir) != trio_before, "the trio token must move"
+
+        # an approval bound to the superseded trio revision is rejected
         stale = _post_json(
             base,
             f"/api/runs/{run_id}/approvals",
             {
                 "object": "spec",
-                "expected_revision": before,
+                "expected_revision": trio_before,
                 "decision": "approve",
             },
             cookies=cookie,
@@ -307,9 +351,14 @@ def test_conflict_409_two_options_and_draft_retained(tmp_path: Path):
             key="docs-conflict-1",
         )
         assert status == 409, f"a stale base revision must be refused: {body[:200]}"
-        error = json.loads(body)["error"]
-        assert error["reason"] == "stale_revision"
-        assert error.get("current_revision") == _trio_digest(vdir), (
+        payload = json.loads(body)
+        assert payload["error"]["reason"] == "stale_revision"
+        # §1o.2 (sole authority form): current_revision rides the response
+        # body TOP LEVEL, beside the error object — never inside it
+        assert "current_revision" not in payload["error"], (
+            "current_revision must not ride inside the error object (§1o.2)"
+        )
+        assert payload["current_revision"] == _trio_digest(vdir), (
             "the 409 must carry the server's current revision for the two "
             "conflict options (§1o.2)"
         )
