@@ -214,6 +214,20 @@ def _task_closure_errors(
     required: tuple[str, ...],
 ) -> list[str]:
     errors: list[str] = []
+    # #221 (2026-10-02, Prism-adjudicated): if_ids closure is checked
+    # against the UNION of the task's per-AC closure IF columns — a task's
+    # declared interfaces must be traceable to AT LEAST ONE AC closure it
+    # covers (FR-0180 provenance), not to EVERY closure row. The previous
+    # per-AC forall quantifier rejected the first legal multi-FR task
+    # (B94 integration closing: T-011 carries AC-FR0331-01/02 whose
+    # closures name IF-TRACKER-001 plus AC-FR0323-01 whose closure names
+    # IF-DOCSAVE-001 — a legal union, a false per-AC gap). Spec contract
+    # for this gate (v0.5 spec §ISLAND_GATE_1) lists six per-AC checks
+    # and no per-AC IF-membership invariant; the forall was implementor
+    # overreach, and its pass/fail outcomes were artifacts of adjacent
+    # table-row block swallowing (see _closure_matches hardening backlog,
+    # issue #221).
+    union_closures: list[str] = []
     for ac_id in task.ac_refs:
         requirement = _requirement_ref(ac_id)
         matches = _closure_matches(lines, requirement)
@@ -221,9 +235,12 @@ def _task_closure_errors(
             errors.append(f"{task.task_id}/{ac_id}: six-tuple entry missing")
             continue
         closure = " ".join(matches)
+        union_closures.append(closure)
         missing = [field for field in required if field not in closure]
         errors.extend(_closure_field_errors(task.task_id, ac_id, missing))
-        errors.extend(_missing_if_errors(task.task_id, ac_id, closure, task.if_ids))
+    if union_closures and task.if_ids:
+        union = " ".join(union_closures)
+        errors.extend(_missing_if_errors(task.task_id, None, union, task.if_ids))
     return errors
 
 def _closure_field_errors(
@@ -237,12 +254,13 @@ def _closure_field_errors(
 
 def _missing_if_errors(
     task_id: str,
-    ac_id: str,
+    ac_id: str | None,
     closure: str,
     if_ids: tuple[str, ...],
 ) -> list[str]:
+    scope = f"{task_id}/{ac_id}" if ac_id else task_id
     return [
-        f"{task_id}/{ac_id}: {if_id} missing from closure"
+        f"{scope}: {if_id} missing from closure"
         for if_id in if_ids
         if if_id not in closure
     ]

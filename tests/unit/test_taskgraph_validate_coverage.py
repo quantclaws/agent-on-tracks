@@ -146,9 +146,11 @@ def test_task_closure_errors_missing_and_partial():
     partial = tv._task_closure_errors(
         _task(), ["- **FR-0001** owner=x surface=y"], fields
     )
+    # #221 (2026-10-02): if_ids closure moved to the task-level union
+    # scope (no /AC suffix); six-tuple field errors stay per-AC verbatim.
     assert partial == [
         "T-001/AC-FR0001-01: missing closure fields composition=, wiring=, test=, evidence=",
-        "T-001/AC-FR0001-01: IF-IMPL-001 missing from closure",
+        "T-001: IF-IMPL-001 missing from closure",
     ]
 
     full = (
@@ -160,7 +162,7 @@ def test_task_closure_errors_missing_and_partial():
     ) == []
     assert tv._task_closure_errors(
         _task(if_ids=("IF-OTHER-999",)), [full], fields
-    ) == ["T-001/AC-FR0001-01: IF-OTHER-999 missing from closure"]
+    ) == ["T-001: IF-OTHER-999 missing from closure"]
 
 
 def test_scope_paths_rejects_malformed_and_forbidden():
