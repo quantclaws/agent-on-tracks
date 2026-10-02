@@ -432,9 +432,35 @@ class MImplTestOpsMixin:
         captured_diff = self._validated_diff("green", state)[1]
         captured = self._parse_diff_paths(captured_diff) if captured_diff else set()
         candidates = claimed | captured
+        # #223 (2026-10-02, RULING exoneration + Prism forensics): a candidate
+        # whose CURRENT working-tree blob is bit-identical to the R-tree blob
+        # is EXEMPT — it was not mutated. A base-relative captured diff lists
+        # the untouched R file as a 'new file' when the R checkpoint lives
+        # only on the side ref (never green-merged into the dispatch base)
+        # and the worktree seed re-imports it: the gate's own diff shows
+        # index 0000000..<R blob> — proving no mutation while convicting one.
         return sorted(
-            p for p in candidates if p.startswith("tests/") and self._path_in_tree(r_sha, p)
+            p for p in candidates
+            if p.startswith("tests/")
+            and self._path_in_tree(r_sha, p)
+            and not self._blob_identical_to_tree(r_sha, p)
         )
+
+    def _blob_identical_to_tree(self, tree_sha: str, path: str) -> bool:
+        """True when the working-tree file at ``path`` hashes to the same
+        blob id the ``tree_sha`` commit holds for it (#223: fail-CLOSED on any
+        git error — an unverifiable comparison must convict, never exempt)."""
+        ls = git(self.repo, "ls-tree", tree_sha, "--", path, check=False)
+        if ls.returncode != 0 or not ls.stdout.strip():
+            return False
+        try:
+            r_blob = ls.stdout.split()[2]  # "<mode> <type> <blob>\t<path>"
+        except IndexError:
+            return False
+        ho = git(
+            self.repo, "hash-object", "--", str(Path(self.repo) / path), check=False
+        )
+        return ho.returncode == 0 and ho.stdout.strip() == r_blob
 
     def _gate_evidence(self, obs) -> str:
         """Failed-gate evidence for the fixer relay: FAILED summary lines
