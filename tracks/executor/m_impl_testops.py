@@ -806,19 +806,59 @@ class MImplTestOpsMixin:
         ]
 
     def _gate_acceptance_nodes(self, task: TaskNode, inventories: dict) -> list:
-        """Declared acceptance + e2e anchors resolved against inventories."""
+        """Declared acceptance + deferred-carried + e2e anchors, resolved
+        against inventories.
+
+        #224 (2026-10-02, Prism-adjudicated): deferred_refs (and the B94
+        hard-merge carrying other tasks' deferred sets) are the EXECUTION
+        surface — run at this gate, required green only at closing — not
+        this task's declared acceptance. The §8 cross-check (B50) applies
+        to DECLARED acceptance anchors only; the planning-time commit gate
+        already validates deferred↔§8 at the correct FILE granularity
+        (#171 reverse door). Routing deferred entries through the NODE-level
+        §8 check (the previous flat merge) fail-closed every FILE-level
+        deferred whose file carries any node §8 does not name row-wise
+        (live fire: T-005's test_event_stream.py carry-over anchor)."""
         plan_path = self._vdir() / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
         effective = self._effective_refs_for_gate(task)
-        int_refs = [r for r in effective if str(r).startswith("tests/integration/")]
+        declared = {str(r).strip() for r in (task.acceptance_refs or [])}
+        declared_int = [
+            r for r in effective
+            if str(r).startswith("tests/integration/") and str(r) in declared
+        ]
+        carried_int = [
+            r for r in effective
+            if str(r).startswith("tests/integration/") and str(r) not in declared
+        ]
         e2e_refs = [r for r in effective if str(r).startswith("tests/e2e/")]
         acceptance_nodes = self._acceptance_anchors(
-            int_refs, inventories.get("integration", []), plan_text, task.schema
+            declared_int, inventories.get("integration", []), plan_text, task.schema
         )
+        # carried (deferred) integration entries: expand against the
+        # inventory — same fail-closed resolution as declared anchors — but
+        # NO §8 cross-check (mirror of _resolve_e2e_nodes' precedent:
+        # execution-surface expansion without declaration validation).
+        carried_nodes = self._resolve_carried_refs(
+            carried_int, inventories.get("integration", [])
+        )
+        acceptance_nodes = sorted(set(acceptance_nodes) | set(carried_nodes))
         if e2e_refs:
             e2e_nodes = self._resolve_e2e_nodes(e2e_refs, inventories)
             acceptance_nodes = sorted(set(acceptance_nodes) | e2e_nodes)
         return acceptance_nodes
+
+    def _resolve_carried_refs(self, refs, integration_inventory) -> set:
+        """#224: expand carried (deferred/B94-carried) refs against the
+        integration inventory — NODE entries must be exact, FILE entries
+        expand to every node — fail-closed on absence, no §8 check."""
+        by_path: dict[str, list[str]] = {}
+        for node in integration_inventory or []:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
+        out: set[str] = set()
+        for raw in refs or []:
+            self._resolve_one_acceptance_ref(raw, by_path, out)
+        return out
 
     def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):  # pylint: disable=too-many-locals
         """Execute the SELECT_TASK layers owning selected nodes.
