@@ -233,14 +233,27 @@ def _probe_one_task(
     # E1 (split-RED fix): ALSO probe unit_refs whose test files already
     # exist on the tree — a green on-arrival unit anchor means the RED
     # precondition is structurally unsatisfiable (retry/split residual).
+    # #225: integration (walk_red) tasks are exempt from the E1 type rule —
+    # their unit pins are green BY DESIGN (_do_walk_red seals the R-tree
+    # against unit_refs expecting green; "An integration task carries no
+    # new RED unit test to write"). The green-on-arrival danger E1 guards
+    # against only exists for standard-RGR tasks whose Devon RED a green
+    # anchor would hollow out. Without this exemption the walk_red
+    # unit_refs requirement (plan_defect on empty) and rule 1 (hard reject
+    # on green) form an unsatisfiable pair: no graph can pass both gates.
     unit_refs = tuple(getattr(task, "unit_refs", None) or ())
+    is_integration = bool(getattr(task, "integration", False))
     existing_units = [r for r in unit_refs if (repo / r.split("::")[0]).is_file()]
     if existing_units and unit_probe_ctx is not None:
         unit_probe = _run_unit_probe(unit_probe_ctx, existing_units)
         if unit_probe is not None:
             unit_probe.task_id = task.task_id
             unit_probe.refs = tuple(existing_units)
-            if unit_probe.status == "green":
+            if unit_probe.status == "green" and is_integration:
+                # walk_red pins: planning-time confirmation that the unit
+                # R-tree stays green is signal, not a graph defect.
+                report.probes.append(unit_probe)
+            elif unit_probe.status == "green":
                 _apply_type_rule(
                     report, unit_probe, task, "unit_refs", exempt=exempt
                 )

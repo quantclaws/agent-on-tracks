@@ -265,3 +265,125 @@ def test_redefined_task_not_exempt_still_rejected():
     ap._apply_type_rule(report, probe, task, "test_refs")
     assert len(report.errors) == 1
     assert "T-NEW" in report.errors[0]
+
+
+# -- #225: walk_red (integration) tasks vs the E1 unit-pin type rule ----------------
+
+
+def _unit_contract(tmp_path: Path, monkeypatch, acceptance_status: str, unit_status: str):
+    """Probe context with a unit section; the shared _run_unit_probe mock
+    classifies by node path (integration anchors vs unit pins)."""
+    from types import SimpleNamespace
+
+    import tracks.executor.anchor_probe as ap
+
+    contract = SimpleNamespace(
+        integration=SimpleNamespace(
+            framework="pytest",
+            run="python3 probe_stub.py --junitxml={result}",
+            run_selected="python3 probe_stub.py {nodes} --junitxml={result}",
+            cwd=".",
+        ),
+        unit=SimpleNamespace(
+            framework="pytest",
+            run_selected="python3 probe_stub.py {nodes} --junitxml={result}",
+            cwd=".",
+        ),
+    )
+
+    def fake_unit_probe(ctx, nodes):
+        status = (
+            acceptance_status
+            if any(n.startswith("tests/integration/") for n in nodes)
+            else unit_status
+        )
+        return ap.AnchorProbe("", status, tuple(nodes), "")
+
+    monkeypatch.setattr(ap, "_run_unit_probe", fake_unit_probe)
+    return contract
+
+
+def _integration_graph_task(tmp_path: Path):
+    """A walk_red task shape: integration=True, unit pins on tree, red
+    acceptance anchors (the T-011 v0.10 shape at replan time)."""
+    unit_file = tmp_path / "tests" / "unit" / "test_pins.py"
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_file.write_text("def test_pin():\n    pass\n", encoding="utf-8")
+    return SimpleNamespace(
+        task_id="T-INT",
+        description="终局集成收口（integration task，B94）",
+        test_refs=(),
+        acceptance_refs=(),
+        unit_refs=("tests/unit/test_pins.py",),
+        integration=True,
+    )
+
+
+def test_integration_task_green_unit_pins_not_rule1(tmp_path, monkeypatch):
+    """#225: a walk_red integration task's green unit_refs are BY DESIGN
+    (the R-tree seal runs them expecting green) — recorded as signal, not
+    a rule-1 hard reject. Without the exemption, walk_red's empty-unit_refs
+    plan_defect and rule 1's green hard-reject form an unsatisfiable pair."""
+    # acceptance layer: entry error signature (anchor surface not wired yet)
+    # so the acceptance probe stays advisory — measure ONLY the E1 branch.
+    contract = _unit_contract(
+        tmp_path, monkeypatch,
+        acceptance_status="entry_or_collect_error", unit_status="green",
+    )
+    task = _integration_graph_task(tmp_path)
+    task.acceptance_refs = (
+        "tests/integration/test_missing_surface.py::test_anchor",
+    )
+    from tracks.executor.anchor_probe import probe_task_anchors
+
+    report = probe_task_anchors(tmp_path, [task], contract)
+    assert report.errors == [], report.errors
+    statuses = [p.status for p in report.probes]
+    assert "green" in statuses  # the green pin probe is recorded, not gated
+
+
+def test_integration_task_green_acceptance_refs_still_rule1(tmp_path, monkeypatch):
+    """The acceptance face of rule 1 is unchanged: an integration task whose
+    ACCEPTANCE anchors are all green at planning has nothing left to wire —
+    it must be rescheduled verification-only or removed."""
+    from types import SimpleNamespace
+
+    import tracks.executor.anchor_probe as ap
+
+    report = ap.ProbeReport()
+    task = SimpleNamespace(
+        task_id="T-INT", description="终局集成收口（integration task，B94）",
+        integration=True,
+    )
+    probe = ap.AnchorProbe("T-INT", "green", ("tests/integration/x.py::t",), "")
+    ap._apply_type_rule(report, probe, task, "test_refs")
+    assert len(report.errors) == 1
+    assert "T-INT" in report.errors[0]
+
+
+def test_standard_task_green_unit_pins_still_rule1(tmp_path, monkeypatch):
+    """The E1 true-positive face stays: a standard (non-integration) task
+    with green on-arrival unit anchors is still hard-rejected."""
+    contract = _unit_contract(
+        tmp_path, monkeypatch,
+        acceptance_status="assertion_red", unit_status="green",
+    )
+    unit_file = tmp_path / "tests" / "unit" / "test_pins.py"
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_file.write_text("def test_pin():\n    pass\n", encoding="utf-8")
+    from types import SimpleNamespace
+
+    from tracks.executor.anchor_probe import probe_task_anchors
+
+    task = SimpleNamespace(
+        task_id="T-STD",
+        description="标准 RGR 任务",
+        test_refs=(),
+        acceptance_refs=(),
+        unit_refs=("tests/unit/test_pins.py",),
+        integration=False,
+    )
+    report = probe_task_anchors(tmp_path, [task], contract)
+    assert len(report.errors) == 1
+    assert "T-STD" in report.errors[0]
+    assert "unit_refs" in report.errors[0]
