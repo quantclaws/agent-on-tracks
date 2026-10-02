@@ -6,6 +6,7 @@ probe_task_anchors 的三类签名与硬门禁规则（green 且非 verification
 """
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from tracks.executor.anchor_probe import (
     AnchorProbe,
@@ -189,3 +190,42 @@ def test_requires_verification_only_property():
 
 def test_empty_report_advisory():
     assert ProbeReport().advisory() == []
+
+
+def test_acceptance_probe_uses_run_selected_not_directory_union(tmp_path, monkeypatch):
+    """#219 P-a: the acceptance probe must expand the integration section's
+    run_selected with ONLY the task's anchor nodes — never the directory
+    run + appended refs (pytest union semantics measured the full suite,
+    burned the 600s bound per task, and fail-opened Rule 1 to zero output
+    from 9/30)."""
+    import tracks.executor.anchor_probe as ap
+
+    (tmp_path / "anchor_host.py").write_text(
+        "import sys\nprint(sys.argv[-1])\n", encoding="utf-8"
+    )
+    contract = SimpleNamespace(
+        integration=SimpleNamespace(
+            framework="pytest",
+            run="python3 anchor_host.py --dir",
+            run_selected="python3 anchor_host.py {nodes} --junitxml={result}",
+            cwd=".",
+        ),
+        unit=SimpleNamespace(framework=None),
+    )
+    seen = {}
+
+    def fake_run_with_argv(argv, cwd):
+        seen["argv"] = list(argv)
+        return ap.AnchorProbe("", "assertion_red", (), "")
+
+    monkeypatch.setattr(ap, "_run_with_argv", fake_run_with_argv)
+    task = SimpleNamespace(
+        task_id="T-9", test_refs=(), acceptance_refs=["tests/integration/x.py::t1"],
+        unit_refs=(), description="",
+    )
+    ap.probe_task_anchors(tmp_path, [task], contract)
+    # the probe argv must contain ONLY the anchor node (no directory arg)
+    assert "tests/integration/x.py::t1" in seen["argv"]
+    assert "--dir" not in seen["argv"], (
+        f"acceptance probe must not carry the directory run argv: {seen['argv']}"
+    )

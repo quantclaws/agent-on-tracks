@@ -144,9 +144,11 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
     if probe_ctx is None:
         report.skipped_reason = _probe_skip_reason(contract)
         return report
-    base_argv, cwd, unit_probe_ctx = probe_ctx
+    base_argv, cwd, int_probe_ctx, unit_probe_ctx = probe_ctx
     for task in tasks:
-        _probe_one_task(report, repo, task, base_argv, cwd, unit_probe_ctx)
+        _probe_one_task(
+            report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx
+        )
     return report
 
 
@@ -165,6 +167,16 @@ def _resolve_probe_context(repo: Path, contract):
     except ValueError:
         return None
     cwd = repo / (integration.cwd if integration and integration.cwd != "." else ".")
+    # #219 P-a (2026-10-02): the acceptance probe must measure ONLY the
+    # task's anchor nodes via the section's run_selected template (the
+    # OOB-F-2 unit-probe pattern). The legacy directory run + appended
+    # refs hits pytest's UNION semantics — every probe measured the FULL
+    # suite, burned its full 600s bound, and fail-opened to skipped: the
+    # Rule-1 hard gate emitted zero output from 9/30 while every replan
+    # paid ~10 anchored tasks x 600s. run_selected missing -> legacy
+    # fallback (non-standard contracts keep the old shape).
+    int_selected = getattr(integration, "run_selected", None) or None
+    int_probe_ctx = (int_selected, cwd) if int_selected else None
     # Pre-resolve the unit section for E1 probes (None keeps them skipped).
     unit_section = getattr(contract, "unit", None)
     unit_framework = getattr(unit_section, "framework", None) if unit_section else None
@@ -175,7 +187,7 @@ def _resolve_probe_context(repo: Path, contract):
             unit_section.cwd if unit_section and unit_section.cwd != "." else "."
         )
         unit_probe_ctx = (unit_selected, unit_cwd)
-    return base_argv, cwd, unit_probe_ctx
+    return base_argv, cwd, int_probe_ctx, unit_probe_ctx
 
 
 def _probe_skip_reason(contract) -> str:
@@ -192,14 +204,29 @@ def _probe_skip_reason(contract) -> str:
     return "anchor probe skipped: contract run unparsable"
 
 
-def _probe_one_task(report, repo, task, base_argv, cwd, unit_probe_ctx) -> None:
+def _probe_one_task(
+    report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx
+) -> None:
     """Probe one task's acceptance anchors + on-tree unit anchors (E1)."""
     refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
     if refs:
-        probe = _run_with_argv([*base_argv, *refs], cwd)
-        probe.task_id = task.task_id
-        probe.refs = refs
-        _apply_type_rule(report, probe, task, "test_refs")
+        if int_probe_ctx is not None:
+            # #219 P-a: measure exactly the anchor nodes (seconds); never
+            # the union-with-directory full-suite run (minutes, timeout).
+            probe = _run_unit_probe(int_probe_ctx, list(refs))
+            if probe is None:
+                report.probes.append(
+                    AnchorProbe(
+                        task.task_id, "skipped", refs,
+                        "acceptance probe argv expansion failed",
+                    )
+                )
+        else:
+            probe = _run_with_argv([*base_argv, *refs], cwd)
+        if probe is not None:
+            probe.task_id = task.task_id
+            probe.refs = refs
+            _apply_type_rule(report, probe, task, "test_refs")
     # E1 (split-RED fix): ALSO probe unit_refs whose test files already
     # exist on the tree — a green on-arrival unit anchor means the RED
     # precondition is structurally unsatisfiable (retry/split residual).
