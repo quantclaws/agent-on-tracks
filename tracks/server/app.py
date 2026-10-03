@@ -148,6 +148,19 @@ def _build_routes(glue: _AuthGlue) -> list:
         Route("/api/auth/name", glue.bind_name, methods=["POST"]),
         Route("/api/auth/profile", glue.profile, methods=["GET"]),
     ]
+    # Vditor's internal asset URLs are ``${cdn}/dist/...``; the vendored
+    # subset keeps the v0.9 root layout (the manifest reconciles root-relative
+    # digests), so the dist prefix is a route alias onto the same directory —
+    # no symlink (the reference-host suites copy this tree).
+    _vditor_dir = _STATIC_DIR / "vendor" / "vditor"
+    if _vditor_dir.is_dir():
+        routes.append(
+            Mount(
+                "/static/vendor/vditor/dist",
+                app=StaticFiles(directory=str(_vditor_dir)),
+                name="vditor-dist-alias",
+            )
+        )
     routes.append(
         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static")
     )
