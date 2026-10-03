@@ -24,7 +24,11 @@ framework = "pytest"
 paths = ["tests/e2e/"]
 collect = ".venv/bin/python -m pytest --collect-only tests/e2e/"
 run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
-run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+# the per-node selection must override the default addopts marker filter
+# (-m 'not performance and not ui'): selected ui-marked nodes (the closure
+# experiments bind them) would otherwise be deselected and the junit would
+# carry nothing. Last -m wins; performance stays excluded.
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope -m 'not performance' --junitxml={result}"
 cwd = "."
 
 [nightly]
