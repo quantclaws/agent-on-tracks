@@ -11,46 +11,70 @@
 import { element } from "./dom.js";
 
 export function createDiscussionNav({ threads = [], onNavigate } = {}) {
-  let hidden = true;
+  let open = false;
   let index = -1;
   let items = Array.isArray(threads) ? threads.slice() : [];
+  let overlay = null;
 
-  const list = element("ul", { class: "discussion-list", "data-testid": "discussion-list" });
+  const list = element("ul", {
+    class: "discussion-list",
+    "data-testid": "discussion-list",
+  });
   const toggleButton = element("button", {
     type: "button",
     class: "discussion-toggle",
-    "data-testid": "discussions-toggle",
+    "data-testid": "discussion-toggle",
     text: "Discussions",
   });
   const nextButton = element("button", {
     type: "button",
     class: "discussion-next",
-    "data-testid": "discussions-next",
+    "data-testid": "discussion-next",
     text: "Next",
   });
   const unresolvedButton = element("button", {
     type: "button",
     class: "discussion-unresolved",
-    "data-testid": "discussions-unresolved",
+    "data-testid": "discussion-filter-unresolved",
     text: "Unresolved only",
   });
-  const root = element("aside", { class: "discussions", "data-testid": "discussions", hidden: true }, [
-    element("div", { class: "discussion-controls" }, [
-      toggleButton,
-      nextButton,
-      unresolvedButton,
-    ]),
-    list,
+  const controls = element("div", { class: "discussion-controls" }, [
+    toggleButton,
+    nextButton,
+    unresolvedButton,
   ]);
 
   toggleButton.addEventListener("click", () => toggle());
   nextButton.addEventListener("click", () => nextThread());
   unresolvedButton.addEventListener("click", () => renderList(unresolvedOnly()));
 
+  // The overlay mounts only while shown: hiding removes it from the document
+  // (the closed state owns no surface at all).
+  function mount() {
+    overlay = element("aside", {
+      class: "discussion-overlay",
+      "data-testid": "discussion-overlay",
+      role: "dialog",
+      "aria-label": "Inline discussions",
+    });
+    overlay.append(controls, list);
+    return overlay;
+  }
+
   function toggle() {
-    hidden = !hidden;
-    root.hidden = hidden;
-    return hidden;
+    open = !open;
+    if (open) {
+      if (!overlay) overlay = mount();
+      if (!overlay.isConnected) host().append(overlay);
+      renderList(items);
+    } else if (overlay && overlay.isConnected) {
+      overlay.remove();
+    }
+    return open;
+  }
+
+  function host() {
+    return document.querySelector('[data-testid="doc-editor"]') || document.body;
   }
 
   function nextThread() {
@@ -78,25 +102,21 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
     for (const thread of rows) {
       const id = thread.thread_id || "unknown";
       list.append(
-        element(
-          "li",
-          {
-            class: "discussion-item",
-            "data-testid": `discussion-${id}`,
-            "data-entry-line": thread.entry_line === undefined ? "" : String(thread.entry_line),
-            "aria-current": thread.thread_id === activeId ? "true" : "false",
-          },
-          [
-            element("span", {
-              class: "discussion-label",
-              text: `${id} - ${thread.status || "unknown"}`,
-            }),
-          ]
-        )
+        element("li", {
+          class: "discussion-item",
+          "data-testid": `discussion-thread-${id}`,
+          "data-entry-line":
+            thread.entry_line === undefined ? "" : String(thread.entry_line),
+          "aria-current": thread.thread_id === activeId ? "true" : "false",
+          text: `${id} - ${thread.status || "unknown"}`,
+        })
       );
+    }
+    if (!rows.length) {
+      list.append(element("li", { class: "discussion-empty", text: "No threads." }));
     }
   }
 
   renderList(items);
-  return { root, toggle, nextThread, unresolvedOnly, setThreads };
+  return { controls, toggle, nextThread, unresolvedOnly, setThreads };
 }

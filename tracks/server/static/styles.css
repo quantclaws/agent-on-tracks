@@ -75,6 +75,386 @@ body {
   font-size: 20px;
 }
 
+/* the global hidden attribute wins over every author display rule (the name
+   step, the conflict dialog and the node overlay stay closed until the JS
+   flow reveals them) */
+[hidden] {
+  display: none !important;
+}
+
+/* -- multi-tab strip + main body ------------------------------------------- */
+
+.tab-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.tab-strip:empty {
+  border-bottom: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.view {
+  display: block;
+}
+
+.view ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.view li {
+  margin: 3px 0;
+}
+
+.project-row,
+.run-row,
+.todo-row {
+  list-style: none;
+}
+
+.run-row .last-event {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* -- explicit degradation + observable failure (§1l.5/§1l.6) --------------- */
+
+.degraded {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+}
+
+.request-error {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: #fef2f2;
+  color: var(--danger);
+}
+
+/* -- sidebar ---------------------------------------------------------------- */
+
+.sidebar-list {
+  min-height: 32px;
+  margin: 8px 0 0;
+  padding-left: 14px;
+}
+
+.sidebar-node {
+  color: inherit;
+}
+
+/* -- account ---------------------------------------------------------------- */
+
+.account-menu {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.account-name {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* -- docs centre (§1n) ------------------------------------------------------ */
+
+.docs-workbench {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.doc-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.doc-tree-version {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.doc-item {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-item[aria-current="true"] {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  margin-bottom: 10px;
+}
+
+.doc-revision {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+
+.doc-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.vditor-host {
+  min-height: 160px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.doc-source,
+.doc-textarea {
+  display: block;
+  width: 100%;
+  min-height: 130px;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.doc-error {
+  color: var(--danger);
+}
+
+.doc-conflict {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: #fef2f2;
+}
+
+.conflict-revision {
+  display: block;
+  margin: 8px 0;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.panes {
+  margin-top: 18px;
+}
+
+.pane-controls {
+  margin-bottom: 8px;
+}
+
+.pane {
+  min-height: 120px;
+  min-width: 140px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.panes {
+  display: block;
+}
+
+.panes .pane {
+  display: inline-block;
+  vertical-align: top;
+  margin: 0 10px 10px 0;
+}
+
+.pane-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.pane-body {
+  min-height: 60px;
+}
+
+.pane-doc {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+/* -- read-only discussion overlay (§1p) ------------------------------------- */
+
+.discussion-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.discussion-overlay {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+  min-height: 60px;
+}
+
+.discussion-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+/* -- run timeline (§1q) ----------------------------------------------------- */
+
+.current-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+  margin-bottom: 14px;
+}
+
+.current-card span {
+  font-size: 13px;
+}
+
+.timeline {
+  display: block;
+}
+
+.stage-track {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding-left: 0;
+  list-style: none;
+  border-left: 2px solid var(--border);
+}
+
+.stage-node {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  min-height: 30px;
+}
+
+.stage-node:hover {
+  background: rgb(31 36 48 / 6%);
+}
+
+.stage-attempt {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.last-event {
+  display: inline-block;
+  margin: 6px 0;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ac-chain {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.node-overlay {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.overlay-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.overlay-doc-link {
+  display: inline-block;
+  margin-top: 8px;
+}
+
 /* -- login: dual-column auth shell (E-02); narrow viewports collapse -------- */
 
 .auth {
@@ -130,6 +510,13 @@ body {
   max-width: 320px;
 }
 
+/* the global hidden attribute must win over the flex layout (§1m: the name
+   step stays closed until the JS flow reveals it — without this rule the
+   form renders server-side and the gate is decorative) */
+.auth-form[hidden] {
+  display: none;
+}
+
 .auth-error {
   min-height: 1.2em;
   margin: 0;
@@ -151,5 +538,9 @@ body {
 
   .sidebar {
     display: none;
+  }
+
+  .docs-workbench {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

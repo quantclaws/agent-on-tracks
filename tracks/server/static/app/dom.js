@@ -28,8 +28,13 @@ export function clear(node) {
 }
 
 /** Readable degradation marker for unknown/missing values (interfaces §1l.5). */
-export function degradedMessage(text) {
-  return element("p", { class: "degraded", "data-testid": "view-degraded", text });
+export function degradedMessage(text, label = "NotFound") {
+  return element("p", {
+    class: "degraded",
+    "data-testid": `degrade-${label}`,
+    role: "note",
+    text,
+  });
 }
 
 /** Observable failure feedback: a rejected request renders, never false success. */
@@ -37,13 +42,17 @@ export async function loadInto(node, loader) {
   try {
     await loader();
   } catch (error) {
+    const notFound = error && error.status === 404;
+    const detail = error && error.message ? error.message : String(error);
     node.append(
-      element("p", {
-        class: "request-error",
-        "data-testid": "request-error",
-        role: "alert",
-        text: `Request failed: ${error && error.message ? error.message : error}`,
-      })
+      notFound
+        ? degradedMessage(`Not found: ${detail}`)
+        : element("p", {
+            class: "request-error",
+            "data-testid": "api-failure",
+            role: "alert",
+            text: `Request failed: ${detail}`,
+          })
     );
   }
 }

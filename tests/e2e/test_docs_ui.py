@@ -194,7 +194,7 @@ def test_pane_cap_four(ui_serve, page):
     page.locator("[data-testid='doc-pane-3']").wait_for()
     before = [
         pane.get_by_test_id("pane-selector").input_value()
-        for pane in page.locator("[data-testid^='doc-pane-']")
+        for pane in page.locator("[data-testid^='doc-pane-']").all()
     ]
     page.get_by_test_id("pane-add").click()
     assert page.locator("[data-testid^='doc-pane-']").count() == 4, (
@@ -202,7 +202,7 @@ def test_pane_cap_four(ui_serve, page):
     )
     after = [
         pane.get_by_test_id("pane-selector").input_value()
-        for pane in page.locator("[data-testid^='doc-pane-']")
+        for pane in page.locator("[data-testid^='doc-pane-']").all()
     ]
     assert after == before, "the existing panes must be unaffected by the refusal"
 

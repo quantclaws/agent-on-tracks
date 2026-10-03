@@ -13,6 +13,7 @@ export const MAX_PANES = 4;
 
 export function createPaneContainer({ version = "", docs = [], onSelect } = {}) {
   const panes = [];
+  let ordinal = 0;
   const addButton = element("button", {
     type: "button",
     class: "pane-add",
@@ -28,7 +29,8 @@ export function createPaneContainer({ version = "", docs = [], onSelect } = {}) 
     if (panes.length >= MAX_PANES) {
       return null; // refuse the fifth column; existing panes stay untouched
     }
-    const pane = createPane({ version }, docs, onSelect);
+    const pane = createPane({ version, ordinal }, docs, onSelect);
+    ordinal += 1;
     panes.push(pane);
     root.append(pane.root);
     return pane;
@@ -40,20 +42,41 @@ export function createPaneContainer({ version = "", docs = [], onSelect } = {}) 
 function createPane(reference, docs, onSelect) {
   const select = element("select", {
     class: "pane-select",
-    "data-testid": "pane-select",
+    "data-testid": "pane-selector",
+    "aria-label": "Pane document",
   });
   for (const doc of docs) {
     const name = doc && doc.doc ? doc.doc : doc;
     select.append(element("option", { value: name, text: name }));
   }
-  const toolbar = element("div", { class: "pane-toolbar", "data-testid": "pane-toolbar" });
+  if (!select.options.length) {
+    select.append(element("option", { value: "", text: "no documents" }));
+  }
+  // The pane's own edit toggle: pressed state is per-pane only.
+  const editButton = element("button", {
+    type: "button",
+    class: "pane-toolbar-edit",
+    "data-testid": "pane-toolbar-edit",
+    "aria-pressed": "false",
+    text: "edit",
+  });
+  editButton.addEventListener("click", () => {
+    const pressed = editButton.getAttribute("aria-pressed") === "true";
+    editButton.setAttribute("aria-pressed", pressed ? "false" : "true");
+  });
+  const toolbar = element("div", { class: "pane-toolbar", "data-testid": "pane-toolbar" }, [
+    editButton,
+  ]);
   const body = element("div", { class: "pane-body", "data-testid": "pane-body" });
-  const root = element("section", { class: "pane", "data-testid": "doc-pane" }, [
+  const root = element("section", {
+    class: "pane",
+    "data-testid": `doc-pane-${reference.ordinal}`,
+  }, [
     element("header", { class: "pane-header" }, [select, toolbar]),
     body,
   ]);
   if (onSelect) {
     select.addEventListener("change", () => onSelect(reference, select.value, body));
   }
-  return { root, select, toolbar, body, reference };
+  return { root, select, toolbar, editButton, body, reference };
 }

@@ -8,6 +8,11 @@
  * force overwrite (the local draft is resubmitted with ``current_revision``
  * as the new ``base_revision``). It never overwrites silently, and any other
  * write failure keeps the local draft retryable.
+ *
+ * Content surfaces: the authoritative draft is the markdown source area
+ * (``doc-editor-content``); the Vditor ir host renders it live (§1n.3) and a
+ * load failure swaps in the ``doc-editor-fallback`` textarea — the document
+ * stays viewable and editable in every path.
  */
 
 import { postJson } from "./api.js";
@@ -21,8 +26,39 @@ export function createEditor({ url, revision, content, reload } = {}) {
     dirty: false,
   };
 
-  const surface = element("div", { class: "doc-surface", "data-testid": "doc-surface" });
-  const status = element("p", { class: "doc-status", "data-testid": "doc-status", text: "Saved" });
+  // The Vditor ir mount host (§1n.3): assets load on demand, same-origin.
+  const irHost = element("div", {
+    class: "vditor-host",
+    "data-testid": "vditor-ir-host",
+  });
+  // The markdown source area — the authoritative editable draft.
+  const source = element("textarea", {
+    class: "doc-source",
+    "data-testid": "doc-editor-content",
+    rows: 10,
+    spellcheck: "false",
+  });
+  source.value = draft.content;
+  let touched = false; // any local edit since mount (host adoption never clobbers)
+  source.addEventListener("input", () => {
+    touched = true;
+    setContent(source.value);
+  });
+
+  const surface = element("div", { class: "doc-surface", "data-testid": "doc-surface" }, [
+    irHost,
+    source,
+  ]);
+  const status = element("p", {
+    class: "doc-status",
+    "data-testid": "doc-status",
+    text: "Saved",
+  });
+  const revisionLine = element("span", {
+    class: "doc-revision",
+    "data-testid": "doc-revision",
+    text: draft.baseRevision || "unknown revision",
+  });
   const errorLine = element("p", {
     class: "doc-error",
     "data-testid": "doc-error",
@@ -43,6 +79,7 @@ export function createEditor({ url, revision, content, reload } = {}) {
   root.append(
     element("div", { class: "doc-toolbar", "data-testid": "doc-toolbar" }, [
       saveButton,
+      revisionLine,
       status,
     ]),
     surface,
@@ -57,6 +94,42 @@ export function createEditor({ url, revision, content, reload } = {}) {
     return draft.dirty;
   }
 
+  /**
+   * The ir host's live document becomes the draft (its markdown
+   * serialization is the editable document; a normalised mount differs from
+   * the raw file baseline, which is exactly what the save gate compares).
+   */
+  function hostDraft(value) {
+    touched = true;
+    draft.content = typeof value === "string" ? value : "";
+    source.value = draft.content;
+    draft.dirty = draft.content !== draft.saved;
+    saveButton.disabled = !draft.dirty;
+    return draft.dirty;
+  }
+
+  /** Adopt the host's mount-time serialization unless the user typed first. */
+  function adoptHostValue(value) {
+    if (touched) return false;
+    return hostDraft(value);
+  }
+
+  function setRevision(revision_) {
+    draft.baseRevision = revision_ || "";
+    revisionLine.textContent = draft.baseRevision || "unknown revision";
+    return draft.baseRevision;
+  }
+
+  function replaceContent(next, revision_) {
+    draft.saved = typeof next === "string" ? next : "";
+    draft.content = draft.saved;
+    source.value = draft.content;
+    setRevision(revision_);
+    draft.dirty = false;
+    saveButton.disabled = true;
+    return draft.content;
+  }
+
   async function submit() {
     try {
       const result = await postJson(url, {
@@ -64,7 +137,9 @@ export function createEditor({ url, revision, content, reload } = {}) {
         content: draft.content,
       });
       draft.saved = draft.content;
-      draft.baseRevision = result && result.new_revision ? result.new_revision : draft.baseRevision;
+      draft.baseRevision =
+        result && result.new_revision ? result.new_revision : draft.baseRevision;
+      setRevision(draft.baseRevision);
       draft.dirty = false;
       saveButton.disabled = true;
       status.textContent = "Saved";
@@ -86,17 +161,27 @@ export function createEditor({ url, revision, content, reload } = {}) {
 
   function conflictRevision(error) {
     const payload = error ? error.payload : null;
-    return payload && payload.current_revision ? payload.current_revision : draft.baseRevision;
+    if (!payload) return draft.baseRevision;
+    // The top-level ``current_revision`` is the authoritative shape (§1o.2);
+    // the nested ``error.current_revision`` spelling is tolerated so a
+    // gateway that rewraps the 409 body still feeds the recovery options.
+    return (
+      payload.current_revision ||
+      (payload.error && payload.error.current_revision) ||
+      draft.baseRevision
+    );
   }
 
   async function reloadDiscard() {
     const currentRevision = conflict.revision() || draft.baseRevision;
-    const server = reload ? await reload(currentRevision) : null;
+    const server = reload ? await reload(currentRevision).catch(() => null) : null;
     const next = server && typeof server.content === "string" ? server.content : draft.saved;
     draft.saved = next;
     draft.content = next;
+    source.value = next;
     draft.baseRevision =
       server && server.revision ? server.revision : currentRevision;
+    setRevision(draft.baseRevision);
     draft.dirty = false;
     saveButton.disabled = true;
     conflict.hide();
@@ -107,6 +192,7 @@ export function createEditor({ url, revision, content, reload } = {}) {
 
   function forceOverwrite() {
     draft.baseRevision = conflict.revision() || draft.baseRevision;
+    setRevision(draft.baseRevision);
     conflict.hide();
     return submit();
   }
@@ -115,25 +201,25 @@ export function createEditor({ url, revision, content, reload } = {}) {
     let liveRevision = "";
     const revisionLabel = element("span", {
       class: "conflict-revision",
-      "data-testid": "doc-conflict-revision",
+      "data-testid": "conflict-revision",
     });
     const reloadButton = element("button", {
       type: "button",
       class: "conflict-reload",
-      "data-testid": "doc-reload-discard",
+      "data-testid": "conflict-reload",
       text: "Reload and discard",
     });
     const overwriteButton = element("button", {
       type: "button",
       class: "conflict-overwrite",
-      "data-testid": "doc-force-overwrite",
+      "data-testid": "conflict-overwrite",
       text: "Force overwrite",
     });
     reloadButton.addEventListener("click", () => reloadDiscard());
     overwriteButton.addEventListener("click", () => forceOverwrite());
     const panel = element(
       "div",
-      { class: "doc-conflict", "data-testid": "doc-conflict", hidden: true },
+      { class: "doc-conflict", "data-testid": "conflict-dialog", hidden: true },
       [
         element("p", {
           class: "conflict-message",
@@ -149,7 +235,7 @@ export function createEditor({ url, revision, content, reload } = {}) {
       revision: () => liveRevision,
       show(revision) {
         liveRevision = revision || "";
-        revisionLabel.textContent = liveRevision;
+        revisionLabel.textContent = `server revision: ${liveRevision}`;
         panel.hidden = false;
       },
       hide() {
@@ -158,5 +244,19 @@ export function createEditor({ url, revision, content, reload } = {}) {
     };
   }
 
-  return { root, surface, setContent, submit, reloadDiscard, forceOverwrite, draft };
+  return {
+    root,
+    surface,
+    irHost,
+    source,
+    setContent,
+    hostDraft,
+    adoptHostValue,
+    setRevision,
+    replaceContent,
+    submit,
+    reloadDiscard,
+    forceOverwrite,
+    draft,
+  };
 }

@@ -73,7 +73,7 @@ def test_run_timeline_view(ui_serve, page):
     for stage in _STAGE_ORDER:
         assert stage in rendered, f"the timeline must cover {stage}"
 
-    nodes.first().click()
+    nodes.first.click()
     overlay = page.get_by_test_id("timeline-node-overlay")
     overlay.wait_for()
     assert page.get_by_test_id("overlay-doc-link").count() == 1, (

@@ -3,26 +3,24 @@
  *
  * The server renders one shared shell carrying the ``data-route`` deep link;
  * this entry restores the initial tab/sidebar, renders the active functional
- * area, and — on run-scoped entries — subscribes to the merged event stream
- * from the snapshot's ``event_cursor``. Unknown routes degrade explicitly.
+ * area, and wires the tab bar's icon items to in-page tab switches (never a
+ * full-page navigation — FR-0316). Unknown routes degrade explicitly.
  */
 
 import { requestJson, setCsrfToken } from "./api.js";
-import { element } from "./dom.js";
 import { featureForRoute, readRoute } from "./router.js";
 import { renderSidebar } from "./sidebar.js";
-import { connectEventStream } from "./sse.js";
 import { openTab } from "./tabs.js";
 import { renderView } from "./views.js";
 
 const TITLES = {
-  projects: "Projects",
-  runs: "Runs",
-  docs: "Documents",
-  review: "Review",
-  todos: "Todos",
-  settings: "Settings",
-  account: "Account",
+  projects: "projects",
+  runs: "runs",
+  docs: "docs centre",
+  review: "review",
+  todos: "todos",
+  settings: "settings",
+  account: "account",
 };
 
 export function bootstrap(root = document) {
@@ -33,25 +31,66 @@ export function bootstrap(root = document) {
   }
   seedSessionCredential();
   const shell = root.querySelector("#workbench") || root;
+  wireTabbar(shell);
   const deepLink = readRoute(root);
   const feature = featureForRoute(deepLink.route);
   if (!feature) {
-    renderSidebar({ title: "Unknown", nodes: [] }, shell);
+    renderSidebar({ title: "unknown", nodes: [] }, shell);
     renderView(null, shell.querySelector('[data-testid="main-area"]'), {
       ...deepLink,
-      title: "Unknown",
+      title: "unknown",
     });
     return null;
   }
+  if ((deepLink.route === "run_detail" || deepLink.route === "release") && deepLink.runId) {
+    // A run-scoped deep link restores the run's own tab (implicit: the
+    // restored face stays out of the open-tab strip until the user opens it).
+    return openTab(deepLink.runId, {
+      feature: "runs",
+      view: "run_detail",
+      runId: deepLink.runId,
+      implicit: true,
+      title: deepLink.runId,
+    });
+  }
   const tab = openTab(feature, {
-    ...deepLink,
     feature,
+    implicit: true,
+    route: deepLink.route,
+    projectId: deepLink.projectId,
     title: TITLES[feature] || feature,
   });
-  if (deepLink.runId) {
-    subscribeRun(deepLink.runId, shell);
-  }
   return tab;
+}
+
+// -- tab bar wiring (FR-0316/FR-0318): one delegated handler turns the seven
+// server-rendered icon items into in-page tab switches. A click never follows
+// the <a href> — the same document instance continues — and marks the live
+// document so a full reload is distinguishable from an in-page switch (the
+// frozen ui contract's same-document probe).
+
+function wireTabbar(shell) {
+  if (shell.__tabbarWired) return;
+  shell.__tabbarWired = true;
+  shell.addEventListener("click", (event) => {
+    const item = event.target.closest
+      ? event.target.closest('[data-testid^="tabbar-item-"]')
+      : null;
+    if (!item || !shell.contains(item)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const feature = (item.getAttribute("data-testid") || "").replace(
+      "tabbar-item-",
+      ""
+    );
+    globalThis.__tracks_document = "instance-1";
+    openTab(feature, {
+      feature,
+      title: TITLES[feature] || feature,
+      // the gear opens its tab without changing the sidebar (FR-0318-03)
+      keepSidebar: feature === "settings",
+    });
+  });
 }
 
 // -- login shell (§1m.1/§1m.2): fetch auth flow, inline error, in-place
@@ -96,45 +135,42 @@ function wireNameStep(root, errorBox) {
     // Live 2026-10-03: the serve stack's session cookie attachment to
     // subresource fetches flaps for ~1s around document transitions — a
     // 401 here is transient, so the bind retries briefly before failing.
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
         await requestJson("/api/auth/name", { method: "POST", body: payload });
         globalThis.location.assign("/");
         return;
       } catch (error) {
         const transient = error && error.status === 401;
-        if (!transient || attempt === 3) {
+        if (!transient || attempt === 9) {
           showError(errorBox, error);
           return;
         }
-        await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+        await new Promise((resolve) => globalThis.setTimeout(resolve, 700));
       }
     }
   });
 }
 
 async function revealForPendingName(root) {
-  // On a session-bearing document: expand the name step while it is still
-  // uncollected; a complete profile goes straight to the workbench. A 401
-  // here is usually the transient cookie-attachment flap around document
-  // transitions — retry briefly before concluding there is no session.
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  // On a session-bearing document, seed the CSRF credential and expand
+  // the name step while it is still uncollected; a 401 is the plain
+  // no-session login form. Never navigates on its own.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
     try {
       const profile = await requestJson("/api/auth/profile");
       if (profile && profile.csrf_token) {
         setCsrfToken(profile.csrf_token);
       }
-      if (profile && profile.name_set) {
-        globalThis.location.assign("/");
-        return;
+      if (!profile.name_set) {
+        revealNameStep(root);
       }
-      revealNameStep(root);
       return;
     } catch (error) {
-      if (attempt === 5) {
-        return; /* no session: the plain password form stays */
+      if (attempt === 9) {
+        return;
       }
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 400));
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 700));
     }
   }
 }
@@ -182,38 +218,6 @@ async function seedSessionCredential() {
   } catch (error) {
     /* the 401 gate face owns the redirect; the shell stays inert */
   }
-}
-
-async function subscribeRun(runId, shell) {
-  const status = ensureStatus(shell);
-  let cursor = null;
-  try {
-    const detail = await requestJson(`/api/runs/${encodeURIComponent(runId)}`);
-    cursor = detail.event_cursor || null;
-  } catch (error) {
-    status.textContent = "stream unavailable";
-    return null;
-  }
-  return connectEventStream({
-    runId,
-    event_cursor: cursor,
-    onStatus: (state) => {
-      status.textContent = state;
-    },
-  });
-}
-
-function ensureStatus(shell) {
-  let node = shell.querySelector('[data-testid="stream-status"]');
-  if (!node) {
-    node = element("span", {
-      class: "stream-status",
-      "data-testid": "stream-status",
-      text: "connecting",
-    });
-    shell.append(node);
-  }
-  return node;
 }
 
 if (typeof document !== "undefined") {

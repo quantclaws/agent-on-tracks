@@ -631,6 +631,16 @@ def project_docs_tree(home: Path, project_id: str) -> dict | None:
     project = _project_from_home(home, project_id)
     if project is None:
         return None
+    return docs_tree_for_project(project)
+
+
+def docs_tree_for_project(project: dict) -> dict:
+    """Docs tree read model for one resolved project row (§1n.1).
+
+    Split out of ``project_docs_tree`` so the single-user host fallback
+    (api_query) can compute the same tree for the serve's own repo without a
+    registered projects row.
+    """
     runs = _project_runs(project["repo_path"])
     versions = []
     for version in _project_versions(project):
@@ -661,11 +671,18 @@ def resolve_project_doc(
     None when the project, the version directory name, or the doc member is
     unknown; handlers fail closed on that state (§2b #32-34).
     """
-    name = DOC_FILES.get(doc)
-    if name is None or _version_sort_key(version) is None:
-        return None
     project = _project_from_home(home, project_id)
     if project is None:
+        return None
+    return resolve_doc_in_project(project, version, doc)
+
+
+def resolve_doc_in_project(
+    project: dict, version: str, doc: str
+) -> tuple[dict, Path, Path, str | None] | None:
+    """``resolve_project_doc`` over an already-resolved project row (§2b #32)."""
+    name = DOC_FILES.get(doc)
+    if name is None or _version_sort_key(version) is None:
         return None
     vdir = _version_path(project, version)
     doc_file = vdir / name

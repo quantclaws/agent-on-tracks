@@ -21,10 +21,13 @@ export function renderSidebar(model = {}, root = document) {
     element("h2", {
       class: "sidebar-heading",
       "data-testid": "sidebar-heading",
-      text: model.title || "Unknown",
+      text: model.title || "unknown",
     })
   );
-  const list = element("ul", { class: "sidebar-list", "data-testid": "sidebar-list" });
+  const list = element("ul", {
+    class: "sidebar-list",
+    "data-testid": "sidebar-tree",
+  });
   for (const node of model.nodes || []) {
     list.append(
       element("li", { class: "sidebar-node-wrap" }, [
@@ -32,7 +35,7 @@ export function renderSidebar(model = {}, root = document) {
           class: "sidebar-node",
           href: node.href || "#",
           "data-testid": node.testid || "sidebar-node",
-          text: node.label || "Unknown",
+          text: node.label || "unknown",
         }),
       ])
     );

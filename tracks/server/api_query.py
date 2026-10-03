@@ -47,6 +47,7 @@ from typing import Any
 
 from tracks import paths
 from tracks.baseline import revision_digest
+from tracks.discuss.parser import parse_threads
 from tracks.frontmatter import split_frontmatter
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.server import projections
@@ -605,11 +606,40 @@ def _doc_ident(request: Any) -> str:
     return f"{_path_text(request, 'version')}/{_path_text(request, 'doc')}"
 
 
+def _implicit_host_project(request: Any) -> dict | None:
+    """The serve's own permitted repo as an implicit host project (RP-01).
+
+    The v0.10 workbench is the single-user local face of ONE host repo: when
+    nothing is registered yet (a fresh serve before the first registration),
+    the docs-centre read faces still resolve against the serve's ``--repo``
+    scope so the browser can browse the host repo's version tree. The moment
+    any project is registered the fallback disappears — a registered registry
+    is authoritative and unknown ids keep failing closed (§2b #31-34).
+    """
+    conn = projections._service_db(_home(request))
+    try:
+        if projections._projects(conn):
+            return None
+    finally:
+        if conn is not None:
+            conn.close()
+    roots = getattr(_state(request), "permitted_repos", None) or []
+    for root in roots:
+        path = Path(root)
+        if path.is_dir():
+            return {"project_id": "", "repo_path": str(path), "version": ""}
+    return None
+
+
 async def docs_tree(request: Any) -> Any:
     """GET /api/projects/{pid}/docs/tree: version tree + six-piece docs (#31)."""
     home = _home(request)
     pid = _param(request.path_params, "pid")
     payload = projections.project_docs_tree(home, pid or "")
+    if payload is None:
+        host = _implicit_host_project(request)
+        if host is not None:
+            payload = projections.docs_tree_for_project(host)
     if payload is None:
         return _not_found("project", pid or "")
     return _response(200, request, payload)
@@ -622,6 +652,12 @@ async def read_project_doc(request: Any) -> Any:
     resolved = projections.resolve_project_doc(
         home, _path_text(request, "pid"), _path_text(request, "version"), doc
     )
+    if resolved is None:
+        host = _implicit_host_project(request)
+        if host is not None:
+            resolved = projections.resolve_doc_in_project(
+                host, _path_text(request, "version"), doc
+            )
     if resolved is None:
         return _not_found("document", _doc_ident(request))
     project, version_dir, doc_file, revision = resolved
@@ -645,6 +681,12 @@ async def project_doc_diff(request: Any) -> Any:
     resolved = projections.resolve_project_doc(
         home, _path_text(request, "pid"), _path_text(request, "version"), doc
     )
+    if resolved is None:
+        host = _implicit_host_project(request)
+        if host is not None:
+            resolved = projections.resolve_doc_in_project(
+                host, _path_text(request, "version"), doc
+            )
     if resolved is None:
         return _not_found("document", _doc_ident(request))
     project, _version_dir, doc_file, current = resolved
@@ -671,12 +713,23 @@ async def project_doc_diff(request: Any) -> Any:
 async def project_doc_discussions(request: Any) -> Any:
     """GET /api/projects/{pid}/docs/{version}/{doc}/discussions (#34)."""
     home = _home(request)
+    version = _path_text(request, "version")
+    doc = _path_text(request, "doc")
     payload = projections.project_doc_discussions(
-        home,
-        _path_text(request, "pid"),
-        _path_text(request, "version"),
-        _path_text(request, "doc"),
+        home, _path_text(request, "pid"), version, doc
     )
+    if payload is None:
+        host = _implicit_host_project(request)
+        if host is not None:
+            resolved = projections.resolve_doc_in_project(host, version, doc)
+            if resolved is not None:
+                _project, _vdir, doc_file, _revision = resolved
+                payload = {
+                    "threads": [
+                        projections._thread_json(thread)
+                        for thread in parse_threads(doc_file.read_text(encoding="utf-8"))
+                    ]
+                }
     if payload is None:
         return _not_found("document", _doc_ident(request))
     return _response(200, request, payload)
