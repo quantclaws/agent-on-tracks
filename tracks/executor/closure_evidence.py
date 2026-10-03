@@ -188,14 +188,34 @@ def _resolve_closure_adapter(repo: Path):
 
     contract = load_contract(repo)
     declared = getattr(contract, "adapter", None)
-    section = getattr(contract, "integration", None) or contract.unit
-    if declared is None or section is None:
+    # The closure bindings span layers (unit/integration/e2e nodes); each
+    # node must run under ITS layer's section template -- the e2e section
+    # carries the marker override the default addopts need (ui-marked
+    # nodes deselect under the integration template's inherited filter).
+    sections = {
+        name: section
+        for name, section in (
+            ("unit", getattr(contract, "unit", None)),
+            ("integration", getattr(contract, "integration", None)),
+            ("e2e", getattr(contract, "e2e", None)),
+        )
+        if section is not None
+    }
+    section = sections.get("integration")
+    if declared is None or not sections:
         raise ClosureBindingsError("host contract declares no adapter")
     try:
         adapter = resolve_adapter(declared.id, declared.protocol, declared.version)
     except UnknownAdapterError as exc:
         raise ClosureBindingsError(str(exc)) from exc
-    return adapter, section
+    return adapter, section, sections
+
+
+def _layer_of(node: str) -> str:
+    for prefix in ("tests/e2e/", "tests/integration/", "tests/unit/"):
+        if node.startswith(prefix):
+            return prefix[len("tests/") : -1]
+    return "integration"
 
 
 def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, nodes):
@@ -254,42 +274,54 @@ def _run_nodes_factory(repo: Path):
         require_exact_node_coverage,
     )
 
-    adapter, section = _resolve_closure_adapter(repo)
+    adapter, section, sections = _resolve_closure_adapter(repo)
 
     def run_nodes(worktree: Path, nodes) -> dict[str, TestRunResult]:
-        cwd = worktree if section.cwd == "." else worktree / section.cwd
         results: dict[str, TestRunResult] = {}
+        by_layer: dict[str, list[str]] = {}
+        for node in nodes:
+            by_layer.setdefault(_layer_of(str(node)), []).append(str(node))
         import tempfile
 
-        with tempfile.TemporaryDirectory(prefix="closure-node-") as tmp:
-            result_path = Path(tmp) / "result.xml"
-            try:
-                proc = _execute_selected_nodes(
-                    adapter, section, cwd, result_path, nodes
-                )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                return _error_all(nodes, str(exc))
-            if not result_path.exists():
-                # The result file IS the evidence: without it an exit code
-                # proves nothing about WHICH nodes failed (never a vacuous
-                # kill) -- fail closed per node instead.
-                detail = (proc.stderr or proc.stdout) or f"no result file (exit={proc.returncode})"
-                return _error_all(nodes, detail)
-            try:
-                mapping = require_exact_node_coverage(
-                    parse_test_result(result_path), list(nodes)
-                )
-            except Exception as exc:
-                tail = ((proc.stderr or "") + (proc.stdout or ""))[-600:]
-                raise type(exc)(
-                    f"{exc}; node-run tail: {tail}"
-                ) from exc
-            for node in nodes:
-                case = mapping[node]
-                results[node] = TestRunResult(
-                    node_id=node, status=case.status, detail=case.detail
+        for layer, layer_nodes in sorted(by_layer.items()):
+            section = sections.get(layer) or next(iter(sections.values()))
+            cwd = worktree if section.cwd == "." else worktree / section.cwd
+            with tempfile.TemporaryDirectory(prefix="closure-node-") as tmp:
+                result_path = Path(tmp) / "result.xml"
+                _run_node_group(
+                    adapter, section, cwd, result_path, layer_nodes, results
                 )
         return results
+
+    def _run_node_group(adapter, section, cwd, result_path, nodes, results):
+        try:
+            proc = _execute_selected_nodes(
+                adapter, section, cwd, result_path, nodes
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            results.update(_error_all(nodes, str(exc)))
+            return
+        if not result_path.exists():
+            # The result file IS the evidence: without it an exit code
+            # proves nothing about WHICH nodes failed (never a vacuous
+            # kill) -- fail closed per node instead.
+            detail = (proc.stderr or proc.stdout) or f"no result file (exit={proc.returncode})"
+            results.update(_error_all(nodes, detail))
+            return
+        try:
+            mapping = require_exact_node_coverage(
+                parse_test_result(result_path), list(nodes)
+            )
+        except Exception as exc:
+            tail = ((proc.stderr or "") + (proc.stdout or ""))[-600:]
+            raise type(exc)(
+                f"{exc}; node-run tail: {tail}"
+            ) from exc
+        for node in nodes:
+            case = mapping[node]
+            results[node] = TestRunResult(
+                node_id=node, status=case.status, detail=case.detail
+            )
 
     return run_nodes
 
