@@ -455,6 +455,48 @@ def test_transition_full_ledger(tmp_path: Path):
     assert payload["task_id"] == "T-1"
 
 
+def test_transition_full_ledger_advances_every_candidate(tmp_path: Path):
+    """#226 (2026-10-03, live island_2 orphan): one diagnosis classifies a
+    failure FAMILY; the closing Shield repair must advance EVERY entry in
+    the before-state. The old single-pick `sorted(candidates)[0]` left the
+    rest orphaned in CLASSIFIED — no later Shield round fires, so
+    ledger_is_clean fails forever on all-green fallback FULL runs."""
+    host = _Host(tmp_path)
+    host.store = _Store(
+        [
+            _ev(
+                1,
+                "ledger.opened",
+                {"node": "tests/a.py::t1", "failure_signature": "s1", "task_id": "T-1"},
+            ),
+            _ev(
+                2,
+                "ledger.opened",
+                {"node": "tests/b.py::t2", "failure_signature": "s2", "task_id": "T-2"},
+            ),
+        ]
+    )
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        full_chain,
+        "rebuild_ledger",
+        lambda events: {
+            '["tests/a.py::t1", "s1"]': "CLASSIFIED",
+            '["tests/b.py::t2", "s2"]': "CLASSIFIED",
+        },
+    )
+    try:
+        assert host._transition_full_ledger(_cmd("C-8"), "CLASSIFIED", "FIXED", "r", "shield")
+    finally:
+        monkeypatch.undo()
+    transitioned = [payload for (_t, payload, _kw) in host.emitted]
+    assert [(p["node"], p["to"]) for p in transitioned] == [
+        ("tests/a.py::t1", "FIXED"),
+        ("tests/b.py::t2", "FIXED"),
+    ]
+    assert transitioned[0]["task_id"] == "T-1" and transitioned[1]["task_id"] == "T-2"
+
+
 def test_fixed_ledger_key_and_last_done_paths(tmp_path: Path):
     host = _Host(tmp_path)
     with pytest.raises(full_chain.LedgerCorruptionError):

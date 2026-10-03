@@ -650,40 +650,46 @@ class MImplFullChainMixin:
         actor: str,
     ) -> bool:
         ledger = rebuild_ledger(self.store.events(self.run_id))
-        candidates = [key for key, value in ledger.items() if value == before]
+        candidates = sorted(key for key, value in ledger.items() if value == before)
         if not candidates:
             return False
-        key = sorted(candidates)[0]
-        node, signature = json.loads(key)
-        owner = next(
-            (
+        # #226 (2026-10-03, live 01M3E7SAANXKW1V73W8B8Q3G86 island_2): one
+        # diagnosis classifies a failure FAMILY — the Shield repair that
+        # closes it must advance EVERY entry in the `before` state. The old
+        # `sorted(candidates)[0]` single-pick left the remaining entries
+        # orphaned in CLASSIFIED: no later Shield round fires (substate moved
+        # on), so `ledger_is_clean` fails forever even on all-green fallback
+        # FULL runs ("fallback FULL did not prove every ledger entry" with
+        # failed_nodes=[]).
+        events = self.store.events(self.run_id)
+        owners = {
+            (ev.payload.get("node"), ev.payload.get("failure_signature")): {
+                field: ev.payload.get(field)
+                for field in ("task_id", "task", "manifest", "r_sha")
+                if ev.payload.get(field)
+            }
+            for ev in events
+            if ev.type == "ledger.opened"
+        }
+        transitioned = False
+        for key in candidates:
+            node, signature = json.loads(key)
+            self._emit(
+                "ledger.transitioned",
                 {
-                    field: ev.payload.get(field)
-                    for field in ("task_id", "task", "manifest", "r_sha")
-                    if ev.payload.get(field)
-                }
-                for ev in self.store.events(self.run_id)
-                if ev.type == "ledger.opened"
-                and ev.payload.get("node") == node
-                and ev.payload.get("failure_signature") == signature
-            ),
-            {},
-        )
-        self._emit(
-            "ledger.transitioned",
-            {
-                "node": node,
-                "failure_signature": signature,
-                "from": before,
-                "to": after,
-                "attempt": self.store.state(self.run_id).current_attempt + 1,
-                "actor": actor,
-                "reason": reason,
-                **owner,
-            },
-            command_id=cmd.command_id,
-        )
-        return True
+                    "node": node,
+                    "failure_signature": signature,
+                    "from": before,
+                    "to": after,
+                    "attempt": self.store.state(self.run_id).current_attempt + 1,
+                    "actor": actor,
+                    "reason": reason,
+                    **owners.get((node, signature), {}),
+                },
+                command_id=cmd.command_id,
+            )
+            transitioned = True
+        return transitioned
 
     @staticmethod
     def _fixed_ledger_key(ledger) -> str:
