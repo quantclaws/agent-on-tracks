@@ -26,7 +26,7 @@ export function loadVditor() {
   if (!vditorRequest) {
     vditorRequest = new Promise((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = `${VEDITOR_BASE}index.min.js`;
+      script.src = `${VEDITOR_BASE}dist/index.min.js`;
       script.async = true;
       script.onload = () => {
         if (globalThis.Vditor) resolve(globalThis.Vditor);
@@ -46,7 +46,7 @@ function vditorStylesheet() {
   if (document.querySelector("link[data-vditor-styles]")) return;
   const link = document.createElement("link");
   link.rel = "stylesheet";
-  link.href = `${VEDITOR_BASE}index.css`;
+  link.href = `${VEDITOR_BASE}dist/index.css`;
   link.setAttribute("data-vditor-styles", "true");
   document.head.append(link);
 }

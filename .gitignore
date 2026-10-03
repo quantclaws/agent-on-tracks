@@ -28,3 +28,7 @@ __pycache__/
 .tracks/service/service.db-shm
 .tracks/service/service.db-wal
 .tracks/projects/*/events.db
+
+# the vendored editor ships its npm dist layout in-tree (the wheel and
+# any candidate worktree must serve it)
+!tracks/server/static/vendor/vditor/dist/

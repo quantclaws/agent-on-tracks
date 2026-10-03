@@ -237,8 +237,6 @@ class _AuthGlue:
 
         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
             session = auth.resolve_session(conn, request.cookies.get(SESSION_COOKIE))
-        import sys as _s
-        print(f"DBG-NAME cookie={'Y' if request.cookies.get(SESSION_COOKIE) else 'N'} csrf_hdr={len(request.headers.get('x-trac-csrf') or '')}", file=_s.stderr, flush=True)
         if session is None:
             return _unauthenticated_response()
         if not auth.check_csrf(session, request.headers.get("x-trac-csrf")):
@@ -280,8 +278,6 @@ class _AuthGlue:
             session = auth.resolve_session(
                 conn, request.cookies.get(SESSION_COOKIE)
             )
-        import sys as _s
-        print(f"DBG-PROFILE cookie={'Y' if request.cookies.get(SESSION_COOKIE) else 'N'} csrf_len={len(session.csrf_token) if session else -1}", file=_s.stderr, flush=True)
         return JSONResponse(
             {
                 "actor": actor,
@@ -406,12 +402,8 @@ class _AuthBoundary:
         if path in _PUBLIC_PATHS or path.startswith("/static/"):
             await self._app(scope, receive, send)
             return
-        import sys as _s
-        _ck = request.cookies.get(SESSION_COOKIE)
         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
-            session = auth.resolve_session(conn, _ck)
-            if path.startswith("/api"):
-                print(f"DBG-MW path={path} cookie={'Y' if _ck else 'N'} resolved={'Y' if session else 'N'}", file=_s.stderr, flush=True)
+            session = auth.resolve_session(conn, request.cookies.get(SESSION_COOKIE))
             allowed = session is not None and (
                 path.startswith("/api") or _name_collected(conn)
             )
@@ -449,13 +441,16 @@ def _unavailable(check: str, reason: str) -> dict:
 
 
 def _open_conn(home: Path, *, readonly: bool = False) -> sqlite3.Connection:
-    # Read paths open a plain connection (never execute writes): a
-    # ``file:...?mode=ro`` URI on a WAL database races the -shm lifecycle
-    # under concurrent per-request churn — a reader can land mid-checkpoint
-    # and miss just-committed rows (live 2026-10-03: the browser flow's
-    # first post-login session resolutions 401'd for ~1s). SQLite's ro
-    # mode buys no isolation the read-path discipline doesn't already give.
-    conn = sqlite3.connect(str(Path(home) / "service.db"))
+    # Read paths use the read-only URI: a plain (read-write) connection on
+    # the read plane deadlocks the command soak under rapid-fire writes
+    # (live 2026-10-04: test_soak_memory_bounded hung on every pause POST;
+    # the ro URI never waits on the writer). The earlier flap attribution
+    # (ro readers missing just-committed rows) was the login CSS hidden
+    # bug, not this — ro mode is correct here.
+    if readonly:
+        conn = sqlite3.connect(f"file:{Path(home) / 'service.db'}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(str(Path(home) / "service.db"))
     conn.row_factory = sqlite3.Row
     return conn
 
