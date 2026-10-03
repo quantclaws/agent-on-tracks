@@ -253,9 +253,15 @@ def _run_nodes_factory(repo: Path):
                 # kill) -- fail closed per node instead.
                 detail = (proc.stderr or proc.stdout) or f"no result file (exit={proc.returncode})"
                 return _error_all(nodes, detail)
-            mapping = require_exact_node_coverage(
-                parse_test_result(result_path), list(nodes)
-            )
+            try:
+                mapping = require_exact_node_coverage(
+                    parse_test_result(result_path), list(nodes)
+                )
+            except Exception as exc:
+                tail = ((proc.stderr or "") + (proc.stdout or ""))[-600:]
+                raise type(exc)(
+                    f"{exc}; node-run tail: {tail}"
+                ) from exc
             for node in nodes:
                 case = mapping[node]
                 results[node] = TestRunResult(
