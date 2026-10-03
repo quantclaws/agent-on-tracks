@@ -142,7 +142,7 @@ def _login_body() -> str:
             "</section>",
             '<section class="auth-panel" data-testid="login-panel">',
             '<h1 class="auth-title">tracks</h1>',
-            '<form class="auth-form" data-testid="login-form" method="post"'
+            '<form class="auth-form login-form" data-testid="login-form" method="post"'
             ' action="/api/auth/login">',
             '<label for="password">Password</label>',
             '<input id="password" name="password" type="password" autocomplete="current-password"'

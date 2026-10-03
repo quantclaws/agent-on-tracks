@@ -237,6 +237,8 @@ class _AuthGlue:
 
         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
             session = auth.resolve_session(conn, request.cookies.get(SESSION_COOKIE))
+        import sys as _s
+        print(f"DBG-NAME cookie={'Y' if request.cookies.get(SESSION_COOKIE) else 'N'} csrf_hdr={len(request.headers.get('x-trac-csrf') or '')}", file=_s.stderr, flush=True)
         if session is None:
             return _unauthenticated_response()
         if not auth.check_csrf(session, request.headers.get("x-trac-csrf")):
@@ -263,13 +265,30 @@ class _AuthGlue:
         return JSONResponse({"actor": name})
 
     async def profile(self, request: Any) -> Any:
-        """GET /api/auth/profile — the name-state read face (§2b #30)."""
+        """GET /api/auth/profile — the name-state read face (§2b #30).
+
+        Carries the live session's ``csrf_token`` so each workbench page
+        load can re-seed the SPA's in-memory write credential (§1l.6: the
+        client persists no credential — every page boot re-reads it from
+        the auth face; the login page seeds it from the login response).
+        """
         from starlette.responses import JSONResponse
 
         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
             actor = auth.effective_actor(conn)
             name_set = _name_collected(conn)
-        return JSONResponse({"actor": actor, "name_set": name_set})
+            session = auth.resolve_session(
+                conn, request.cookies.get(SESSION_COOKIE)
+            )
+        import sys as _s
+        print(f"DBG-PROFILE cookie={'Y' if request.cookies.get(SESSION_COOKIE) else 'N'} csrf_len={len(session.csrf_token) if session else -1}", file=_s.stderr, flush=True)
+        return JSONResponse(
+            {
+                "actor": actor,
+                "name_set": name_set,
+                "csrf_token": session.csrf_token if session is not None else "",
+            }
+        )
 
     async def logout(self, request: Any) -> Any:
         from starlette.responses import Response
@@ -387,8 +406,12 @@ class _AuthBoundary:
         if path in _PUBLIC_PATHS or path.startswith("/static/"):
             await self._app(scope, receive, send)
             return
+        import sys as _s
+        _ck = request.cookies.get(SESSION_COOKIE)
         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
-            session = auth.resolve_session(conn, request.cookies.get(SESSION_COOKIE))
+            session = auth.resolve_session(conn, _ck)
+            if path.startswith("/api"):
+                print(f"DBG-MW path={path} cookie={'Y' if _ck else 'N'} resolved={'Y' if session else 'N'}", file=_s.stderr, flush=True)
             allowed = session is not None and (
                 path.startswith("/api") or _name_collected(conn)
             )
@@ -426,10 +449,13 @@ def _unavailable(check: str, reason: str) -> dict:
 
 
 def _open_conn(home: Path, *, readonly: bool = False) -> sqlite3.Connection:
-    if readonly:
-        conn = sqlite3.connect(f"file:{Path(home) / 'service.db'}?mode=ro", uri=True)
-    else:
-        conn = sqlite3.connect(str(Path(home) / "service.db"))
+    # Read paths open a plain connection (never execute writes): a
+    # ``file:...?mode=ro`` URI on a WAL database races the -shm lifecycle
+    # under concurrent per-request churn — a reader can land mid-checkpoint
+    # and miss just-committed rows (live 2026-10-03: the browser flow's
+    # first post-login session resolutions 401'd for ~1s). SQLite's ro
+    # mode buys no isolation the read-path discipline doesn't already give.
+    conn = sqlite3.connect(str(Path(home) / "service.db"))
     conn.row_factory = sqlite3.Row
     return conn
 
