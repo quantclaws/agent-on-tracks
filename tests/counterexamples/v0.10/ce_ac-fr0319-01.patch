@@ -1,0 +1,48 @@
+--- a/tracks/server/static/app/dom.js
++++ b/tracks/server/static/app/dom.js
+@@ -44,6 +44,10 @@
+   } catch (error) {
+     const notFound = error && error.status === 404;
+     const detail = error && error.message ? error.message : String(error);
++    if (notFound) {
++      // counterexample AC-FR0319-01: unknown values render blank
++      return;
++    }
+     node.append(
+       notFound
+         ? degradedMessage(`Not found: ${detail}`)
+--- a/tracks/server/static/app/views.js
++++ b/tracks/server/static/app/views.js
+@@ -45,17 +45,14 @@
+   const renderer = VIEW_RENDERERS[view];
+   let done = Promise.resolve();
+   if (!renderer) {
+-    body.append(degradedMessage(`Unknown view: ${route || "no route"}`));
++    // counterexample AC-FR0319-01: the unknown view renders blank
++    ;
+   } else {
+     done = Promise.resolve()
+       .then(() => renderer(body, context))
+       .then(() => undefined)
+       .catch((error) => {
+-        body.append(
+-          degradedMessage(
+-            `View failed: ${error && error.message ? error.message : error}`
+-          )
+-        );
++        // counterexample AC-FR0319-01: a failed/unknown view renders blank
+       });
+   }
+   return { body, done };
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -87,7 +87,8 @@
+ export function renderTimelineView(body, context = {}) {
+   const runId = context.runId;
+   if (!runId) {
+-    body.append(degradedMessage("Unknown run"));
++    // counterexample AC-FR0319-01: the unknown run renders blank
++    ;
+     return null;
+   }
+   return (async () => {

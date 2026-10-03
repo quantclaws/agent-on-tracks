@@ -1,0 +1,13 @@
+--- a/tracks/server/static/app/panes.js
++++ b/tracks/server/static/app/panes.js
+@@ -26,7 +26,9 @@
+   addButton.addEventListener("click", () => addPane());
+ 
+   function addPane() {
+-    if (panes.length >= MAX_PANES) {
++    // counterexample AC-FR0324-02: the pane cap is not enforced — a fifth
++    // pane opens and disturbs the existing layout
++    if (false && panes.length >= MAX_PANES) {
+       return null; // refuse the fifth column; existing panes stay untouched
+     }
+     const pane = createPane({ version, ordinal }, docs, onSelect);

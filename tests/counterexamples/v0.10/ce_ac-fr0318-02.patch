@@ -1,0 +1,32 @@
+--- a/tracks/server/static/app/tabs.js
++++ b/tracks/server/static/app/tabs.js
+@@ -21,6 +21,29 @@
+ 
+ const tabs = [];
+ let active = null;
++
++// counterexample AC-FR0318-02: the tab set is persisted to localStorage and
++// restored on boot — the restart no longer starts from the empty set
++try {
++  const saved = globalThis.localStorage && globalThis.localStorage.getItem("tracks-tabs");
++  if (saved) {
++    for (const route of JSON.parse(saved)) {
++      tabs.push({ route, title: route, context: {} });
++    }
++  }
++} catch (error) {
++  /* persistence is best-effort */
++}
++const _origPush = tabs.push.bind(tabs);
++tabs.push = (...items) => {
++  const out = _origPush(...items);
++  try {
++    globalThis.localStorage.setItem("tracks-tabs", JSON.stringify(tabs.map((t) => t.route)));
++  } catch (error) {
++    /* best-effort */
++  }
++  return out;
++};
+ let activationToken = 0;
+ 
+ export function openTabs() {

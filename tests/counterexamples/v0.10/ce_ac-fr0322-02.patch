@@ -1,0 +1,15 @@
+--- a/tracks/server/static/app/docs.js
++++ b/tracks/server/static/app/docs.js
+@@ -234,10 +234,8 @@
+         }
+       },
+     }).catch(() => {
+-      const area = mountTextarea(editor.irHost, payload.content);
+-      area.addEventListener("input", () => {
+-        editor.hostDraft(area.value);
+-      });
++      // counterexample AC-FR0322-02: the blocked editor stays blank —
++      // no textarea fallback is offered
+     });
+   }
+ 

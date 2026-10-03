@@ -1,0 +1,18 @@
+--- a/tracks/server/static/app/panes.js
++++ b/tracks/server/static/app/panes.js
+@@ -76,7 +76,14 @@
+     body,
+   ]);
+   if (onSelect) {
+-    select.addEventListener("change", () => onSelect(reference, select.value, body));
++    // counterexample AC-FR0324-01: one pane's selection propagates to every
++    // pane — the columns share one selector state
++    select.addEventListener("change", () => {
++      for (const other of document.querySelectorAll("[data-testid='pane-selector']")) {
++        other.value = select.value;
++      }
++      onSelect(reference, select.value, body);
++    });
+   }
+   return { root, select, toolbar, editButton, body, reference };
+ }

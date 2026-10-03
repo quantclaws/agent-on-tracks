@@ -1,0 +1,32 @@
+--- a/tracks/server/pages.py
++++ b/tracks/server/pages.py
+@@ -207,9 +207,11 @@
+             f'<a class="tabbar-item" data-testid="tabbar-item-{feature}"'
+             f' href="{href}" title="{label}" aria-label="{label}">{icon}</a>'
+         )
++    # counterexample AC-FR0317-01: the items carry no tooltip and render
++    # at a sub-32px hit area
+     return (
+-        f'<button type="button" class="tabbar-item" data-testid="tabbar-item-{feature}"'
+-        f' title="{label}" aria-label="{label}">{icon}</button>'
++        f'<button type="button" class="tabbar-item tabbar-item-cramped"'
++        f' data-testid="tabbar-item-{feature}">{icon}</button>'
+     )
+ 
+ 
+--- a/tracks/server/static/styles.css
++++ b/tracks/server/static/styles.css
+@@ -41,6 +41,13 @@
+   background: var(--surface);
+ }
+ 
++/* counterexample AC-FR0317-01: cramped sub-32px hit area */
++.tabbar-item {
++  width: 16px;
++  height: 16px;
++  overflow: hidden;
++}
++
+ .tabbar-item {
+   display: flex;
+   align-items: center;

@@ -8,22 +8,62 @@
         "head": "789e61a554c30106bf3bacdec649cd0a9eeb4b76",
         "date": "2026-09-28",
         "executed_kills": [
-          {"patch": "ce_ac-fr0325-02.patch", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint", "outcome": "killed"},
-          {"patch": "ce_ac-fr0326-01.patch", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
-          {"patch": "ce_ac-fr0330-01.patch", "test": "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle", "outcome": "killed"},
-          {"patch": "ce_ac-fr0332-02.patch", "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0325-02.patch",
+            "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0326-01.patch",
+            "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0330-01.patch",
+            "test": "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0332-02.patch",
+            "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts",
+            "outcome": "killed"
+          }
         ]
       },
       {
         "head": "16c336a62426f099a0306053122188fb40ca2ede",
         "date": "2026-09-28",
         "executed_kills": [
-          {"patch": "ce_ac-fr0318-03.patch", "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie", "outcome": "killed"},
-          {"patch": "ce_ac-fr0321-02.patch", "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity", "outcome": "killed"},
-          {"patch": "ce_ac-fr0323-02.patch", "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained", "outcome": "killed"},
-          {"patch": "ce_ac-fr0329-01.patch", "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next", "outcome": "killed"},
-          {"patch": "ce_ac-fr0331-01.patch", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback", "outcome": "killed"},
-          {"patch": "ce_ac-nfr0154-02.patch", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0318-03.patch",
+            "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0321-02.patch",
+            "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0323-02.patch",
+            "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0329-01.patch",
+            "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0331-01.patch",
+            "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-nfr0154-02.patch",
+            "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -31,9 +71,21 @@
         "date": "2026-09-28",
         "note": "re-confirmation after the classification-hygiene edit of the three bound nodes (contract-field subscripts guarded by membership asserts; failure mode now assertion_failure instead of uncaught KeyError)",
         "executed_kills": [
-          {"patch": "ce_ac-fr0321-01.patch", "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion", "outcome": "killed"},
-          {"patch": "ce_ac-fr0326-01.patch", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
-          {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0321-01.patch",
+            "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0326-01.patch",
+            "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0326-02.patch",
+            "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -41,8 +93,16 @@
         "date": "2026-09-30",
         "note": "re-confirmation after the IF-009 1e row-shape correction (payload_ref closed set; folding discriminator now row-count based): the two authored patches are stale against the delivered projection surface (their context predates the implementation), so each kill was re-executed as its documented equivalent mutation on the delivered code - dropping the M-REQ-APPROVAL insertion from stage_order, and folding repeated stage.entered rows - with byte-exact restore from the preserved pre-mutation content",
         "executed_kills": [
-          {"patch": "ce_ac-fr0326-01.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
-          {"patch": "ce_ac-fr0326-02.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0326-01.patch (equivalent mutation)",
+            "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0326-02.patch (equivalent mutation)",
+            "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -50,7 +110,11 @@
         "date": "2026-09-30",
         "note": "re-confirmation after correcting the anchor's release_tag assertion to the 1r.1 field-presence plus the FR-0277 no-public-tag fold ('' for the merge-only fixture the test builds): the authored patch is stale against the delivered terminal-state guard, so the kill was re-executed as its documented equivalent mutation (the pre-IF-MILESTONE-002 any-run.completed skip restored) with byte-exact restore from the preserved pre-mutation content",
         "executed_kills": [
-          {"patch": "ce_ac-fr0327-01.patch (equivalent mutation)", "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0327-01.patch (equivalent mutation)",
+            "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -58,12 +122,36 @@
         "date": "2026-10-01",
         "note": "fresh kill sample against the delivered implementation: 13 of 28 patches are now context-stale (their surfaces were implemented or restructured); of the 6 sampled this window, 3 authored patches killed directly (fr0323-02, nfr0154-02, fr0325-02) and 3 proved INERT - their injected overrides are shadowed by the delivered seams (fr0322-01's appended route loses route resolution to the api_query-registered endpoint; fr0328-01's override leaves the delivered call graph; fr0332-02's run_loop hook is bypassed by the dispatch.py injection seam) - so those kills were re-executed as the documented equivalent mutations on the delivered seams (versions reversed oldest-first; release_version rendered v-prefixed; open_threads injected first-dispatch-only), each with byte-exact restore from the preserved pre-mutation content. The inert patch files remain as authored-window evidence; their live kill instruments at this window are the recorded equivalents.",
         "executed_kills": [
-          {"patch": "ce_ac-fr0322-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read", "outcome": "killed"},
-          {"patch": "ce_ac-fr0323-02.patch", "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained", "outcome": "killed"},
-          {"patch": "ce_ac-fr0328-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_version_gate.py::test_version_bindings_enforced", "outcome": "killed"},
-          {"patch": "ce_ac-fr0332-02.patch (inert; equivalent mutation)", "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts", "outcome": "killed"},
-          {"patch": "ce_ac-nfr0154-02.patch", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf", "outcome": "killed"},
-          {"patch": "ce_ac-fr0325-02.patch", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0322-01.patch (inert; equivalent mutation)",
+            "test": "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0323-02.patch",
+            "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0328-01.patch (inert; equivalent mutation)",
+            "test": "tests/integration/test_version_gate.py::test_version_bindings_enforced",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0332-02.patch (inert; equivalent mutation)",
+            "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-nfr0154-02.patch",
+            "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0325-02.patch",
+            "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -71,11 +159,31 @@
         "date": "2026-10-01",
         "note": "second fresh sample: fr0316-02 (package.json), nfr0156-01 (vite.config.ts), fr0326-02 (attempt folding), fr0329-01 (precheck not_found mapping) killed via their authored patches; fr0325-01's appended-route override is inert at the delivered api_query seam so its kill was re-executed as the documented equivalent mutation (the discussions projection serving an empty thread list), byte-exact restored",
         "executed_kills": [
-          {"patch": "ce_ac-fr0316-02.patch", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm", "outcome": "killed"},
-          {"patch": "ce_ac-nfr0156-01.patch", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm", "outcome": "killed"},
-          {"patch": "ce_ac-fr0325-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state", "outcome": "killed"},
-          {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"},
-          {"patch": "ce_ac-fr0329-01.patch", "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0316-02.patch",
+            "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-nfr0156-01.patch",
+            "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0325-01.patch (inert; equivalent mutation)",
+            "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0326-02.patch",
+            "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0329-01.patch",
+            "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -83,9 +191,21 @@
         "date": "2026-10-01",
         "note": "completes the applicable-patch coverage (15/15 sampled across this window series): nfr0155-02 (addopts drops the ui exclusion) and fr0328-02 (host contract keeps only one version_scheme binding) killed via their authored patches - both guards failed under the mutations as their fail-closed design demands. nfr0153-01's patch is stale; its documented equivalent (a fabricated run row baked into the served shell) was executed twice with byte-exact restores: a first fabrication with a non-seeded run id SURVIVED (the no-baked-in-rows discriminator only fires on the seeded projection identity - precision signal, not a hollow assertion), and the corrected fabrication embedding the seeded run-shell-overview-1 id was KILLED",
         "executed_kills": [
-          {"patch": "ce_ac-nfr0155-02.patch", "test": "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared", "outcome": "killed"},
-          {"patch": "ce_ac-fr0328-02.patch", "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored", "outcome": "killed"},
-          {"patch": "ce_ac-nfr0153-01.patch (stale; equivalent mutation, seeded-id fabrication)", "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections", "outcome": "killed"}
+          {
+            "patch": "ce_ac-nfr0155-02.patch",
+            "test": "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0328-02.patch",
+            "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-nfr0153-01.patch (stale; equivalent mutation, seeded-id fabrication)",
+            "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -93,9 +213,21 @@
         "date": "2026-10-01",
         "note": "three stale-patch bindings re-executed as documented equivalents at the delivered seams, each byte-exact restored: fr0321-01 (login reports name_required=false unconditionally - killed at the 2b#1 field assertion), fr0321-02 (an /api/auth/register route exists and accepts POST - killed at the no-registration probe), fr0332-01 (park verdict without the pending_threads payload) - the review-exit seam variant was inert for the bound test because the test injects the verdict result through the command surface, so the kill was executed at the documented kernel half (the reduction never learns pending_threads; trac status then lists no pending Human threads) and was KILLED",
         "executed_kills": [
-          {"patch": "ce_ac-fr0321-01.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion", "outcome": "killed"},
-          {"patch": "ce_ac-fr0321-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity", "outcome": "killed"},
-          {"patch": "ce_ac-fr0332-01.patch (stale; equivalent mutation at the kernel reduction)", "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0321-01.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0321-02.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0332-01.patch (stale; equivalent mutation at the kernel reduction)",
+            "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -103,9 +235,21 @@
         "date": "2026-10-01",
         "note": "three further stale-patch bindings re-executed as documented equivalents at the delivered seams, each byte-exact restored: fr0318-03 (the auth boundary resolves any non-empty cookie as a session - killed at the replayed-cookie unauthentication probe), fr0330-02 (the missing-token guidance degrades to a generic message with no ops-prerequisite pointer - killed at the guidance assertion), fr0329-02 (every fetch-failure classification reports the same generic next - killed at the classification-specific guidance assertion)",
         "executed_kills": [
-          {"patch": "ce_ac-fr0318-03.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears", "outcome": "killed"},
-          {"patch": "ce_ac-fr0330-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance", "outcome": "killed"},
-          {"patch": "ce_ac-fr0329-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0318-03.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0330-02.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0329-02.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -113,9 +257,21 @@
         "date": "2026-10-01",
         "note": "completes the delivered-tree kill coverage: fr0320-02 (logout clears a differently-named cookie so the session credential survives - killed at the clearing-cookie name assertion), fr0331-01 (ensure_project_milestone claims api_verified without the API create or readback - killed by the stand-in request-log observation), fr0331-02 (the milestone_not_found next degrades to a generic string without the template title and trac run --resume instruction - killed at the actionable-next assertion). Every integration binding now carries a delivered-tree kill verification; the sole remaining binding verified only in its authored window is fr0320-01, whose bound test is a ui-marker Playwright journey executable solely through the ui-e2e channel (browser binary is the declared separate infrastructure budget)",
         "executed_kills": [
-          {"patch": "ce_ac-fr0320-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie", "outcome": "killed"},
-          {"patch": "ce_ac-fr0331-01.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback", "outcome": "killed"},
-          {"patch": "ce_ac-fr0331-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next", "outcome": "killed"}
+          {
+            "patch": "ce_ac-fr0320-02.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0331-01.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback",
+            "outcome": "killed"
+          },
+          {
+            "patch": "ce_ac-fr0331-02.patch (stale; equivalent mutation)",
+            "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next",
+            "outcome": "killed"
+          }
         ]
       },
       {
@@ -140,55 +296,405 @@
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
   },
   "bindings": [
-    {"ac": "AC-FR0316-02", "if_ref": "IF-WORKBENCH-001", "mutation": "a package.json npm build-chain artifact exists at the repo root", "patch": "ce_ac-fr0316-02.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"},
-    {"ac": "AC-NFR0156-01", "if_ref": "IF-WORKBENCH-001", "mutation": "a vite.config.ts bundler config exists at the repo root", "patch": "ce_ac-nfr0156-01.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"},
-    {"ac": "AC-NFR0153-01", "if_ref": "IF-QUERY-001", "mutation": "the page shell embeds a fabricated run row instead of loading the live projection", "patch": "ce_ac-nfr0153-01.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections"},
-    {"ac": "AC-NFR0154-02", "if_ref": "IF-CMDSVC-001", "mutation": "the mutation pipeline skips the X-Trac-CSRF credential check", "patch": "ce_ac-nfr0154-02.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf"},
-    {"ac": "AC-NFR0155-02", "if_ref": "IF-WEBUI-001", "mutation": "pyproject addopts drops the ui marker exclusion from the default suite", "patch": "ce_ac-nfr0155-02.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared"},
-    {"ac": "AC-NFR0155-01", "if_ref": "IF-WEBUI-001", "mutation": "a ui test locates a control through a CSS selector instead of data-testid (scoped to the ui test asset; the scanned surface is the M-IMPL-delivered ui layer)", "patch": null, "result": "pending-implementation", "test": "tests/integration/test_workbench_shell.py::test_ui_tests_bind_data_testid"},
-    {"ac": "AC-FR0318-03", "if_ref": "IF-WEBAUTH-001", "mutation": "the auth boundary resolves any non-empty cookie as a session", "patch": "ce_ac-fr0318-03.patch", "result": "killed", "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie"},
-    {"ac": "AC-FR0320-02", "if_ref": "IF-WEBAUTH-001", "mutation": "logout clears a differently-named cookie; the session credential survives", "patch": "ce_ac-fr0320-02.patch", "result": "killed", "test": "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears"},
-    {"ac": "AC-FR0321-01", "if_ref": "IF-AUTHNAME-001", "mutation": "the login response reports name_required=false unconditionally", "patch": "ce_ac-fr0321-01.patch", "result": "killed", "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion"},
-    {"ac": "AC-FR0321-02", "if_ref": "IF-AUTHNAME-001", "mutation": "an /api/auth/register route exists and accepts POST", "patch": "ce_ac-fr0321-02.patch", "result": "killed", "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity"},
-    {"ac": "AC-FR0322-01", "if_ref": "IF-DOCCENTER-001", "mutation": "a docs-tree endpoint exists but lists versions oldest-first", "patch": "ce_ac-fr0322-01.patch", "result": "killed", "test": "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read"},
-    {"ac": "AC-FR0323-01", "if_ref": "IF-DOCSAVE-001", "mutation": "the save channel accepts the six-piece doc set while the projected revision never moves", "patch": "ce_ac-fr0323-01.patch", "result": "killed", "test": "tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected"},
-    {"ac": "AC-FR0323-02", "if_ref": "IF-DOCSAVE-001", "mutation": "the 409 stale_revision response echoes the submitted base revision as current_revision", "patch": "ce_ac-fr0323-02.patch", "result": "killed", "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained"},
-    {"ac": "AC-FR0325-01", "if_ref": "IF-DISCUSS-001", "mutation": "a discussions endpoint exists but serves an empty thread list", "patch": "ce_ac-fr0325-01.patch", "result": "killed", "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state"},
-    {"ac": "AC-FR0325-02", "if_ref": "IF-DISCUSS-001", "mutation": "a discussion resolve write-back endpoint exists and answers 200", "patch": "ce_ac-fr0325-02.patch", "result": "killed", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint"},
-    {"ac": "AC-FR0326-01", "if_ref": "IF-TIMELINE-001", "mutation": "stage_order drops the M-REQ-APPROVAL insertion between M-ACC and M-DESIGN", "patch": "ce_ac-fr0326-01.patch", "result": "killed", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency"},
-    {"ac": "AC-FR0326-02", "if_ref": "IF-TIMELINE-001", "mutation": "the timeline folds repeated stage entries so retried attempts disappear", "patch": "ce_ac-fr0326-02.patch", "result": "killed", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present"},
-    {"ac": "AC-FR0327-01", "if_ref": "IF-MILESTONE-002", "mutation": "_complete_milestone drops the terminal-state guard so a re-issued close re-completes the run", "patch": "ce_ac-fr0327-01.patch", "result": "killed", "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion"},
-    {"ac": "AC-FR0328-01", "if_ref": "IF-VERSION-001", "mutation": "the file bindings are compared against the v-prefixed tag render instead of the release_version projection", "patch": "ce_ac-fr0328-01.patch", "result": "killed", "test": "tests/integration/test_version_gate.py::test_version_bindings_enforced"},
-    {"ac": "AC-FR0328-02", "if_ref": "IF-VERSION-001", "mutation": "the host contract declares only one of the two version_scheme bindings", "patch": "ce_ac-fr0328-02.patch", "result": "killed", "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored"},
-    {"ac": "AC-FR0329-01", "if_ref": "IF-HOTFIX-011", "mutation": "precheck P-1 maps a confirmed missing issue to issue_fetch_failed", "patch": "ce_ac-fr0329-01.patch", "result": "killed", "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next"},
-    {"ac": "AC-FR0329-02", "if_ref": "IF-HOTFIX-011", "mutation": "fetch failures are classified but every classification gets the same generic next guidance", "patch": "ce_ac-fr0329-02.patch", "result": "killed", "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open"},
-    {"ac": "AC-FR0330-01", "if_ref": "IF-TLS-001", "mutation": "a TLS failure silently retries with certificate verification disabled", "patch": "ce_ac-fr0330-01.patch", "result": "killed", "test": "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle"},
-    {"ac": "AC-FR0330-02", "if_ref": "IF-TLS-001", "mutation": "the missing-token guidance points at a generic doc instead of the ops prerequisites section", "patch": "ce_ac-fr0330-02.patch", "result": "killed", "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance"},
-    {"ac": "AC-FR0331-01", "if_ref": "IF-TRACKER-001", "mutation": "ensure_project_milestone exists but claims api_verified without the API create or readback", "patch": "ce_ac-fr0331-01.patch", "result": "killed", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback"},
-    {"ac": "AC-FR0331-02", "if_ref": "IF-TRACKER-001", "mutation": "the ensure wiring lands milestone_not_found but the next names the title without the resume instruction", "patch": "ce_ac-fr0331-02.patch", "result": "killed", "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next"},
-    {"ac": "AC-FR0332-01", "if_ref": "IF-REVIEW-001", "mutation": "the review pipeline exempts the park verdict from the diff rule while the payload/kernel never learn pending_threads", "patch": "ce_ac-fr0332-01.patch", "result": "killed", "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists"},
-    {"ac": "AC-FR0332-02", "if_ref": "IF-REVIEW-001", "mutation": "open_threads is injected only on the run's first lex dispatch, never on re-dispatch", "patch": "ce_ac-fr0332-02.patch", "result": "killed", "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts"},
-    {"ac": "AC-FR0316-01", "if_ref": "IF-WEBUI-001", "mutation": "the workbench chrome navigates via full-page links so tab switching reloads the document (surface: workbench shell, M-IMPL-reserved)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_spa_shell_navigation_no_reload"},
-    {"ac": "AC-FR0317-01", "if_ref": "IF-WEBUI-001", "mutation": "tab items render without tooltips and with sub-32px hit areas (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_tabbar_fixed_semantics"},
-    {"ac": "AC-FR0318-01", "if_ref": "IF-WEBUI-001", "mutation": "a tab-bar click swaps the sidebar without opening the main tab (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_sidebar_tab_atomic_switch_and_coexistence"},
-    {"ac": "AC-FR0318-02", "if_ref": "IF-WEBUI-001", "mutation": "the tab set survives a browser restart via localStorage (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_tabs_not_persisted_and_content_titles"},
-    {"ac": "AC-FR0318-03", "if_ref": "IF-WEBUI-001", "mutation": "the Account menu carries a check-updates entry and Settings swaps the sidebar (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_function_set_settings_account"},
-    {"ac": "AC-FR0319-01", "if_ref": "IF-WEBUI-001", "mutation": "an unknown deep link renders a blank main area without the degradation marker (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_unknown_values_degrade_visibly"},
-    {"ac": "AC-FR0320-01", "if_ref": "IF-AUTHNAME-001", "mutation": "the login face carries the controls but renders a single pane without the hero column", "patch": "ce_ac-fr0320-01.patch", "result": "killed", "test": "tests/e2e/test_workbench_ui.py::test_login_dual_pane_and_persistent_session"},
-    {"ac": "AC-FR0321-01", "if_ref": "IF-AUTHNAME-001", "mutation": "the workbench opens without the name step after first login (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_first_login_name_collection"},
-    {"ac": "AC-NFR0153-01", "if_ref": "IF-WEBUI-001", "mutation": "the overview renders fabricated rows that disagree with the projection (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_real_data_rendered"},
-    {"ac": "AC-NFR0153-02", "if_ref": "IF-WEBUI-001", "mutation": "a failed projection is swallowed and the face fakes success (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_api_failure_visible_feedback"},
-    {"ac": "AC-NFR0154-01", "if_ref": "IF-STREAM-001", "mutation": "the SSE consumer renders duplicates/out-of-order events and regresses the projection (surface: workbench shell)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_sse_reconnect_backfill_monotonic"},
-    {"ac": "AC-NFR0155-01", "if_ref": "IF-WEBUI-001", "mutation": "the first-demo journey performs the login or the save through an API request instead of UI operations (surface: ui test asset, M-IMPL-delivered)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_workbench_ui.py::test_first_demo_milestone_journey"},
-    {"ac": "AC-FR0322-01", "if_ref": "IF-DOCCENTER-001", "mutation": "the docs view loads Vditor assets from a CDN (surface: docs view, M-IMPL-reserved)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_docs_center_vditor_ir_same_origin"},
-    {"ac": "AC-FR0322-02", "if_ref": "IF-DOCCENTER-001", "mutation": "a blocked Vditor asset leaves a blank editor with no textarea fallback (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_vditor_failure_textarea_fallback"},
-    {"ac": "AC-FR0323-01", "if_ref": "IF-DOCSAVE-001", "mutation": "the save control stays enabled while clean (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_save_button_dirty_gating"},
-    {"ac": "AC-FR0323-02", "if_ref": "IF-DOCSAVE-001", "mutation": "a 409 silently overwrites without the two-option dialog (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_conflict_dialog_two_options"},
-    {"ac": "AC-FR0324-01", "if_ref": "IF-DOCCENTER-001", "mutation": "panes share one selector/toolbar state (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_multi_pane_independent"},
-    {"ac": "AC-FR0324-02", "if_ref": "IF-DOCCENTER-001", "mutation": "a fifth pane opens and disturbs the existing four (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_pane_cap_four"},
-    {"ac": "AC-FR0325-01", "if_ref": "IF-DISCUSS-001", "mutation": "the discussion overlay lacks the next/unresolved navigation (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_discussion_navigation_controls"},
-    {"ac": "AC-FR0325-02", "if_ref": "IF-DISCUSS-001", "mutation": "the overlay exposes resolve/reply write entries (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_no_discussion_write_controls"},
-    {"ac": "AC-NFR0154-02", "if_ref": "IF-CMDSVC-001", "mutation": "UI writes omit X-Trac-CSRF or Idempotency-Key (surface: docs view)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_docs_ui.py::test_ui_writes_carry_csrf_idempotency"},
-    {"ac": "AC-FR0326-01", "if_ref": "IF-TIMELINE-001", "mutation": "the timeline folds attempts and renders no node overlay (surface: timeline view, M-IMPL-reserved)", "patch": null, "result": "pending-implementation", "test": "tests/e2e/test_run_timeline_ui.py::test_run_timeline_view"}
+    {
+      "ac": "AC-FR0316-02",
+      "if_ref": "IF-WORKBENCH-001",
+      "mutation": "a package.json npm build-chain artifact exists at the repo root",
+      "patch": "ce_ac-fr0316-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"
+    },
+    {
+      "ac": "AC-NFR0156-01",
+      "if_ref": "IF-WORKBENCH-001",
+      "mutation": "a vite.config.ts bundler config exists at the repo root",
+      "patch": "ce_ac-nfr0156-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"
+    },
+    {
+      "ac": "AC-NFR0153-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "the page shell embeds a fabricated run row instead of loading the live projection",
+      "patch": "ce_ac-nfr0153-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections"
+    },
+    {
+      "ac": "AC-NFR0154-02",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "the mutation pipeline skips the X-Trac-CSRF credential check",
+      "patch": "ce_ac-nfr0154-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf"
+    },
+    {
+      "ac": "AC-NFR0155-02",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "pyproject addopts drops the ui marker exclusion from the default suite",
+      "patch": "ce_ac-nfr0155-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared"
+    },
+    {
+      "ac": "AC-NFR0155-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "a ui test locates a control through a CSS selector instead of data-testid (scoped to the ui test asset; the scanned surface is the M-IMPL-delivered ui layer)",
+      "patch": "ce_ac-nfr0155-01a.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/integration/test_workbench_shell.py::test_ui_tests_bind_data_testid"
+    },
+    {
+      "ac": "AC-FR0318-03",
+      "if_ref": "IF-WEBAUTH-001",
+      "mutation": "the auth boundary resolves any non-empty cookie as a session",
+      "patch": "ce_ac-fr0318-03.patch",
+      "result": "killed",
+      "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie"
+    },
+    {
+      "ac": "AC-FR0320-02",
+      "if_ref": "IF-WEBAUTH-001",
+      "mutation": "logout clears a differently-named cookie; the session credential survives",
+      "patch": "ce_ac-fr0320-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears"
+    },
+    {
+      "ac": "AC-FR0321-01",
+      "if_ref": "IF-AUTHNAME-001",
+      "mutation": "the login response reports name_required=false unconditionally",
+      "patch": "ce_ac-fr0321-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion"
+    },
+    {
+      "ac": "AC-FR0321-02",
+      "if_ref": "IF-AUTHNAME-001",
+      "mutation": "an /api/auth/register route exists and accepts POST",
+      "patch": "ce_ac-fr0321-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity"
+    },
+    {
+      "ac": "AC-FR0322-01",
+      "if_ref": "IF-DOCCENTER-001",
+      "mutation": "a docs-tree endpoint exists but lists versions oldest-first",
+      "patch": "ce_ac-fr0322-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read"
+    },
+    {
+      "ac": "AC-FR0323-01",
+      "if_ref": "IF-DOCSAVE-001",
+      "mutation": "the save channel accepts the six-piece doc set while the projected revision never moves",
+      "patch": "ce_ac-fr0323-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected"
+    },
+    {
+      "ac": "AC-FR0323-02",
+      "if_ref": "IF-DOCSAVE-001",
+      "mutation": "the 409 stale_revision response echoes the submitted base revision as current_revision",
+      "patch": "ce_ac-fr0323-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained"
+    },
+    {
+      "ac": "AC-FR0325-01",
+      "if_ref": "IF-DISCUSS-001",
+      "mutation": "a discussions endpoint exists but serves an empty thread list",
+      "patch": "ce_ac-fr0325-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state"
+    },
+    {
+      "ac": "AC-FR0325-02",
+      "if_ref": "IF-DISCUSS-001",
+      "mutation": "a discussion resolve write-back endpoint exists and answers 200",
+      "patch": "ce_ac-fr0325-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint"
+    },
+    {
+      "ac": "AC-FR0326-01",
+      "if_ref": "IF-TIMELINE-001",
+      "mutation": "stage_order drops the M-REQ-APPROVAL insertion between M-ACC and M-DESIGN",
+      "patch": "ce_ac-fr0326-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency"
+    },
+    {
+      "ac": "AC-FR0326-02",
+      "if_ref": "IF-TIMELINE-001",
+      "mutation": "the timeline folds repeated stage entries so retried attempts disappear",
+      "patch": "ce_ac-fr0326-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present"
+    },
+    {
+      "ac": "AC-FR0327-01",
+      "if_ref": "IF-MILESTONE-002",
+      "mutation": "_complete_milestone drops the terminal-state guard so a re-issued close re-completes the run",
+      "patch": "ce_ac-fr0327-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion"
+    },
+    {
+      "ac": "AC-FR0328-01",
+      "if_ref": "IF-VERSION-001",
+      "mutation": "the file bindings are compared against the v-prefixed tag render instead of the release_version projection",
+      "patch": "ce_ac-fr0328-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_version_gate.py::test_version_bindings_enforced"
+    },
+    {
+      "ac": "AC-FR0328-02",
+      "if_ref": "IF-VERSION-001",
+      "mutation": "the host contract declares only one of the two version_scheme bindings",
+      "patch": "ce_ac-fr0328-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored"
+    },
+    {
+      "ac": "AC-FR0329-01",
+      "if_ref": "IF-HOTFIX-011",
+      "mutation": "precheck P-1 maps a confirmed missing issue to issue_fetch_failed",
+      "patch": "ce_ac-fr0329-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next"
+    },
+    {
+      "ac": "AC-FR0329-02",
+      "if_ref": "IF-HOTFIX-011",
+      "mutation": "fetch failures are classified but every classification gets the same generic next guidance",
+      "patch": "ce_ac-fr0329-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open"
+    },
+    {
+      "ac": "AC-FR0330-01",
+      "if_ref": "IF-TLS-001",
+      "mutation": "a TLS failure silently retries with certificate verification disabled",
+      "patch": "ce_ac-fr0330-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle"
+    },
+    {
+      "ac": "AC-FR0330-02",
+      "if_ref": "IF-TLS-001",
+      "mutation": "the missing-token guidance points at a generic doc instead of the ops prerequisites section",
+      "patch": "ce_ac-fr0330-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance"
+    },
+    {
+      "ac": "AC-FR0331-01",
+      "if_ref": "IF-TRACKER-001",
+      "mutation": "ensure_project_milestone exists but claims api_verified without the API create or readback",
+      "patch": "ce_ac-fr0331-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback"
+    },
+    {
+      "ac": "AC-FR0331-02",
+      "if_ref": "IF-TRACKER-001",
+      "mutation": "the ensure wiring lands milestone_not_found but the next names the title without the resume instruction",
+      "patch": "ce_ac-fr0331-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next"
+    },
+    {
+      "ac": "AC-FR0332-01",
+      "if_ref": "IF-REVIEW-001",
+      "mutation": "the review pipeline exempts the park verdict from the diff rule while the payload/kernel never learn pending_threads",
+      "patch": "ce_ac-fr0332-01.patch",
+      "result": "killed",
+      "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists"
+    },
+    {
+      "ac": "AC-FR0332-02",
+      "if_ref": "IF-REVIEW-001",
+      "mutation": "open_threads is injected only on the run's first lex dispatch, never on re-dispatch",
+      "patch": "ce_ac-fr0332-02.patch",
+      "result": "killed",
+      "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts"
+    },
+    {
+      "ac": "AC-FR0316-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "the workbench chrome navigates via full-page links so tab switching reloads the document (surface: workbench shell, M-IMPL-reserved)",
+      "patch": "ce_ac-fr0316-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_spa_shell_navigation_no_reload"
+    },
+    {
+      "ac": "AC-FR0317-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "tab items render without tooltips and with sub-32px hit areas (surface: workbench shell)",
+      "patch": "ce_ac-fr0317-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_tabbar_fixed_semantics"
+    },
+    {
+      "ac": "AC-FR0318-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "a tab-bar click swaps the sidebar without opening the main tab (surface: workbench shell)",
+      "patch": "ce_ac-fr0318-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_sidebar_tab_atomic_switch_and_coexistence"
+    },
+    {
+      "ac": "AC-FR0318-02",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "the tab set survives a browser restart via localStorage (surface: workbench shell)",
+      "patch": "ce_ac-fr0318-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_tabs_not_persisted_and_content_titles"
+    },
+    {
+      "ac": "AC-FR0318-03",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "the Account menu carries a check-updates entry and Settings swaps the sidebar (surface: workbench shell)",
+      "patch": "ce_ac-fr0318-03.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_function_set_settings_account"
+    },
+    {
+      "ac": "AC-FR0319-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "an unknown deep link renders a blank main area without the degradation marker (surface: workbench shell)",
+      "patch": "ce_ac-fr0319-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_unknown_values_degrade_visibly"
+    },
+    {
+      "ac": "AC-FR0320-01",
+      "if_ref": "IF-AUTHNAME-001",
+      "mutation": "the login face carries the controls but renders a single pane without the hero column",
+      "patch": "ce_ac-fr0320-01.patch",
+      "result": "killed",
+      "test": "tests/e2e/test_workbench_ui.py::test_login_dual_pane_and_persistent_session"
+    },
+    {
+      "ac": "AC-FR0321-01",
+      "if_ref": "IF-AUTHNAME-001",
+      "mutation": "the workbench opens without the name step after first login (surface: workbench shell)",
+      "patch": "ce_ac-fr0321-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_first_login_name_collection"
+    },
+    {
+      "ac": "AC-NFR0153-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "the overview renders fabricated rows that disagree with the projection (surface: workbench shell)",
+      "patch": "ce_ac-nfr0153-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_real_data_rendered"
+    },
+    {
+      "ac": "AC-NFR0153-02",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "a failed projection is swallowed and the face fakes success (surface: workbench shell)",
+      "patch": "ce_ac-nfr0153-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_api_failure_visible_feedback"
+    },
+    {
+      "ac": "AC-NFR0154-01",
+      "if_ref": "IF-STREAM-001",
+      "mutation": "the SSE consumer renders duplicates/out-of-order events and regresses the projection (surface: workbench shell)",
+      "patch": "ce_ac-nfr0154-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_sse_reconnect_backfill_monotonic"
+    },
+    {
+      "ac": "AC-NFR0155-01",
+      "if_ref": "IF-WEBUI-001",
+      "mutation": "the first-demo journey performs the login or the save through an API request instead of UI operations (surface: ui test asset, M-IMPL-delivered)",
+      "patch": "ce_ac-nfr0155-01b.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_workbench_ui.py::test_first_demo_milestone_journey"
+    },
+    {
+      "ac": "AC-FR0322-01",
+      "if_ref": "IF-DOCCENTER-001",
+      "mutation": "the docs view loads Vditor assets from a CDN (surface: docs view, M-IMPL-reserved)",
+      "patch": "ce_ac-fr0322-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_docs_center_vditor_ir_same_origin"
+    },
+    {
+      "ac": "AC-FR0322-02",
+      "if_ref": "IF-DOCCENTER-001",
+      "mutation": "a blocked Vditor asset leaves a blank editor with no textarea fallback (surface: docs view)",
+      "patch": "ce_ac-fr0322-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_vditor_failure_textarea_fallback"
+    },
+    {
+      "ac": "AC-FR0323-01",
+      "if_ref": "IF-DOCSAVE-001",
+      "mutation": "the save control stays enabled while clean (surface: docs view)",
+      "patch": "ce_ac-fr0323-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_save_button_dirty_gating"
+    },
+    {
+      "ac": "AC-FR0323-02",
+      "if_ref": "IF-DOCSAVE-001",
+      "mutation": "a 409 silently overwrites without the two-option dialog (surface: docs view)",
+      "patch": "ce_ac-fr0323-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_conflict_dialog_two_options"
+    },
+    {
+      "ac": "AC-FR0324-01",
+      "if_ref": "IF-DOCCENTER-001",
+      "mutation": "panes share one selector/toolbar state (surface: docs view)",
+      "patch": "ce_ac-fr0324-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_multi_pane_independent"
+    },
+    {
+      "ac": "AC-FR0324-02",
+      "if_ref": "IF-DOCCENTER-001",
+      "mutation": "a fifth pane opens and disturbs the existing four (surface: docs view)",
+      "patch": "ce_ac-fr0324-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_pane_cap_four"
+    },
+    {
+      "ac": "AC-FR0325-01",
+      "if_ref": "IF-DISCUSS-001",
+      "mutation": "the discussion overlay lacks the next/unresolved navigation (surface: docs view)",
+      "patch": "ce_ac-fr0325-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_discussion_navigation_controls"
+    },
+    {
+      "ac": "AC-FR0325-02",
+      "if_ref": "IF-DISCUSS-001",
+      "mutation": "the overlay exposes resolve/reply write entries (surface: docs view)",
+      "patch": "ce_ac-fr0325-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_no_discussion_write_controls"
+    },
+    {
+      "ac": "AC-NFR0154-02",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "UI writes omit X-Trac-CSRF or Idempotency-Key (surface: docs view)",
+      "patch": "ce_ac-nfr0154-02.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_docs_ui.py::test_ui_writes_carry_csrf_idempotency"
+    },
+    {
+      "ac": "AC-FR0326-01",
+      "if_ref": "IF-TIMELINE-001",
+      "mutation": "the timeline folds attempts and renders no node overlay (surface: timeline view, M-IMPL-reserved)",
+      "patch": "ce_ac-fr0326-01.patch",
+      "result": "authored-awaiting-producer",
+      "test": "tests/e2e/test_run_timeline_ui.py::test_run_timeline_view"
+    }
   ]
 }

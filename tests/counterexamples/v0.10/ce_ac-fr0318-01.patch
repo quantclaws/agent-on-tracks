@@ -1,0 +1,17 @@
+--- a/tracks/server/static/app/shell.js
++++ b/tracks/server/static/app/shell.js
+@@ -84,6 +84,14 @@
+       ""
+     );
+     globalThis.__tracks_document = "instance-1";
++    // counterexample AC-FR0318-01: the click swaps only the sidebar —
++    // the main-area tab never opens alongside it
++    if (feature !== "settings") {
++      import("./sidebar.js").then(({ renderSidebar }) => {
++        renderSidebar({ title: TITLES[feature] || feature, nodes: [] }, shell);
++      });
++      return;
++    }
+     openTab(feature, {
+       feature,
+       title: TITLES[feature] || feature,

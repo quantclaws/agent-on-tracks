@@ -1,0 +1,16 @@
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -64,7 +64,12 @@
+         runId,
+         event_cursor: null,
+         onEvent: (delivered) => {
+-          line.textContent = delivered.type;
++          // counterexample AC-NFR0154-01: the last-event line sticks at the
++          // first delivered frame — duplicates and stale replays keep the
++          // projection regressed
++          if (!line.textContent) {
++            line.textContent = delivered.type;
++          }
+         },
+       });
+       await bound(stream.ready);

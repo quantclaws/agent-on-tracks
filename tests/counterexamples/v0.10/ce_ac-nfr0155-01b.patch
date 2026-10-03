@@ -1,0 +1,20 @@
+--- a/tests/e2e/test_workbench_ui.py
++++ b/tests/e2e/test_workbench_ui.py
+@@ -386,8 +386,15 @@
+     ui_serve.seed_run("run-ui-1", "v1.0")
+ 
+     page.goto(ui_serve.base_url + "/login", wait_until="domcontentloaded")
+-    page.get_by_test_id("login-password").fill("wrong-password")
+-    page.get_by_test_id("login-submit").click()
++    # counterexample AC-NFR0155-01: the login is submitted through an API
++    # request instead of the UI controls — the inline-error step of the
++    # journey never renders
++    page.evaluate(
++        "fetch(window.location.origin + '/api/auth/login',"
++        " {method: 'POST', credentials: 'same-origin',"
++        " headers: {'Content-Type': 'application/json'},"
++        " body: JSON.stringify({password: 'wrong-password'})})"
++    )
+     page.get_by_test_id("login-error").wait_for()
+     page.get_by_test_id("login-password").fill(SERVE_PASSWORD)
+     page.get_by_test_id("login-submit").click()

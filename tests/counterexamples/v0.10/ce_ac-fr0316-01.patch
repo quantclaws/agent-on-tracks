@@ -1,0 +1,14 @@
+--- a/tracks/server/static/app/shell.js
++++ b/tracks/server/static/app/shell.js
+@@ -77,6 +77,11 @@
+       ? event.target.closest('[data-testid^="tabbar-item-"]')
+       : null;
+     if (!item || !shell.contains(item)) return;
++    // counterexample AC-FR0316-01: the chrome navigates via full-page
++    // links — every function switch reloads the document
++    const href = item.getAttribute("href");
++    globalThis.location.assign(href || "/" );
++    return;
+     event.preventDefault();
+     event.stopPropagation();
+     const feature = (item.getAttribute("data-testid") || "").replace(

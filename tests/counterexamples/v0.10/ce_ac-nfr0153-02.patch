@@ -1,0 +1,12 @@
+--- a/tracks/server/static/app/views.js
++++ b/tracks/server/static/app/views.js
+@@ -97,7 +97,8 @@
+       }
+       body.append(runList);
+     } catch (error) {
+-      failed = true;
++      // counterexample AC-NFR0153-02: the failed projection is swallowed —
++      // the face fakes success with whatever it already rendered
+     }
+   }
+   if (failed) {
