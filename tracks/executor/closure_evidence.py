@@ -20,6 +20,8 @@ candidate (append-only history, no duplicate rounds).
 
 from __future__ import annotations
 
+import contextlib
+
 import hashlib
 import json
 import subprocess
@@ -200,7 +202,7 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
     """Resolve + execute the host run_selected for *nodes*; returns the
     subprocess CompletedProcess (never raises on command failure)."""
     argv = adapter.run_selected(section.run_selected, list(nodes), result_path, cwd)
-    return subprocess.run(
+    proc = subprocess.run(
         list(argv),
         cwd=cwd,
         capture_output=True,
@@ -208,6 +210,26 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
         timeout=_NODE_TIMEOUT_SECONDS,
         check=False,
     )
+    import json as _json
+
+    debug_path = Path("/tmp/closure-node-debug.jsonl")
+    with contextlib.suppress(OSError):
+        with debug_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                _json.dumps(
+                    {
+                        "cwd": str(cwd),
+                        "argv": list(argv),
+                        "rc": proc.returncode,
+                        "stdout": (proc.stdout or "")[-4000:],
+                        "stderr": (proc.stderr or "")[-4000:],
+                        "result_exists": result_path.exists(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return proc
 
 
 def _error_all(nodes, detail: str) -> dict[str, TestRunResult]:
