@@ -267,11 +267,15 @@ def test_milestone_close_sends_explicit_certifi_ssl_context(monkeypatch):
 # AC-FR0330-01@v0.10 TRACKS-TRACE IF-TLS-001 TRAC_GITHUB_CA_BUNDLE overrides
 def test_ca_bundle_override_replaces_certifi_default(monkeypatch, tmp_path):
     override = _single_cert_bundle(tmp_path)
-    monkeypatch.setenv("TRAC_GITHUB_CA_BUNDLE", str(override))
     opener = _install(
         monkeypatch,
         lambda method, url, body: _ISSUE_PAYLOAD,
     )
+    # AFTER arming: _install's clean-env step deletes any pre-existing
+    # TRAC_GITHUB_CA_BUNDLE, so the override must be set afterwards or it
+    # never reaches the transport call (live 2026-10-03: the pre-armed value
+    # was deleted in place and the context silently kept the certifi default).
+    monkeypatch.setenv("TRAC_GITHUB_CA_BUNDLE", str(override))
     mapping = github.readback_issue(_REPO, 5)
     assert mapping["issue_number"] == 5
     assert opener.calls, "readback_issue must perform a transport call"

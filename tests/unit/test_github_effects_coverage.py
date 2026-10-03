@@ -206,7 +206,7 @@ def test_github_backend_get_and_fetch_issue(tmp_path, monkeypatch):
         def __exit__(self, *a):
             return False
 
-    def _fake_urlopen(req, timeout=30):
+    def _fake_urlopen(req, timeout=30, context=None):
         seen.append(req.method)
         return _Resp(
             json.dumps(
@@ -222,14 +222,14 @@ def test_github_backend_get_and_fetch_issue(tmp_path, monkeypatch):
     monkeypatch.setattr(
         github.urllib.request,
         "urlopen",
-        lambda req, timeout=30: (_ for _ in ()).throw(_http_error(404, "gone")),
+        lambda req, timeout=30, context=None: (_ for _ in ()).throw(_http_error(404, "gone")),
     )
     assert backend.fetch_issue(5) is None
 
     monkeypatch.setattr(
         github.urllib.request,
         "urlopen",
-        lambda req, timeout=30: (_ for _ in ()).throw(_http_error(401, "denied")),
+        lambda req, timeout=30, context=None: (_ for _ in ()).throw(_http_error(401, "denied")),
     )
     with pytest.raises(GithubIssuesError) as exc:
         backend.fetch_issue(5)

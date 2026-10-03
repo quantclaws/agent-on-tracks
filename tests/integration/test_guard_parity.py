@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+import tracks
+from tracks import paths as tracks_paths
 from tracks.executor.guard_registry import (
     GUARD_CATEGORIES,
     GuardDeployment,
@@ -25,8 +27,23 @@ from tracks.executor.guard_registry import (
     validate_guard_registry,
 )
 
-ARCH = Path(__file__).resolve().parents[2] / ".tracks" / "projects" / "v0.7" / "architecture.md"
+# The registry under test is the CURRENT version's architecture doc — the
+# same resolution the runtime's registry gates use
+# (sync_product._link_registry_envs -> paths.version_dir(version)). A
+# hardcoded v0.7 path silently pinned the 8th guard's config_digest anchor
+# to a frozen historical config while the live project.toml evolved
+# (live 2026-10-03: the compression window's run_selected lines staled the
+# v0.7 anchor; the v0.10 doc carries the re-anchored digest).
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _current_version_dir_architecture() -> Path:
+    raw = getattr(tracks, "__version__", "0.1") or "0.1"
+    minor = ".".join(str(raw).split(".")[:2])
+    return tracks_paths.version_dir(REPO / ".tracks", f"v{minor}") / "architecture.md"
+
+
+ARCH = _current_version_dir_architecture()
 
 pytestmark = pytest.mark.integration
 

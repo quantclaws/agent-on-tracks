@@ -62,7 +62,7 @@ class _StubResp:
 def _install_stub(monkeypatch, captured, create_payload, readback_payload):
     """Stand in urllib.request.urlopen; route POST->create, GET->readback."""
 
-    def _fake_urlopen(req, timeout=30):
+    def _fake_urlopen(req, timeout=30, context=None):
         captured.append(
             {
                 "method": req.get_method(),

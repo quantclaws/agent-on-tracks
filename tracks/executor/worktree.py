@@ -176,7 +176,8 @@ def create_gate_worktree(
     Gate-worktree assembly bypasses the repo's pre-commit hooks on BOTH the
     candidate commit and the frozen-bundle cherry-pick (Prism B02 fix): the
     gate is a transient evaluation surface (never enters git history), and
-    the repo-global hooksPath hard-requires ROOT/.venv which a fresh gate
+    the repo-global hooksPath hard-requires the repo-root virtualenv
+    directory which a fresh gate
     worktree structurally lacks — a hooked commit fails deterministically
     and (pre-fix) the bare except in _ensure_gate_worktree silently degraded
     the evaluation to the main repo's placeholder (T-002's lost GREEN).

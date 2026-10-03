@@ -362,7 +362,13 @@ def test_ensure_gate_worktree_paths(tmp_path: Path, monkeypatch):
         "create_gate_worktree",
         lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
     )
-    assert host._ensure_gate_worktree(state) == (str(host.repo), None)
+    # B03 fix (Prism review 2026-09-30): creation failure is a LOUD error —
+    # attention.required is emitted and the exception re-raised (never a
+    # silent fallback to the main repo cwd that burned T-002's GREEN).
+    with pytest.raises(RuntimeError, match="boom"):
+        host._ensure_gate_worktree(state)
+    assert host.emitted[-1][0] == "attention.required"
+    assert host.emitted[-1][1]["area"] == "gate_worktree"
 
     handle = SimpleNamespace(path="/new-gate", kind="gate")
     monkeypatch.setattr(testops, "create_gate_worktree", lambda *a: handle)

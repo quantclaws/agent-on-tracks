@@ -72,7 +72,7 @@ def test_ci_readback_uses_stand_in_api_base(monkeypatch):
         def read(self):
             return b'{"workflow_runs": [{"id": 123, "head_sha": "a", "conclusion": "success"}]}'
 
-    def _fake_urlopen(req, timeout=30):
+    def _fake_urlopen(req, timeout=30, context=None):
         captured["url"] = req.full_url if hasattr(req, "full_url") else str(req)
         captured["auth"] = req.headers.get("Authorization")
         return _FakeResp()

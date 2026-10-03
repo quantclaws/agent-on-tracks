@@ -272,6 +272,8 @@ def test_service_events_closed_set_matches_interfaces():
         "material.edited",
         "access.denied",
         "auth.login",
+        # v0.10 IF-009 §1a 表 #25（FR-0321 审计）：名字绑定追加只读日志成员
+        "auth.name_bound",
     }
     assert len(sdb.SERVICE_EVENT_TYPES) == len(set(sdb.SERVICE_EVENT_TYPES))
 

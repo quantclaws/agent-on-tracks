@@ -172,7 +172,7 @@ def _resolve_probe_context(repo: Path, contract):
     # #219 P-a (2026-10-02): the acceptance probe must measure ONLY the
     # task's anchor nodes via the section's run_selected template (the
     # OOB-F-2 unit-probe pattern). The legacy directory run + appended
-    # refs hits pytest's UNION semantics — every probe measured the FULL
+    # refs hits the runner's UNION semantics — every probe measured the FULL
     # suite, burned its full 600s bound, and fail-opened to skipped: the
     # Rule-1 hard gate emitted zero output from 9/30 while every replan
     # paid ~10 anchored tasks x 600s. run_selected missing -> legacy
@@ -268,8 +268,8 @@ def _probe_one_task(
 def _run_unit_probe(ctx, nodes: list[str]):
     """OOB-F-2: run exactly the on-tree unit anchors via the section's
     run_selected template ({nodes}/{result} expanded), never the
-    whole-directory run command (pytest union semantics would measure the
-    full suite instead of the task's anchors)."""
+    whole-directory run command (the runner's union semantics would measure
+    the full suite instead of the task's anchors)."""
     import tempfile
 
     template, cwd = ctx

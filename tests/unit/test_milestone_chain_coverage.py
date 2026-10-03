@@ -243,6 +243,24 @@ def test_close_milestone_project_existing_event(tmp_path):
 def test_close_milestone_project_authoritative_success(tmp_path, monkeypatch):
     host = _Host(tmp_path)
     monkeypatch.setenv("GITHUB_TOKEN", "t")
+    # T-007 (IF-MILESTONE-002): the close chain is ensure-then-close — the
+    # remote milestone is ensured BEFORE any close is attempted. Stub the
+    # ensure seam as verified-existing so the authoritative close proceeds
+    # (unstubbed, the real ensure would fail on the synthetic tracker and
+    # fall to the audited skip path).
+    monkeypatch.setattr(
+        mc,
+        "ensure_project_milestone",
+        lambda repo, project, title: {
+            "project": project,
+            "milestone": str(title),
+            "number": 7,
+            "state": "open",
+            "created": False,
+            "api_verified": True,
+            "error": None,
+        },
+    )
     monkeypatch.setattr(
         mc,
         "close_project_milestone",
@@ -265,6 +283,21 @@ def test_close_milestone_project_authoritative_success(tmp_path, monkeypatch):
 def test_close_milestone_project_authoritative_error(tmp_path, monkeypatch):
     host = _Host(tmp_path)
     monkeypatch.setenv("GITHUB_TOKEN", "t")
+    # T-007 ensure-then-close: stub the ensure seam as verified-existing so
+    # the authoritative close (and its classified failure) is what runs.
+    monkeypatch.setattr(
+        mc,
+        "ensure_project_milestone",
+        lambda repo, project, title: {
+            "project": project,
+            "milestone": str(title),
+            "number": 7,
+            "state": "open",
+            "created": False,
+            "api_verified": True,
+            "error": None,
+        },
+    )
     monkeypatch.setattr(
         mc,
         "close_project_milestone",

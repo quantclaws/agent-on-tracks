@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -19,6 +20,17 @@ from tests._support.fixtures import (  # noqa: F401  re-export
 @pytest.fixture(autouse=True)
 def _force_fake_backend(monkeypatch):
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
+    # Env-identity parity with the `trac` fixture's subprocess env (P0-2b):
+    # the fixture setdefaults TRAC_INFRA_RETRY_LIMIT=2 into every journey
+    # subprocess, so GREEN evidence recorded there hashes that var into
+    # _gate_environment_identity. Without mirroring it here, in-process
+    # recomputation (evidence-reuse decisions) sees a different TRAC_*
+    # environment and rejects reuse of unchanged evidence (live 2026-10-03:
+    # test_reuse_decision_detects_run_selected_contract_drift). setdefault
+    # semantics preserved: an explicit operator override still wins.
+    monkeypatch.setenv(
+        "TRAC_INFRA_RETRY_LIMIT", os.environ.get("TRAC_INFRA_RETRY_LIMIT", "2")
+    )
 
 
 @pytest.hookimpl(hookwrapper=True)

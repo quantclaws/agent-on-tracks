@@ -104,13 +104,18 @@ def _write_tracks_and_tests(repo: Path):
     (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
     (repo / "tests" / "e2e").mkdir(parents=True, exist_ok=True)
     (repo / "tests" / "integration" / "__init__.py").write_text("", encoding="utf-8")
-    # test_a imports foo and bar (so T-001 exercises bar owned by T-002)
+    # test_a imports foo and bar (so T-001 exercises bar owned by T-002).
+    # The assertions FAIL on the synthetic tree on purpose: the fixture graph
+    # is a standard-RGR pre-state (anchors red against not-yet-delivered
+    # scope), the only shape rule 1 (#34, planning-time anchor probe) accepts
+    # for non-verification-only tasks — green-on-arrival anchors are a graph
+    # defect, so a passing fixture here would be rejected at commit.
     (repo / "tests" / "integration" / "test_a.py").write_text(
-        "import tracks.foo\nimport tracks.bar\ndef test_x(): assert tracks.foo.foo() == 1\n",
+        "import tracks.foo\nimport tracks.bar\ndef test_x(): assert tracks.foo.foo() == 99\n",
         encoding="utf-8",
     )
     (repo / "tests" / "integration" / "test_b.py").write_text(
-        "import tracks.bar\ndef test_y(): assert tracks.bar.bar() == 2\n",
+        "import tracks.bar\ndef test_y(): assert tracks.bar.bar() == 99\n",
         encoding="utf-8",
     )
     # e2e dummy for contract

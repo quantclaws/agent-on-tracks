@@ -34,7 +34,9 @@ class _FakeResp:
 
 
 def _make_urlopen(resp=None, raise_http=None, network_error=False):
-    def urlopen(req, timeout):
+    # IF-TLS-001 (v0.10, T-006): every live call point drives urllib with an
+    # explicit verifying SSL context — the stub accepts the context keyword.
+    def urlopen(req, timeout=None, context=None):
         if raise_http is not None:
             code, reason = raise_http
             raise urllib.error.HTTPError(req.full_url, code, reason, None, None)
@@ -117,7 +119,7 @@ def test_add_to_project_posts_card(monkeypatch):
     b = _backend(monkeypatch)
     calls = []
     monkeypatch.setattr(
-        "urllib.request.urlopen", lambda req, timeout: calls.append(req.full_url) or _FakeResp({})
+        "urllib.request.urlopen", lambda req, timeout=None, context=None: calls.append(req.full_url) or _FakeResp({})
     )
     b.add_to_project("7", "col123")
     assert calls and "cards" in calls[0]
@@ -127,7 +129,7 @@ def test_add_to_project_noop_without_project(monkeypatch):
     b = _backend(monkeypatch, project="")  # empty project
     calls = []
     monkeypatch.setattr(
-        "urllib.request.urlopen", lambda req, timeout: calls.append(req.full_url) or _FakeResp({})
+        "urllib.request.urlopen", lambda req, timeout=None, context=None: calls.append(req.full_url) or _FakeResp({})
     )
     b.add_to_project("7", "")
     assert calls == []  # no request issued
