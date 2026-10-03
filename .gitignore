@@ -22,3 +22,9 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 # END tracks-managed
+
+# runtime state (mutates every serve/poll cycle — never freeze-relevant)
+.tracks/service/service.db
+.tracks/service/service.db-shm
+.tracks/service/service.db-wal
+.tracks/projects/*/events.db
