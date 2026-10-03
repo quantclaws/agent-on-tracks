@@ -1,28 +1,15 @@
-diff --git a/tracks/server/pages.py b/tracks/server/pages.py
-index 15b1083..5cdb3e4 100644
 --- a/tracks/server/pages.py
 +++ b/tracks/server/pages.py
-@@ -86,16 +86,16 @@ def _body(name: str, context: dict) -> str:
- 
- 
- def _login_body() -> str:
-+    # counterexample AC-FR0320-01: the login controls exist but the face is a
-+    # single pane without the hero column
+@@ -135,11 +135,7 @@
      return "\n".join(
          [
-             '<main id="page-login" data-page="login">',
--            "<h1>tracks login</h1>",
--            '<form id="login-form" method="post" action="/api/auth/login">',
--            '<label for="password">Password</label>',
--            '<input id="password" name="password" type="password"'
--            ' autocomplete="current-password" required>',
--            '<button type="submit">Log in</button>',
--            "</form>",
-+            '<input data-testid="login-password" type="password">',
-+            '<button data-testid="login-submit">Log in</button>',
-+            '<div data-testid="login-error" hidden></div>',
-+            '<input data-testid="name-input">',
-+            '<button data-testid="name-submit">Save</button>',
-             "</main>",
-         ]
-     )
+             '<main class="auth-shell" data-testid="login-shell">',
+-            '<section class="auth-hero" data-testid="login-hero">',
+-            f'<img class="auth-hero-image" src="{_HERO_IMAGE}" alt="tracks workbench logo">',
+-            '<p class="auth-slogan">One workbench for the whole run.</p>',
+-            '<p class="auth-credit" data-testid="login-hero-credit">Image: Vditor (MIT)</p>',
+-            "</section>",
++            "<!-- counterexample AC-FR0320-01: the hero column is omitted -->",
+             '<section class="auth-panel" data-testid="login-panel">',
+             '<h1 class="auth-title">tracks</h1>',
+             '<form class="auth-form login-form" data-testid="login-form" method="post"'

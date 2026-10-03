@@ -1,16 +1,13 @@
-diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
-index 73e6bda..855047d 100644
---- a/tracks/supervisor/service.py
-+++ b/tracks/supervisor/service.py
-@@ -281,6 +281,11 @@ _MATERIAL_FILES = {
-     "spec": "spec.md",
-     "acceptance": "acceptance.md",
-     "design": "architecture.md",
-+    # counterexample AC-FR0323-01: the six-piece doc set is accepted by the
-+    # save channel while the projected revision never moves
-+    "architecture": "architecture.md",
-+    "interfaces": "interfaces.md",
-+    "test-plan": "test-plan.md",
- }
- 
+--- a/tracks/server/static/app/editor.js
++++ b/tracks/server/static/app/editor.js
+@@ -126,7 +126,9 @@
+     source.value = draft.content;
+     setRevision(revision_);
+     draft.dirty = false;
+-    saveButton.disabled = true;
++    // counterexample AC-FR0323-01: the loaded clean editor leaves the save
++    // control enabled — an unsolicited save is offered
++    saveButton.disabled = false;
+     return draft.content;
+   }
  

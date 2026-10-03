@@ -1,15 +1,18 @@
-diff --git a/tracks/executor/milestone_chain.py b/tracks/executor/milestone_chain.py
-index 0f38847..bb651e5 100644
 --- a/tracks/executor/milestone_chain.py
 +++ b/tracks/executor/milestone_chain.py
-@@ -478,7 +478,9 @@ class ExecMilestoneMixin:
-         return True
- 
-     def _complete_milestone(self, cmd, task_id, trace, events):
--        if any(event.type == "run.completed" for event in events):
-+        # counterexample AC-FR0327-01: no terminal-state guard at all, so a
-+        # re-issued close re-completes the run
-+        if False and any(event.type == "run.completed" for event in events):
+@@ -543,11 +543,10 @@
+         # is the idempotent completion witness -- the M-IMPL closure boundary
+         # pseudo-completion (terminal_state=boundary) must not block the
+         # released terminal event from landing.
+-        if any(
+-            _event_type(event) == "run.completed"
+-            and _event_payload(event).get("terminal_state") == "released"
+-            for event in events
+-        ):
++        # counterexample AC-FR0327-01: ANY run.completed satisfies the
++        # idempotency guard — the boundary pseudo-completion blocks the
++        # released terminal event and a re-issued close re-completes
++        if any(_event_type(event) == "run.completed" for event in events):
              return
          # §1.0.7 terminal face: the closing tail completes with
          # run.completed(terminal_state=released, release_tag).

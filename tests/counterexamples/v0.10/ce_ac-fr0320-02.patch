@@ -1,17 +1,14 @@
-diff --git a/tracks/server/app.py b/tracks/server/app.py
-index 8f41075..6bf6bb1 100644
 --- a/tracks/server/app.py
 +++ b/tracks/server/app.py
-@@ -212,7 +212,11 @@ class _AuthGlue:
-             with contextlib.closing(_open_conn(self._home)) as conn:
+@@ -300,8 +300,10 @@
                  conn.execute("DELETE FROM sessions WHERE token_hash = ?", (digest,))
                  conn.commit()
--        return Response(status_code=204)
-+        response = Response(status_code=204)
-+        # counterexample AC-FR0320-02: clears a differently-named cookie, the
-+        # session credential survives in the browser
-+        response.set_cookie("trac_session_v2", "", max_age=0, path="/")
-+        return response
+         response = Response(status_code=204)
++        # counterexample AC-FR0320-02: logout clears an unrelated cookie —
++        # the session credential itself survives the logout
+         response.delete_cookie(
+-            SESSION_COOKIE, path="/", httponly=True, samesite="strict"
++            "trac_session_other", path="/", httponly=True, samesite="strict"
+         )
+         return response
  
-     def _audit(self, actor: str, outcome: str) -> None:
-         store = getattr(self._supervisor, "db", None)

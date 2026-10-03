@@ -1,14 +1,16 @@
-diff --git a/tracks/server/pages.py b/tracks/server/pages.py
-index 15b1083..23160c3 100644
---- a/tracks/server/pages.py
-+++ b/tracks/server/pages.py
-@@ -113,6 +113,9 @@ def _placeholder_body(name: str, context: dict) -> str:
-         [
-             f'<main id="page-{name}" data-page="{name}"{attrs}>',
-             f"<h1>{html.escape(_TITLES[name])}</h1>",
-+            # counterexample AC-NFR0153-01: a fabricated run row baked into
-+            # the shell HTML instead of the live projection
-+            '<div data-run-id="run-shell-overview-1">v1.0 M-IMPL</div>',
-             "</main>",
-         ]
-     )
+--- a/tracks/server/static/app/views.js
++++ b/tracks/server/static/app/views.js
+@@ -172,6 +172,13 @@
+       body.append(degradedMessage("No registered projects yet"));
+     }
+     const list = element("ul", { class: "run-list", "data-testid": "run-list" });
++    // counterexample AC-NFR0153-01: a fabricated run row renders alongside
++    // the real projection values on the overview
++    list.append(
++      element("li", { class: "run-row", "data-testid": "overview-run-run-ui-1" }, [
++        element("span", { text: "run-ui-1 fabricated · v0.0" }),
++      ])
++    );
+     for (const run of runs) {
+       // Each row carries the run's live last event (timeline-last-event):
+       // the merged-stream face keeps it current, the cursor guard keeps it

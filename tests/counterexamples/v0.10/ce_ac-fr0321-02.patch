@@ -1,13 +1,16 @@
-diff --git a/tracks/server/app.py b/tracks/server/app.py
-index 8f41075..e6cb396 100644
 --- a/tracks/server/app.py
 +++ b/tracks/server/app.py
-@@ -127,6 +127,8 @@ def _build_routes(glue: _AuthGlue) -> list:
-     routes += [
+@@ -146,6 +146,13 @@
          Route("/api/auth/login", glue.login, methods=["POST"]),
          Route("/api/auth/logout", glue.logout, methods=["POST"]),
-+        # counterexample AC-FR0321-02: a registration surface exists
-+        Route("/api/auth/register", glue.login, methods=["POST"]),
+         Route("/api/auth/name", glue.bind_name, methods=["POST"]),
++        # counterexample AC-FR0321-02: a registration surface exists and
++        # accepts POST — the single-identity model is broken
++        Route(
++            "/api/auth/register",
++            glue.login,
++            methods=["POST"],
++        ),
+         Route("/api/auth/profile", glue.profile, methods=["GET"]),
      ]
      routes.append(
-         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static")
