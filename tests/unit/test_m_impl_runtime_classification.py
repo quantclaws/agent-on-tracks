@@ -1,5 +1,11 @@
 import pytest
 
+# Staging-identity isolation (Prism DIAGNOSE 2026-10-03, test_defect):
+# run_id/command_id carry a per-file suffix — the GREEN-gate staging file
+# ($TMPDIR/tracks-results/<run_id>/<command_id>-<layer>.xml) collided across
+# xdist workers when two green-gate suites ran concurrently (production keys
+# are unique ULIDs and never collide).
+
 from tests.unit.test_m_impl_runtime_support import (
     _TASK_REVIEW_FLAWS,
     RGR_RED_DIFF,
@@ -87,7 +93,7 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
         _write_if_mapped_integration_test(Path(gate.path))
         executor = _executor(repo, store)
         executor._do_run_task_gates(
-            Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+            Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-CLS"),
             store.state("RUN"),
             None,
             False,
@@ -655,7 +661,7 @@ def test_green_gate_lint_findings_fail_with_check_lint(tmp_path):
     executor = _executor(repo, store)
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-CLS"),
         store.state("RUN"),
         None,
         False,

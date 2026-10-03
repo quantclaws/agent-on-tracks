@@ -1,3 +1,9 @@
+# Staging-identity isolation (Prism DIAGNOSE 2026-10-03, test_defect):
+# run_id/command_id carry a per-file suffix — the GREEN-gate staging file
+# ($TMPDIR/tracks-results/<run_id>/<command_id>-<layer>.xml) collided across
+# xdist workers when two green-gate suites ran concurrently (production keys
+# are unique ULIDs and never collide).
+
 from tests.unit.test_m_impl_runtime_support import (
     RGR_GREEN_DIFF,
     Command,
@@ -50,7 +56,7 @@ def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
 
     executor = _executor(repo, store)
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -102,7 +108,7 @@ def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
 
     executor = _executor(repo, store)
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -144,7 +150,7 @@ def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_pat
     _write_if_mapped_integration_test(repo)
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -171,7 +177,7 @@ def test_green_gate_regression_when_devon_reports_changed_r_frozen_test(tmp_path
     )
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -217,7 +223,7 @@ def test_green_gate_regression_when_captured_diff_touches_r_test_unclaimed(tmp_p
     )
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -250,7 +256,7 @@ def test_green_gate_not_regression_on_tests_added_after_r(tmp_path):
     )
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -299,7 +305,7 @@ def test_green_gate_not_regression_when_reported_test_not_in_r(tmp_path):
     )
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
@@ -338,7 +344,7 @@ def test_green_gate_ambiguous_r_identity_fails_closed_as_contract_error(tmp_path
     _write_failing_unit_test(repo, passes=True)
 
     executor._do_run_task_gates(
-        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE-REV"),
         store.state("RUN"),
         None,
         False,
