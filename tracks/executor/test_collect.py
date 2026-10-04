@@ -283,7 +283,7 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             command_id=cmd.command_id,
         )
 
-    def _do_capture_baseline(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals — D-41 capture matrix
+    def _do_capture_baseline(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """D-41/IF-SELECT-001 (v5): M-TEST entry pre-WRITE R1 snapshot.
 
         Runs BEFORE this run's first Shield WRITE dispatch: full collect of
@@ -372,7 +372,7 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             command_id=cmd.command_id,
         )
 
-    def _measure_expected_green(  # pylint: disable=too-many-locals — full-node expectation matrix
+    def _measure_expected_green(  # pylint: disable=too-many-locals
         self, cmd, node_layer: dict[str, str]
     ) -> tuple[set[str], str | None]:
         """Re-entry expectation anchoring (#211 gap 2): run every node that
