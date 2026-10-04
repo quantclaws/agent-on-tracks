@@ -5,7 +5,6 @@ import pytest
 # ($TMPDIR/tracks-results/<run_id>/<command_id>-<layer>.xml) collided across
 # xdist workers when two green-gate suites ran concurrently (production keys
 # are unique ULIDs and never collide).
-
 from tests.unit.test_m_impl_runtime_support import (
     _TASK_REVIEW_FLAWS,
     RGR_RED_DIFF,
