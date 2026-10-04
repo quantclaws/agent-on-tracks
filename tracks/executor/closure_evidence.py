@@ -21,10 +21,9 @@ candidate (append-only history, no duplicate rounds).
 from __future__ import annotations
 
 import contextlib
-import os
-
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from collections.abc import Mapping
@@ -245,22 +244,21 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
     import json as _json
 
     debug_path = Path("/tmp/closure-node-debug.jsonl")
-    with contextlib.suppress(OSError):
-        with debug_path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                _json.dumps(
-                    {
-                        "cwd": str(cwd),
-                        "argv": list(argv),
-                        "rc": proc.returncode,
-                        "stdout": (proc.stdout or "")[-4000:],
-                        "stderr": (proc.stderr or "")[-4000:],
-                        "result_exists": result_path.exists(),
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
+    with contextlib.suppress(OSError), debug_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            _json.dumps(
+                {
+                    "cwd": str(cwd),
+                    "argv": list(argv),
+                    "rc": proc.returncode,
+                    "stdout": (proc.stdout or "")[-4000:],
+                    "stderr": (proc.stderr or "")[-4000:],
+                    "result_exists": result_path.exists(),
+                },
+                ensure_ascii=False,
             )
+            + "\n"
+        )
     return proc
 
 
@@ -272,7 +270,7 @@ def _error_all(nodes, detail: str) -> dict[str, TestRunResult]:
     }
 
 
-def _run_nodes_factory(repo: Path):
+def _run_nodes_factory(repo: Path):  # noqa: CCR001 — fail-closed branches per guard
     """Run nodes through the HOST-DECLARED adapter (language-neutral, NFR-0147).
 
     The selected nodes execute via the contract's ``run_selected`` template

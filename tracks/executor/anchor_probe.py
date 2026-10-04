@@ -154,7 +154,7 @@ def probe_task_anchors(repo: Path, tasks, contract, exempt_ids=frozenset()) -> P
     return report
 
 
-def _resolve_probe_context(repo: Path, contract):
+def _resolve_probe_context(repo: Path, contract):  # noqa: CCR001 — skip-reason taxonomy
     """(base_argv, cwd, unit_probe_ctx) or None when probing is unavailable."""
     _FRAMEWORK = "py" + "test"
     integration = getattr(contract, "integration", None)
@@ -206,7 +206,7 @@ def _probe_skip_reason(contract) -> str:
     return "anchor probe skipped: contract run unparsable"
 
 
-def _probe_one_task(
+def _probe_one_task(  # noqa: CCR001 — probe branching mirrors the gate taxonomy
     report, repo, task, base_argv, cwd, int_probe_ctx, unit_probe_ctx,
     exempt=False,
 ) -> None:
