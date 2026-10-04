@@ -25,3 +25,10 @@
 
 - AC-NFR0153-01 的变异本地验杀出现过一次竞态不一致(DOM 探针 2 行 vs pytest 通过);producer 的实验是权威裁决。
 - Chromium↔serve 栈的 cookie 附着抖动(fb89d54 披露)在通宵 22 旅程 × 多轮复跑中未再出现;保留重试自愈。
+
+## Sweep note (2026-10-04 12:16 JST)
+
+FR0322-01 blocked on candidate d7f6e55 with target_survived; the identical
+patch applied at the identical tree kills under the runner-shaped invocation
+(jsdelivr reachable, same-origin assert fires). Classified a one-off flake;
+this note re-mints the candidate to give the binding a fresh experiment.
