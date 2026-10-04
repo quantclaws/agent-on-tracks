@@ -479,7 +479,11 @@ class ExecClosureEvidenceMixin:
             candidate_digest=candidate_sha,
             patch_digest=patch_digest,
             target_nodes=[binding["test"]],
-            control_nodes=[binding["control"]],
+            # a primary binding may declare no control node (the supplement
+            # table is where explicit controls are mandatory); an empty
+            # string must never enter the runner -- pytest would treat it
+            # as a path argument and collect the whole tree.
+            control_nodes=[c for c in (binding["control"],) if c],
             runner_identity="runtime:mutation-v1",
             allowed_change_scope=_allowed_change_scope(patch_file),
         )
