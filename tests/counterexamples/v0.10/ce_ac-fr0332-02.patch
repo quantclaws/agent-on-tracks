@@ -1,32 +1,12 @@
-diff --git a/tracks/executor/run_loop.py b/tracks/executor/run_loop.py
-index 2bcbb82..970967b 100644
---- a/tracks/executor/run_loop.py
-+++ b/tracks/executor/run_loop.py
-@@ -578,6 +578,27 @@ the host Executor keeps construction and the command handlers."""
-             assignment = dict(params.get("assignment") or {})
-             assignment["scenario_context"] = deepcopy(self.assignment_overlay)
-             params["assignment"] = assignment
-+        if params.get("role") == "lex" and params.get("substate") == "LEX_REVIEW":
-+            # counterexample AC-FR0332-02: the open-thread list is injected
-+            # only on the run first lex dispatch, never on re-dispatches
-+            prior = [
-+                e
-+                for e in self.store.events(self.run_id)
-+                if e.type == "outcome.received"
-+                and (e.payload or {}).get("role") == "lex"
-+            ]
-+            if not prior:
-+                assignment = dict(params.get("assignment") or {})
-+                assignment["open_threads"] = [
-+                    {
-+                        "thread_id": "T-001",
-+                        "status": "open",
-+                        "initiator": "Lex",
-+                        "awaiting": "Human",
-+                        "anchor": "spec.md:16",
-+                    }
-+                ]
-+                params["assignment"] = assignment
-         if state.stage == "M-IMPL":
-             params["assignment"] = self._materialize_m_impl_assignment(
-                 state, params, cid,
+--- a/tracks/executor/dispatch.py
++++ b/tracks/executor/dispatch.py
+@@ -301,6 +301,9 @@
+         path = Path(doc_path)
+         if not path.exists():
+             return assignment
++        # counterexample AC-FR0332-02: the open-thread context is never
++        # injected — every re-entry opens fresh duplicate threads
++        return assignment
+         enriched = dict(assignment or {})
+         enriched["open_threads"] = _lex_open_threads(path)
+         return enriched

@@ -1,13 +1,56 @@
 --- a/tracks/server/static/app/editor.js
 +++ b/tracks/server/static/app/editor.js
-@@ -126,7 +126,9 @@
+@@ -71,7 +71,7 @@
+     "data-testid": "doc-save",
+     text: "Save",
+   });
+-  saveButton.disabled = true;
++  saveButton.disabled = false; // counterexample AC-FR0323-01: never gated
+   saveButton.addEventListener("click", () => submit());
+ 
+   const conflict = conflictPanel();
+@@ -90,7 +90,7 @@
+   function setContent(value) {
+     draft.content = typeof value === "string" ? value : "";
+     draft.dirty = draft.content !== draft.saved;
+-    saveButton.disabled = !draft.dirty;
++    saveButton.disabled = false; // counterexample AC-FR0323-01: never gated on dirty
+     return draft.dirty;
+   }
+ 
+@@ -104,7 +104,7 @@
+     draft.content = typeof value === "string" ? value : "";
+     source.value = draft.content;
+     draft.dirty = draft.content !== draft.saved;
+-    saveButton.disabled = !draft.dirty;
++    saveButton.disabled = false; // counterexample AC-FR0323-01: never gated on dirty
+     return draft.dirty;
+   }
+ 
+@@ -126,7 +126,7 @@
      source.value = draft.content;
      setRevision(revision_);
      draft.dirty = false;
 -    saveButton.disabled = true;
-+    // counterexample AC-FR0323-01: the loaded clean editor leaves the save
-+    // control enabled — an unsolicited save is offered
-+    saveButton.disabled = false;
++    saveButton.disabled = false; // counterexample AC-FR0323-01: never gated
      return draft.content;
    }
  
+@@ -141,7 +141,7 @@
+         result && result.new_revision ? result.new_revision : draft.baseRevision;
+       setRevision(draft.baseRevision);
+       draft.dirty = false;
+-      saveButton.disabled = true;
++      saveButton.disabled = false; // counterexample AC-FR0323-01: never gated
+       status.textContent = "Saved";
+       errorLine.hidden = true;
+       conflict.hide();
+@@ -183,7 +183,7 @@
+       server && server.revision ? server.revision : currentRevision;
+     setRevision(draft.baseRevision);
+     draft.dirty = false;
+-    saveButton.disabled = true;
++    saveButton.disabled = false; // counterexample AC-FR0323-01: never gated
+     conflict.hide();
+     errorLine.hidden = true;
+     status.textContent = "Reloaded";

@@ -1,16 +1,18 @@
 --- a/tracks/server/static/app/views.js
 +++ b/tracks/server/static/app/views.js
-@@ -172,6 +172,13 @@
-       body.append(degradedMessage("No registered projects yet"));
-     }
-     const list = element("ul", { class: "run-list", "data-testid": "run-list" });
-+    // counterexample AC-NFR0153-01: a fabricated run row renders alongside
-+    // the real projection values on the overview
-+    list.append(
-+      element("li", { class: "run-row", "data-testid": "overview-run-run-ui-1" }, [
-+        element("span", { text: "run-ui-1 fabricated · v0.0" }),
-+      ])
-+    );
-     for (const run of runs) {
-       // Each row carries the run's live last event (timeline-last-event):
-       // the merged-stream face keeps it current, the cursor guard keeps it
+@@ -86,6 +86,15 @@
+         `/api/projects/${encodeURIComponent(id)}/overview`
+       );
+       const runList = element("ul", { class: "run-list", "data-testid": "overview-runs" });
++      // counterexample AC-NFR0153-01: a fabricated run row renders alongside
++      // the real projection values on the overview
++      runList.append(
++        element("li", {
++          class: "run-row",
++          "data-testid": "overview-run-run-ui-1",
++          text: "run-ui-1 fabricated · v0.0",
++        })
++      );
+       for (const run of overview.runs || []) {
+         runList.append(
+           element("li", {
