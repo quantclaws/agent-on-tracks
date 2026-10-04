@@ -1,25 +1,29 @@
-diff --git a/tracks/server/app.py b/tracks/server/app.py
-index 8f41075..778b1f2 100644
---- a/tracks/server/app.py
-+++ b/tracks/server/app.py
-@@ -131,6 +131,20 @@ def _build_routes(glue: _AuthGlue) -> list:
-     routes.append(
-         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static")
-     )
-+
-+    # counterexample AC-FR0325-02: a discussion write-back endpoint exists
-+    async def _discussion_resolve(request):
-+        from starlette.responses import JSONResponse
-+
-+        return JSONResponse({"status": "resolved"})
-+
-+    routes.append(
-+        Route(
-+            "/api/projects/{pid}/docs/{version}/{doc}/discussions/resolve",
-+            _discussion_resolve,
-+            methods=["POST"],
-+        )
-+    )
-     return routes
+--- a/tracks/server/static/app/discussions.js
++++ b/tracks/server/static/app/discussions.js
+@@ -38,10 +38,26 @@
+     "data-testid": "discussion-filter-unresolved",
+     text: "Unresolved only",
+   });
++  const resolveButton = element("button", {
++    type: "button",
++    class: "discussion-resolve",
++    "data-testid": "discussion-resolve",
++    text: "Resolve",
++  });
++  const replyButton = element("button", {
++    type: "button",
++    class: "discussion-reply",
++    "data-testid": "discussion-reply",
++    text: "Reply",
++  });
++  // counterexample AC-FR0325-02: the overlay carries resolve/reply write
++  // entries — read-only navigation is no longer the closed surface
+   const controls = element("div", { class: "discussion-controls" }, [
+     toggleButton,
+     nextButton,
+     unresolvedButton,
++    resolveButton,
++    replyButton,
+   ]);
  
- 
+   toggleButton.addEventListener("click", () => toggle());

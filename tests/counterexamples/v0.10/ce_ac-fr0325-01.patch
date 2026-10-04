@@ -1,26 +1,15 @@
-diff --git a/tracks/server/app.py b/tracks/server/app.py
-index 8f41075..3aa37dd 100644
---- a/tracks/server/app.py
-+++ b/tracks/server/app.py
-@@ -131,6 +131,21 @@ def _build_routes(glue: _AuthGlue) -> list:
-     routes.append(
-         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static")
-     )
-+
-+    # counterexample AC-FR0325-01: the discussion projection exists but
-+    # serves an empty thread list instead of the parsed threads
-+    async def _discussions(request):
-+        from starlette.responses import JSONResponse
-+
-+        return JSONResponse({"threads": []})
-+
-+    routes.append(
-+        Route(
-+            "/api/projects/{pid}/docs/{version}/{doc}/discussions",
-+            _discussions,
-+            methods=["GET"],
-+        )
-+    )
-     return routes
+--- a/tracks/server/static/app/discussions.js
++++ b/tracks/server/static/app/discussions.js
+@@ -38,10 +38,10 @@
+     "data-testid": "discussion-filter-unresolved",
+     text: "Unresolved only",
+   });
++  // counterexample AC-FR0325-01: the overlay carries only the toggle —
++  // the next/unresolved navigation capabilities were never built
+   const controls = element("div", { class: "discussion-controls" }, [
+     toggleButton,
+-    nextButton,
+-    unresolvedButton,
+   ]);
  
- 
+   toggleButton.addEventListener("click", () => toggle());

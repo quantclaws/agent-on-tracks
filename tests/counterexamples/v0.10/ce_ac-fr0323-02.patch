@@ -1,20 +1,14 @@
-diff --git a/tracks/server/api_command.py b/tracks/server/api_command.py
-index 1c804cf..71ac898 100644
---- a/tracks/server/api_command.py
-+++ b/tracks/server/api_command.py
-@@ -264,9 +264,14 @@ def _accept(
-             idempotency_key=request.headers.get("Idempotency-Key"),
-         )
-     except Rejection as rejection:
--        return _error(
-+        response = _error(
-             _rejection_status(kind, rejection.reason), rejection.reason, rejection.detail
-         )
-+        if rejection.reason == "stale_revision" and isinstance(response.payload, dict):
-+            # counterexample AC-FR0323-02: the 409 echoes the submitted base
-+            # revision instead of the server current one
-+            response.payload["error"]["current_revision"] = params.get("base_revision")
-+        return response
-     payload: dict = {"command_id": receipt.command_id}
-     if respond is not None:
-         payload.update(respond(receipt))
+--- a/tracks/server/static/app/editor.js
++++ b/tracks/server/static/app/editor.js
+@@ -148,8 +148,9 @@
+       return result;
+     } catch (error) {
+       if (error && error.status === 409) {
+-        conflict.show(conflictRevision(error));
+-        return null;
++        // counterexample AC-FR0323-02: a 409 is retried once with the
++        // original base — the conflict dialog never opens
++        return submit();
+       }
+       // Write failure: the local draft stays in place and is retryable.
+       status.textContent = "Save failed";
