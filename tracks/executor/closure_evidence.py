@@ -21,6 +21,7 @@ candidate (append-only history, no duplicate rounds).
 from __future__ import annotations
 
 import contextlib
+import os
 
 import hashlib
 import json
@@ -222,6 +223,16 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
     """Resolve + execute the host run_selected for *nodes*; returns the
     subprocess CompletedProcess (never raises on command failure)."""
     argv = adapter.run_selected(section.run_selected, list(nodes), result_path, cwd)
+    # PYTHONPATH=worktree keeps the MUTATED tree authoritative for every
+    # descendant process: the frozen web tests spawn a real serve subprocess
+    # with cwd=tmp-host-repo, where `python -m tracks...` would otherwise
+    # resolve the main repo's editable install and serve UNMUTATED code --
+    # the classic target-survived false negative (live 2026-10-04: all eight
+    # serve-exercised SPA mutants survived against the candidate worktree).
+    # PYTHONPATH entries precede site .pth additions, so the worktree
+    # shadows the editable install in the runner AND its grandchildren.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(cwd) + os.pathsep + env.get("PYTHONPATH", "")
     proc = subprocess.run(
         list(argv),
         cwd=cwd,
@@ -229,6 +240,7 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
         text=True,
         timeout=_NODE_TIMEOUT_SECONDS,
         check=False,
+        env=env,
     )
     import json as _json
 
