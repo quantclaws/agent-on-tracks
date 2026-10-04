@@ -243,7 +243,7 @@ UI e2e 需要真实浏览器。取 Playwright Python 1.63.0（当前最新稳定
 
 ### 4.2 Canonical quality guard registry（v0.10）
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.10 canonical 真相（承接 ARCH-009 §4.2）。本版输入变更二处：`pyproject.toml`（certifi/playwright 依赖、ui marker/addopts、package-data、version 0.10.0）与 `.tracks/projects/project.toml`（version bindings、required_checks 追加 ui-e2e）；六条 pyproject-backed config_digest 重锚为 `0ffa985b…`（2026-10-02 追加重锚：dev extras 追加 pytest-cov==7.1.0，P0-3；初版值为 ee98aae6…），hooks-runner 的 project.toml digest 重锚为 `14122c49…`（2026-10-02 追加重锚：test-compression P1-4 经 operator 批准将三层 run/run_selected 的 `-n 4` 恢复为 `-n 8`（v0.8 取值，推翻 9/17 directive），bytes 变化同步本 digest）；`.flake8` bytes 未变，cognitive-complexity digest 不变。字段语义、digest 公式（单文件 sha256(raw bytes)）、八类强制、fail_closed、禁 `--exit-zero` 全部继承，不再重复。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.10 canonical 真相（承接 ARCH-009 §4.2）。本版输入变更二处：`pyproject.toml`（certifi/playwright 依赖、ui marker/addopts、package-data、version 0.10.0）与 `.tracks/projects/project.toml`（version bindings、required_checks 追加 ui-e2e）；六条 pyproject-backed config_digest 重锚为 `3c5561cd…` (2026-10-04 追加重锚：starlette>=1.3.1 安全修复)（2026-10-02 追加重锚：dev extras 追加 pytest-cov==7.1.0，P0-3；初版值为 ee98aae6…），hooks-runner 的 project.toml digest 重锚为 `14122c49…`（2026-10-02 追加重锚：test-compression P1-4 经 operator 批准将三层 run/run_selected 的 `-n 4` 恢复为 `-n 8`（v0.8 取值，推翻 9/17 directive），bytes 变化同步本 digest）；`.flake8` bytes 未变，cognitive-complexity digest 不变。字段语义、digest 公式（单文件 sha256(raw bytes)）、八类强制、fail_closed、禁 `--exit-zero` 全部继承，不再重复。
 
 ```toml
 [quality_registry]
@@ -258,7 +258,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -274,7 +274,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -306,7 +306,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -322,7 +322,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -338,7 +338,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=4 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
@@ -354,7 +354,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=89"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
+config_digest = "sha256:3c5561cd30246ea65dff47b812aa773783262e1c95789aa1760a1ee9f4404977"
 scope = ["tracks"]
 threshold = "line coverage >=89; by=collected; source omit=pure-I/O backends (opencode subprocess/session/pty, fake backends, evidence I/O — pyproject.toml [tool.coverage] omit)"
 timeout_seconds = 1800
