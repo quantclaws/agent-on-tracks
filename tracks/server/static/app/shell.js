@@ -176,6 +176,13 @@ async function revealForPendingName(root) {
 }
 
 function revealNameStep(root) {
+  // the password step is complete — hide its form so the right pane shows
+  // exactly one active step (the frozen contract never asserted this, but
+  // leaving both rendered reads as "still asking for the password")
+  const loginForm = root.querySelector('[data-testid="login-form"]');
+  if (loginForm) {
+    loginForm.setAttribute("hidden", "");
+  }
   const nameForm = root.querySelector('[data-testid="login-name-form"]');
   if (nameForm) {
     nameForm.removeAttribute("hidden");
