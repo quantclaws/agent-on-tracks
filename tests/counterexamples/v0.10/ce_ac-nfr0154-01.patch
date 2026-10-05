@@ -1,18 +1,24 @@
 diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
-index 810ad44..d03fe82 100644
+index 2b79e9b..5c349ff 100644
 --- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -90,7 +90,12 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {})
-           event_cursor: null,
-           onEvent: (delivered) => {
-             fresh.seen.add(delivered.type);
--            if (fresh.line) fresh.line.textContent = delivered.type;
-+            // counterexample AC-NFR0154-01: the last-event line sticks at the
-+            // first delivered frame — duplicates and stale replays keep the
-+            // projection regressed
-+            if (fresh.line && !fresh.line.textContent) {
-+              fresh.line.textContent = delivered.type;
-+            }
-           },
-         });
-         rowStreams.set(runId, fresh);
+@@ -100,10 +100,15 @@ export function renderTimelineView(body, context = {}) {
+         event_cursor: (timeline && timeline.cursor) || null,
+         eventTypes: Array.from(new Set(events.map((event) => event.type))),
+         onEvent: (delivered) => {
+-          state.last =
+-            delivered.payload && delivered.payload.type
+-              ? delivered.payload
+-              : { type: delivered.type };
++          // counterexample AC-NFR0154-01: the projection sticks at its
++          // first value — duplicates and stale replays keep the rendered
++          // face regressed instead of advancing to the newest event
++          if (!state.last) {
++            state.last =
++              delivered.payload && delivered.payload.type
++                ? delivered.payload
++                : { type: delivered.type };
++          }
+           const line = body.querySelector('[data-testid="timeline-last-event"]');
+           if (line) line.textContent = lastEventText(state.last);
+         },

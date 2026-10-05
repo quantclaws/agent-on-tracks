@@ -2,7 +2,7 @@
  "version": "v0.10",
  "contract": "Each v0.10 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan section 1.5 and the test-review TEST-3 criterion. 28 patches were authored against the current tree and all 28 were executed as apply -> run-bound-test -> observe-FAIL -> revert (result=killed), including counterexample implementations that make an absent v0.10 surface exist with contract-violating semantics. AC-NFR0155-01's discriminating surface is the ui test asset itself (the scan target is delivered by M-IMPL), and the ui-journey tests' discriminating surfaces (workbench shell/static app) are contract-reserved for M-IMPL, so the 22 bindings whose discriminating surfaces do not exist at M-TEST carry the mutation specification with result=pending-implementation for materialization at M-TEST re-entry; patches are fail-closed checked (git apply --check) and touch no product behavior beyond the stated mutation. Count correction 2026-09-28: this header previously restated 24 executed kills / 4 pending bindings (a stale mid-authoring count); the binding records below are the per-item authority and record 28 killed + 22 pending-implementation.",
  "reverification": {
-  "apply_check": "all 28 patches pass git apply --check at HEAD 789e61a5 and at HEAD 16c336a6 (both post-authoring executor revisions), and again at HEAD ccafaf946396 after the operator SSE-storm fixes (3ba805d/ccafaf9) rewrote the row-subscription seam — ce_ac-nfr0154-01 was re-minted against the new onEvent region (28/28 apply-checkable)",
+  "apply_check": "all 28 patches pass git apply --check at HEAD 789e61a5 and at HEAD 16c336a6 (both post-authoring executor revisions), and again at HEAD 4363ee6b1fd7 after the operator post-release fixes (3ba805d/ccafaf9/4363ee6) rewrote the row-subscription seam and then removed it entirely (runs registry moved to the sidebar, main face opens on the newest run's timeline) — ce_ac-nfr0154-01 was re-minted twice against the moving seam and now pins the timeline detail's state.last update (28/28 apply-checkable)",
   "sessions": [
    {
     "head": "789e61a554c30106bf3bacdec649cd0a9eeb4b76",
@@ -296,6 +296,18 @@
     "head": "ccafaf946396d3c682ffe17a676a77c18c1ace2e",
     "date": "2026-10-05",
     "note": "operator post-release fix review (Prism OOB): 3ba805d rewrote the timeline.js row-subscription onEvent region that ce_ac-nfr0154-01 pins, breaking its apply-check; the patch was re-minted against ccafaf9 with the same stick-at-first semantics and its kill was executed for the first time (apply -> bound anchor FAIL -> revert -> anchor green)",
+    "executed_kills": [
+     {
+      "patch": "ce_ac-nfr0154-01.patch",
+      "test": "tests/e2e/test_workbench_ui.py::test_sse_reconnect_backfill_monotonic",
+      "outcome": "killed"
+     }
+    ]
+   },
+   {
+    "head": "4363ee6b1fd751d770b4d0a8c97e1f4d3350e0c6",
+    "date": "2026-10-05",
+    "note": "operator runs-area restructure (4363ee6): the row-subscription seam the previous re-mint pinned was removed entirely (registry rows live in the sidebar; the timeline detail is the only event consumer). The patch now freezes the timeline detail's state.last (stick-at-first semantics, same AC violation); kill executed: bound anchor fails under the mutation, green after revert. First mint's state.last-freeze variant validated after the line-only variant proved non-discriminating (the line renders after the drains, initialized from state.last).",
     "executed_kills": [
      {
       "patch": "ce_ac-nfr0154-01.patch",
