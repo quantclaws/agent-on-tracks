@@ -46,67 +46,21 @@ function bound(promise) {
 
 /**
  * Open one coexisting tab per known run (the Runs area is the multi-tab run
- * workspace). A row's live last-event face initializes from the snapshot
- * (``run.stage``) and streams updates only while the run can still advance:
- * a terminal run's stream never grows again, so its row is snapshot-only and
- * holds no connection (FR-0296 keeps at most one advancing run). Each
- * advancing run's row waits — bounded — for its channel's catch-up before
- * the tab surfaces, so the newest delivered event is already visible (pinned
- * by the AC-NFR0154-01 anchor). The bound only guards pathological latency:
- * with shared per-run channels and the live cap, drains always complete.
+ * workspace). Tabs open in the background — the sidebar nodes and the newest
+ * run's stage track stay the active face. No event subscription happens
+ * here: a stream exists only while a run's timeline face is actually
+ * rendered, and terminal runs never need one (their streams never grow).
  */
 
-const rowStreams = new Map(); // runId -> { line, handle } across re-renders
-const detailStreams = new Map(); // runId -> handle (latest timeline detail)
+const detailStreams = new Map(); // runId -> handle (the rendered timeline)
 
-function isTerminal(run) {
-  return run && (run.status === "completed" || run.status === "backlog");
+function isTerminalStatus(status) {
+  return status === "completed" || status === "backlog";
 }
 
-export async function openRunTabs(runs, body = null, { implicit = false } = {}) {
-  const known = new Set();
+export function openRunTabs(runs, _body = null, { implicit = false } = {}) {
   for (const run of runs) {
     const runId = run.run_id || "unknown";
-    known.add(runId);
-    const row = body
-      ? body.querySelector(`[data-testid="overview-run-${cssEscape(runId)}"]`)
-      : null;
-    const line = row ? row.querySelector('[data-testid="timeline-last-event"]') : null;
-    if (isTerminal(run)) {
-      // A run that ended mid-session never emits again: release its channel
-      // the moment the registry says terminal, before it erodes the live
-      // budget (the server keeps terminal streams open forever).
-      const stale = rowStreams.get(runId);
-      if (stale) {
-        stale.handle.close();
-        rowStreams.delete(runId);
-      }
-    } else if (line) {
-      let entry = rowStreams.get(runId);
-      if (!entry) {
-        const fresh = { line: null, handle: null, seen: new Set() };
-        fresh.handle = connectEventStream({
-          runId,
-          event_cursor: null,
-          onEvent: (delivered) => {
-            fresh.seen.add(delivered.type);
-            if (fresh.line) fresh.line.textContent = delivered.type;
-          },
-        });
-        rowStreams.set(runId, fresh);
-        entry = fresh;
-      }
-      entry.line = line;
-      // The row's live face must already show the newest delivered event
-      // when the tab surfaces (pinned by the AC-NFR0154-01 anchor), on
-      // first render and on re-entry alike: one bounded catch-up drain
-      // rides the shared channel — no new connection is opened.
-      await bound(entry.handle.drain());
-      // The row's drain learned the run's event vocabulary: registering it
-      // as typed listeners lets live frames (which always carry ``event:``)
-      // reach this channel — a typeless subscription only ever sees drains.
-      entry.handle.setTypes([...entry.seen]);
-    }
     openTab(runId, {
       feature: "runs",
       view: "run_detail",
@@ -116,18 +70,6 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {}) 
       title: runId,
     });
   }
-  // Rows this render no longer lists left the registry: the last subscriber
-  // closing releases their connections.
-  for (const key of Array.from(rowStreams.keys())) {
-    if (!known.has(key)) {
-      rowStreams.get(key).handle.close();
-      rowStreams.delete(key);
-    }
-  }
-}
-
-function cssEscape(value) {
-  return globalThis.CSS && CSS.escape ? CSS.escape(value) : value;
 }
 
 export function renderTimelineView(body, context = {}) {
@@ -144,27 +86,31 @@ export function renderTimelineView(body, context = {}) {
     const acChain = await requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []);
 
     const state = { last: events.length ? events[events.length - 1] : null };
-    // The snapshot already reflects everything up to its cursor: resume the
-    // stream strictly after it instead of replaying the whole history. Only
-    // the rendered face holds a stream — coexisting run tabs stay
-    // unrendered in the background, so switching away releases them.
+    // Only the rendered face holds a stream — coexisting run tabs stay
+    // unrendered in the background, so switching away releases them. A
+    // terminal run never appends another event: its timeline renders fully
+    // from the snapshot and holds no connection at all.
     for (const handle of detailStreams.values()) handle.close();
     detailStreams.clear();
-    const stream = connectEventStream({
-      runId,
-      event_cursor: (timeline && timeline.cursor) || null,
-      eventTypes: Array.from(new Set(events.map((event) => event.type))),
-      onEvent: (delivered) => {
-        state.last =
-          delivered.payload && delivered.payload.type
-            ? delivered.payload
-            : { type: delivered.type };
-        const line = body.querySelector('[data-testid="timeline-last-event"]');
-        if (line) line.textContent = lastEventText(state.last);
-      },
-    });
-    detailStreams.set(runId, stream);
-    await bound(stream.ready);
+    if (!isTerminalStatus(detail && detail.status)) {
+      // The snapshot already reflects everything up to its cursor: resume
+      // the stream strictly after it instead of replaying the whole history.
+      const stream = connectEventStream({
+        runId,
+        event_cursor: (timeline && timeline.cursor) || null,
+        eventTypes: Array.from(new Set(events.map((event) => event.type))),
+        onEvent: (delivered) => {
+          state.last =
+            delivered.payload && delivered.payload.type
+              ? delivered.payload
+              : { type: delivered.type };
+          const line = body.querySelector('[data-testid="timeline-last-event"]');
+          if (line) line.textContent = lastEventText(state.last);
+        },
+      });
+      detailStreams.set(runId, stream);
+      await bound(stream.ready);
+    }
 
     body.append(currentCard(detail, events, state));
     const root = element("section", { class: "timeline", "data-testid": "timeline" });

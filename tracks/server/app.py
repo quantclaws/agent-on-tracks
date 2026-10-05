@@ -108,7 +108,10 @@ def create_app(home: Path, service: Any, supervisor: Any, config: Any) -> Any:
     glue = _AuthGlue(home, supervisor)
     app = Starlette(
         routes=_build_routes(glue),
-        middleware=[Middleware(_AuthBoundary, home=home)],
+        middleware=[
+            Middleware(_AuthBoundary, home=home),
+            Middleware(_AppModulesNoCache),
+        ],
     )
     app.state.home = home
     app.state.service = service
@@ -386,6 +389,32 @@ def _name_collected(conn: sqlite3.Connection) -> bool:
     """Whether auth.display_name is collected (interfaces §1m.2)."""
     row = conn.execute("SELECT display_name FROM auth LIMIT 1").fetchone()
     return row is not None and isinstance(row[0], str) and bool(row[0].strip())
+
+
+class _AppModulesNoCache:
+    """``Cache-Control: no-cache`` on the SPA's own ES modules.
+
+    Without it a browser heuristic-caches the modules, and after a deploy a
+    plain reload keeps running the previous app — a fix ships and the user
+    still sees the old behaviour. ``no-cache`` still revalidates via ETag
+    (unchanged files answer 304), so the cost is one revalidation per module.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and str(scope.get("path", "")).startswith("/static/app/"):
+            from starlette.datastructures import MutableHeaders
+
+            async def send_no_cache(message: Any) -> None:
+                if message["type"] == "http.response.start":
+                    MutableHeaders(scope=message).append("cache-control", "no-cache")
+                await send(message)
+
+            await self._app(scope, receive, send_no_cache)
+            return
+        await self._app(scope, receive, send)
 
 
 class _AuthBoundary:

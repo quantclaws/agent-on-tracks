@@ -772,6 +772,7 @@ def project_overview(home: Path) -> dict:
                         "version": run["version"],
                         "status": run["status"],
                         "stage": run["stage"],
+                        "updated_ts": run["updated_ts"],
                         "control_state": _run_control_state(
                             conn, state, run["run_id"], []
                         ),
@@ -819,6 +820,7 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
         return {
             "run_id": run_id,
             "version": state.version or version,
+            "status": state.status,
             "stage": state.stage,
             "substate": state.substate,
             "control_state": _control_state(

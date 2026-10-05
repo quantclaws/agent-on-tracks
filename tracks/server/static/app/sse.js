@@ -65,10 +65,6 @@ export function connectEventStream({
     drain: () => channel.drain(),
     cursor: () => channel.lastEventCursor,
     ready: channel.ready,
-    setTypes(types) {
-      subscriber.eventTypes = Array.isArray(types) ? types : [];
-      syncListeners(channel);
-    },
   };
 }
 

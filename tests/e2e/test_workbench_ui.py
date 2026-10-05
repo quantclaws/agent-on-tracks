@@ -437,6 +437,16 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
         "stage.entered", timeout=10000
     )
 
+    # The Runs area's subtree is the run registry, newest first, and the
+    # main face opens on the newest run's stage track (not a flat row list).
+    sidebar_runs = page.locator("[data-testid^='sidebar-run-run-ui-multi-']")
+    expect(sidebar_runs.first).to_be_visible(timeout=10000)
+    assert sidebar_runs.count() == 8, "the sidebar lists the whole registry"
+    assert (sidebar_runs.first.get_attribute("data-testid") or "").endswith(
+        "run-ui-multi-7"
+    ), "the newest run leads the sidebar"
+    expect(page.locator("[data-testid='timeline']")).to_be_visible()
+
     page.get_by_test_id("tabbar-item-projects").click()
     page.locator("[data-testid='overview-run-run-ui-multi-7']").wait_for()
 

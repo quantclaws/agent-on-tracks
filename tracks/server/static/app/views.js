@@ -12,6 +12,7 @@ import { degradedMessage, element, loadInto } from "./dom.js";
 import { renderSidebar } from "./sidebar.js";
 import { renderDocsView } from "./docs.js";
 import { openRunTabs, renderTimelineView } from "./timeline.js";
+import { openTab } from "./tabs.js";
 
 const VIEW_RENDERERS = {
   projects: renderProjects,
@@ -134,21 +135,6 @@ function renderRuns(body, context = {}) {
   return loadInto(body, async () => {
     const projects = await requestJson("/api/projects");
     const rows = Array.isArray(projects) ? projects : projects.projects || [];
-    const projectList = element("ul", {
-      class: "project-list",
-      "data-testid": "overview-list",
-    });
-    for (const project of rows) {
-      const id = project.project_id || "unknown";
-      projectList.append(
-        element("li", {
-          class: "project-row",
-          "data-testid": `overview-project-${id}`,
-          text: `${id} · ${project.version || "unknown"}`,
-        })
-      );
-    }
-    body.append(projectList);
     const runs = [];
     for (const project of rows) {
       const id = project.project_id || "unknown";
@@ -168,38 +154,77 @@ function renderRuns(body, context = {}) {
         );
       }
     }
-    if (!rows.length) {
-      body.append(degradedMessage("No registered projects yet"));
-    }
-    const list = element("ul", { class: "run-list", "data-testid": "run-list" });
-    for (const run of runs) {
-      // Each row's last-event line initializes from the snapshot (run.stage)
-      // and streams updates while the run can still advance; terminal runs
-      // stay snapshot-only — their streams never grow again (IF-STREAM-001).
-      list.append(
+    // The overview face keeps the registered projects visible (the landing
+    // route merges Projects/Runs overview semantics — §1l.2); the run
+    // registry itself lives in the sidebar below.
+    const projectList = element("ul", {
+      class: "project-list",
+      "data-testid": "overview-list",
+    });
+    for (const project of rows) {
+      const id = project.project_id || "unknown";
+      projectList.append(
         element("li", {
-          class: "run-row",
-          "data-testid": `overview-run-${run.run_id || "unknown"}`,
-        }, [
-          element("span", {
-            class: "run-label",
-            text: `${run.run_id || "unknown"} · ${run.version || "unknown"}`,
-          }),
-          element("span", {
-            class: "last-event",
-            "data-testid": "timeline-last-event",
-            text: run.stage || "no events yet",
-          }),
-        ])
+          class: "project-row",
+          "data-testid": `overview-project-${id}`,
+          text: `${id} · ${project.version || "unknown"}`,
+        })
       );
     }
-    if (runs.length) body.append(list);
+    body.append(projectList);
+
+    // Newest first: the registry reads top-down as a history, and the main
+    // area opens on the newest run's stage track.
+    const newestFirst = [...runs].sort((a, b) =>
+      String(b.updated_ts || "").localeCompare(String(a.updated_ts || ""))
+    );
+
+    // The Runs area's subtree is the run registry itself (§1l.3: the sidebar
+    // shows the active item's children); a node opens that run's tab.
+    const sidebar = renderSidebar({
+      title: "runs",
+      nodes: newestFirst.map((run) => ({
+        label: `${run.version || "unknown"} · ${run.run_id || "unknown"}`,
+        testid: `sidebar-run-${run.run_id || "unknown"}`,
+      })),
+    });
+    if (sidebar) {
+      for (const anchor of sidebar.querySelectorAll('[data-testid^="sidebar-run-"]')) {
+        anchor.addEventListener("click", (event) => {
+          event.preventDefault();
+          const runId = (anchor.getAttribute("data-testid") || "").replace(
+            "sidebar-run-",
+            ""
+          );
+          if (runId) {
+            openTab(runId, {
+              feature: "runs",
+              view: "run_detail",
+              runId,
+              title: runId,
+            });
+          }
+        });
+      }
+    }
+
+    if (!newestFirst.length) {
+      body.append(degradedMessage("No runs yet"));
+      return;
+    }
+
     // The Runs area is the multi-tab run workspace: every known run gets its
-    // own coexisting tab (opened in the background — the overview rows stay
-    // the active face). Terminal runs never subscribe; an advancing run's
-    // row settles through one bounded catch-up before its tab surfaces.
-    // Tabs opened by the deep-link bootstrap stay implicit (out of the strip).
-    await openRunTabs(runs, body, { implicit: Boolean(context.implicit) });
+    // own coexisting background tab, and the main face opens on the newest
+    // run's stage track — older runs stay one click away in the sidebar.
+    // The track renders before the tabs surface (the anchor's ordering: the
+    // face is already showing when the tab appears).
+    const newest = newestFirst[0];
+    const title = body
+      .closest('[data-testid="main-area"]')
+      ?.querySelector('[data-testid="main-title"]');
+    if (title) title.textContent = newest.run_id || "unknown";
+    await renderTimelineView(body, { runId: newest.run_id });
+    openRunTabs(newestFirst, body, { implicit: Boolean(context.implicit) });
   });
 }
 
