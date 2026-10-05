@@ -151,17 +151,21 @@ def test_tab_activation_switches_sidebar_and_main_area_together():
     tabs = _module("tabs.js")
     assert "activateTab" in tabs, "tabs.js exposes the SM-04 activation seam"
     assert "sidebar" in tabs, "activation updates the sidebar in the same switch (§1l.4)"
-    assert "main-area" in tabs, "activation opens/activates the main-area tab (§1l.4)"
+    assert "main-area" in tabs, "activation opens the main-area window in the same switch (§1l.4)"
 
 
-# AC-FR0318-01@v0.10 TRACKS-TRACE IF-WORKBENCH-001 coexisting tabs, unique instance, explicit close
-def test_tabs_reuse_instances_and_close_only_on_explicit_action():
+# AC-FR0318-01@v0.10 TRACKS-TRACE IF-WORKBENCH-001 unique window per area, no strip
+# (revised 2026-10-05 by operator directive: icon-switched windows — the
+# tab-bar icons are the only switcher and no open-tab strip exists)
+def test_windows_reuse_their_area_instance_and_no_strip_exists():
     tabs = _module("tabs.js")
-    assert "openTab" in tabs, "tabs.js opens new tabs on demand"
-    assert re.search(r"\b(?:find|some|has)\s*\(", tabs), (
-        "openTab reuses the existing unique tab instance for a route (§1l.4)"
+    assert "openTab" in tabs, "tabs.js switches an area's window on demand"
+    assert re.search(r"\.has\s*\(", tabs), (
+        "openTab reuses the existing unique window instance for an area (§1l.4)"
     )
-    assert "closeTab" in tabs, "user close is the only close path (§1l.4)"
+    assert "open-tabs" not in tabs and "tab-strip" not in tabs, (
+        "no open-tab strip renders anywhere — icons switch windows"
+    )
     assert "closeAll" not in _sources(), "no global close-all action exists (§1l.4)"
 
 

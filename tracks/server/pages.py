@@ -178,13 +178,9 @@ def _workbench_body(name: str, context: dict) -> str:
             '<header class="main-header">',
             '<h1 class="main-title" data-testid="main-title"></h1>',
             "</header>",
-            # The multi-tab strip container (FR-0318). The testid deliberately
-            # avoids the ``tab-`` prefix: the frozen ui contract counts
-            # ``[data-testid^="tab-"]`` as the OPEN TAB SET (an empty set after
-            # a browser restart), so the container itself must stay outside
-            # that vocabulary; tabs.js fills it with ``tab-<route>`` entries.
-            '<div class="tab-strip" data-testid="open-tabs" role="tablist"'
-            ' aria-label="Open tabs"></div>',
+            # 2026-10-05 operator directive: icon-switched windows, no
+            # open-tab strip — the strip container is gone; the tab-bar
+            # icons are the only switcher.
             '<section class="main-body" data-testid="main-body"></section>',
             "</main>",
             "</div>",

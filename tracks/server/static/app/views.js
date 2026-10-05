@@ -11,7 +11,7 @@ import { requestJson } from "./api.js";
 import { degradedMessage, element, loadInto } from "./dom.js";
 import { renderSidebar } from "./sidebar.js";
 import { renderDocsView } from "./docs.js";
-import { openRunTabs, renderTimelineView } from "./timeline.js";
+import { renderTimelineView } from "./timeline.js";
 import { openTab } from "./tabs.js";
 
 const VIEW_RENDERERS = {
@@ -78,6 +78,10 @@ async function collectOverviewRows(body, { withRuns = true } = {}) {
     );
   }
   body.append(list);
+  if (!rows.length) {
+    // §1l.5: an empty registry degrades readably — never a blank surface.
+    body.append(degradedMessage("No registered projects yet"));
+  }
   if (!withRuns) return rows;
   let failed = false;
   for (const project of rows) {
@@ -197,9 +201,9 @@ function renderRuns(body, context = {}) {
             ""
           );
           if (runId) {
-            openTab(runId, {
+            openTab("runs", {
               feature: "runs",
-              view: "run_detail",
+              route: "runs",
               runId,
               title: runId,
             });
@@ -213,18 +217,15 @@ function renderRuns(body, context = {}) {
       return;
     }
 
-    // The Runs area is the multi-tab run workspace: every known run gets its
-    // own coexisting background tab, and the main face opens on the newest
-    // run's stage track — older runs stay one click away in the sidebar.
-    // The track renders before the tabs surface (the anchor's ordering: the
-    // face is already showing when the tab appears).
-    const newest = newestFirst[0];
+    // The main face opens on the focused run's stage track — the sidebar
+    // selection or the deep link decides which, newest by default.
+    const focus =
+      newestFirst.find((run) => run.run_id === context.runId) || newestFirst[0];
     const title = body
       .closest('[data-testid="main-area"]')
       ?.querySelector('[data-testid="main-title"]');
-    if (title) title.textContent = newest.run_id || "unknown";
-    await renderTimelineView(body, { runId: newest.run_id });
-    openRunTabs(newestFirst, body, { implicit: Boolean(context.implicit) });
+    if (title) title.textContent = focus.run_id || "unknown";
+    await renderTimelineView(body, { runId: focus.run_id });
   });
 }
 

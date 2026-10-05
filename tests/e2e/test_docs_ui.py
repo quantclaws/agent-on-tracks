@@ -35,7 +35,7 @@ def _login_and_open_docs(ui_serve, page):
     page.get_by_test_id("name-submit").click()
     page.get_by_test_id("tabbar-item-projects").wait_for()
     page.get_by_test_id("tabbar-item-docs").click()
-    page.get_by_test_id("tab-docs").wait_for()
+    page.locator("[data-testid='view-docs']").wait_for()
 
 
 def _seed_canary_event(ui_serve, run_id: str) -> None:
@@ -280,7 +280,7 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
         )
     # the redaction projection: open the run data face and scan the whole DOM
     page.get_by_test_id("tabbar-item-runs").click()
-    page.get_by_test_id("tab-runs").wait_for()
+    page.locator("[data-testid='view-runs']").wait_for()
     content = page.content()
     assert _CANARY not in content, (
         "the redaction projection must scrub the canary from every surface"

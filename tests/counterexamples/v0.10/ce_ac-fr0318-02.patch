@@ -1,32 +1,41 @@
 --- a/tracks/server/static/app/tabs.js
 +++ b/tracks/server/static/app/tabs.js
-@@ -21,6 +21,29 @@
+@@ -19,6 +19,38 @@
  
- const tabs = [];
+ const windows = new Map(); // area -> { route, title, context }
  let active = null;
-+
-+// counterexample AC-FR0318-02: the tab set is persisted to localStorage and
-+// restored on boot — the restart no longer starts from the empty set
-+try {
-+  const saved = globalThis.localStorage && globalThis.localStorage.getItem("tracks-tabs");
-+  if (saved) {
-+    for (const route of JSON.parse(saved)) {
-+      tabs.push({ route, title: route, context: {} });
-+    }
-+  }
-+} catch (error) {
-+  /* persistence is best-effort */
-+}
-+const _origPush = tabs.push.bind(tabs);
-+tabs.push = (...items) => {
-+  const out = _origPush(...items);
-+  try {
-+    globalThis.localStorage.setItem("tracks-tabs", JSON.stringify(tabs.map((t) => t.route)));
-+  } catch (error) {
-+    /* best-effort */
-+  }
-+  return out;
-+};
+++
+++// counterexample AC-FR0318-02: the window set is persisted to localStorage
+++// and restored on boot — the restart no longer starts from the empty state
+++try {
+++  const saved = globalThis.localStorage && globalThis.localStorage.getItem("tracks-windows");
+++  if (saved) {
+++    for (const entry of JSON.parse(saved)) {
+++      windows.set(entry.area, {
+++        route: entry.area,
+++        title: entry.title,
+++        context: entry.context || {},
+++      });
+++    }
+++  }
+++} catch (error) {
+++  /* persistence is best-effort */
+++}
+++const _origSet = windows.set.bind(windows);
+++windows.set = (area, window) => {
+++  const out = _origSet(area, window);
+++  try {
+++    globalThis.localStorage.setItem(
+++      "tracks-windows",
+++      JSON.stringify(
+++        [...windows.entries()].map(([a, w]) => ({ area: a, title: w.title }))
+++      )
+++    );
+++  } catch (error) {
+++    /* best-effort */
+++  }
+++  return out;
+++};
  let activationToken = 0;
  
- export function openTabs() {
+ export function activeWindow() {

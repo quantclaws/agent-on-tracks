@@ -315,6 +315,18 @@
       "outcome": "killed"
      }
     ]
+   },
+   {
+    "head": "5b04ede038de9e935ee21aa500dc054a64649627",
+    "date": "2026-10-05",
+    "note": "operator directive (icon-switched windows, no open-tab strip): SM-04 revised — the strip, per-run tabs and closeTab path are gone; tabs.js is a per-area window manager. ce_ac-fr0318-02 re-minted onto the windows Map (localStorage persistence of the window set); the revised e2e adds a direct discriminator (client storage must stay empty). Kill executed: red under the mutation, green after revert. ce_ac-fr0318-01's patch still applies (its pinned region survived the revision); AC-NFR0154-01 unaffected (timeline detail seam unchanged this round). Correction: the first mint was diffed against the pre-rewrite HEAD (whole-file diff) and an intermediate git-checkout revert wiped the uncommitted window manager into the first 929112a commit; the manager was restored, the patch re-minted as a minimal mutation (diff -u against the clean tree), and the kill re-executed red/green on the corrected tree.",
+    "executed_kills": [
+     {
+      "patch": "ce_ac-fr0318-02.patch",
+      "test": "tests/e2e/test_workbench_ui.py::test_tabs_not_persisted_and_content_titles",
+      "outcome": "killed"
+     }
+    ]
    }
   ],
   "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
@@ -573,7 +585,7 @@
    "if_ref": "IF-WEBUI-001",
    "mutation": "the tab set survives a browser restart via localStorage (surface: workbench shell)",
    "patch": "ce_ac-fr0318-02.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_workbench_ui.py::test_tabs_not_persisted_and_content_titles"
   },
   {

@@ -16,9 +16,17 @@
 import { requestJson } from "./api.js";
 import { degradedMessage, element } from "./dom.js";
 import { connectEventStream } from "./sse.js";
-import { openTab } from "./tabs.js";
 
 const CATCHUP_BOUND_MS = 1500;
+
+// The rendered run timeline is the only event-stream consumer: one handle
+// per rendered face, released when another face renders (icon-switched
+// windows keep at most one rendered run at a time).
+const detailStreams = new Map(); // runId -> handle (the rendered timeline)
+
+function isTerminalStatus(status) {
+  return status === "completed" || status === "backlog";
+}
 
 export function stageOrder(timeline) {
   return timeline && Array.isArray(timeline.stage_order) ? timeline.stage_order : [];
@@ -42,34 +50,6 @@ function bound(promise) {
     promise,
     new Promise((resolve) => globalThis.setTimeout(resolve, CATCHUP_BOUND_MS)),
   ]);
-}
-
-/**
- * Open one coexisting tab per known run (the Runs area is the multi-tab run
- * workspace). Tabs open in the background — the sidebar nodes and the newest
- * run's stage track stay the active face. No event subscription happens
- * here: a stream exists only while a run's timeline face is actually
- * rendered, and terminal runs never need one (their streams never grow).
- */
-
-const detailStreams = new Map(); // runId -> handle (the rendered timeline)
-
-function isTerminalStatus(status) {
-  return status === "completed" || status === "backlog";
-}
-
-export function openRunTabs(runs, _body = null, { implicit = false } = {}) {
-  for (const run of runs) {
-    const runId = run.run_id || "unknown";
-    openTab(runId, {
-      feature: "runs",
-      view: "run_detail",
-      runId,
-      activate: false,
-      implicit,
-      title: runId,
-    });
-  }
 }
 
 export function renderTimelineView(body, context = {}) {

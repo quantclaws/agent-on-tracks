@@ -43,19 +43,17 @@ export function bootstrap(root = document) {
     return null;
   }
   if ((deepLink.route === "run_detail" || deepLink.route === "release") && deepLink.runId) {
-    // A run-scoped deep link restores the run's own tab (implicit: the
-    // restored face stays out of the open-tab strip until the user opens it).
-    return openTab(deepLink.runId, {
+    // A run-scoped deep link opens the Runs window with that run focused
+    // (the sidebar registry stays the switcher between runs).
+    return openTab("runs", {
       feature: "runs",
-      view: "run_detail",
+      route: "runs",
       runId: deepLink.runId,
-      implicit: true,
       title: deepLink.runId,
     });
   }
   const tab = openTab(feature, {
     feature,
-    implicit: true,
     route: deepLink.route,
     projectId: deepLink.projectId,
     title: TITLES[feature] || feature,

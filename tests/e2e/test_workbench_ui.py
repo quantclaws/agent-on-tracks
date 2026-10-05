@@ -65,14 +65,14 @@ def test_spa_shell_navigation_no_reload(ui_serve, page):
 
     for item in ("runs", "docs", "review", "todos"):
         page.get_by_test_id(f"tabbar-item-{item}").click()
-        page.get_by_test_id(f"tab-{item}").wait_for()
+        page.locator(f"[data-testid='view-{item}']").wait_for()
     assert _same_document(page), (
-        "tab switching must continue the same document instance (no reload)"
+        "window switching must continue the same document instance (no reload)"
     )
 
     # the workbench stays usable after the switches without a re-login
     page.get_by_test_id("tabbar-item-projects").click()
-    page.get_by_test_id("tab-projects").wait_for()
+    page.locator("[data-testid='view-projects']").wait_for()
     assert _same_document(page)
 
 
@@ -107,51 +107,59 @@ def test_tabbar_fixed_semantics(ui_serve, page):
     assert reloaded.count() == 7
 
 
-# AC-FR0318-01@v0.10 TRACKS-TRACE sidebar tab atomic switch and coexistence
+# AC-FR0318-01@v0.10 TRACKS-TRACE sidebar + main atomic window switch
+# (revised 2026-10-05 by operator directive: icon-switched windows, no
+# open-tab strip — the tab-bar icons are the only switcher)
 def test_sidebar_tab_atomic_switch_and_coexistence(ui_serve, page):
-    """AC-FR0318-01: one tab-bar click switches the sidebar and opens the
-    main-area tab in the same step (no sidebar-only intermediate), a repeated
-    click activates the single existing instance instead of duplicating it,
-    and opened tabs coexist without a close-all action."""
+    """AC-FR0318-01 (revised): one tab-bar click switches the sidebar and the
+    main window in the same step (no sidebar-only intermediate), a repeated
+    click keeps the single window of the area, and no open-tab strip exists
+    anywhere in the shell."""
     _login_via_ui(page, ui_serve.base_url)
     page.get_by_test_id("tabbar-item-docs").click()
-    page.get_by_test_id("tab-docs").wait_for()
+    page.locator("[data-testid='view-docs']").wait_for()
     page.get_by_test_id("sidebar-tree").wait_for()
 
     page.get_by_test_id("tabbar-item-runs").click()
-    page.get_by_test_id("tab-runs").wait_for()
+    page.locator("[data-testid='view-runs']").wait_for()
     page.get_by_test_id("sidebar-tree").wait_for()
     assert _same_document(page)
 
-    # a repeated click does not duplicate the instance
+    # a repeated click keeps the area's single window; no strip ever renders
     page.get_by_test_id("tabbar-item-runs").click()
-    assert page.locator("[data-testid='tab-runs']").count() == 1, (
-        "the repeated click must activate the unique instance"
+    assert page.locator("[data-testid='view-runs']").count() == 1, (
+        "the repeated click must reuse the area's single window"
     )
-    # both opened tabs coexist
+    assert page.locator("[data-testid^='tab-']").count() == 0, (
+        "no open-tab strip: the icons switch windows (operator directive)"
+    )
     page.get_by_test_id("tabbar-item-docs").click()
-    assert page.locator("[data-testid='tab-docs']").count() == 1
-    assert page.locator("[data-testid='tab-runs']").count() == 1
-    # no global close-all action exists
-    assert page.locator("[data-testid='tabs-close-all']").count() == 0
+    assert page.locator("[data-testid='view-docs']").count() == 1
+    assert page.locator("[data-testid='view-runs']").count() == 0, (
+        "switching away replaces the window — exactly one main window exists"
+    )
 
 
-# AC-FR0318-02@v0.10 TRACKS-TRACE tabs not persisted and content titles
+# AC-FR0318-02@v0.10 TRACKS-TRACE window state memory-only and content titles
+# (revised 2026-10-05: window state, not a tab set — no strip to persist)
 def test_tabs_not_persisted_and_content_titles(ui_serve, page):
-    """AC-FR0318-02: the tab set lives in browser memory only — a restart
-    returns the empty set (expected behavior, not loss) — the main-area title
-    shows the content title, and the sidebar lists only the current tab-bar
-    item's subtree."""
+    """AC-FR0318-02 (revised): the window state lives in memory only, the
+    main-area title shows the content title (not the tab-bar category), and
+    no tab strip exists to persist."""
     _login_via_ui(page, ui_serve.base_url)
     page.get_by_test_id("tabbar-item-docs").click()
-    page.get_by_test_id("tab-docs").wait_for()
+    page.locator("[data-testid='view-docs']").wait_for()
 
     restart = restart_browser(page.context.browser, page.context)
     page = restart.new_page()
     page.goto(ui_serve.base_url + "/", wait_until="domcontentloaded")
     page.get_by_test_id("tabbar-item-projects").wait_for()
+    page.locator("[data-testid='view-runs']").wait_for()
     assert page.locator("[data-testid^='tab-']").count() == 0, (
-        "the tab set must not survive the browser restart"
+        "no open-tab strip exists, persisted or otherwise"
+    )
+    assert page.evaluate("() => window.localStorage.length") == 0, (
+        "window state must stay memory-only — nothing may write client storage"
     )
 
     page.get_by_test_id("tabbar-item-docs").click()
@@ -181,10 +189,10 @@ def test_function_set_settings_account(ui_serve, page):
     assert "release" not in names, "no independent top-level release item"
 
     page.get_by_test_id("tabbar-item-projects").click()
-    page.get_by_test_id("tab-projects").wait_for()
+    page.locator("[data-testid='view-projects']").wait_for()
     before = page.get_by_test_id("sidebar-tree").inner_text()
     page.get_by_test_id("tabbar-item-settings").click()
-    page.get_by_test_id("tab-settings").wait_for()
+    page.locator("[data-testid='view-settings']").wait_for()
     assert page.get_by_test_id("sidebar-tree").inner_text() == before, (
         "the gear item opens the Settings tab without changing the sidebar"
     )
@@ -220,7 +228,7 @@ def test_unknown_values_degrade_visibly(ui_serve, page):
         f"degradation must not produce a 5xx: {responses}"
     )
     page.get_by_test_id("tabbar-item-projects").click()
-    page.get_by_test_id("tab-projects").wait_for()
+    page.locator("[data-testid='view-projects']").wait_for()
     assert _same_document(page)
 
 
@@ -330,7 +338,7 @@ def test_api_failure_visible_feedback(ui_serve, page):
     # after the fault clears the face recovers without a reload
     page.unroute("**/api/projects/*/overview")
     page.get_by_test_id("tabbar-item-runs").click()
-    page.get_by_test_id("tab-runs").wait_for()
+    page.locator("[data-testid='view-runs']").wait_for()
     assert _same_document(page)
 
 
@@ -365,7 +373,7 @@ def test_sse_reconnect_backfill_monotonic(ui_serve, page):
         )
 
     page.route("**/api/runs/*/events*", handle)
-    page.get_by_test_id("tab-run-ui-1").wait_for()
+    page.locator("[data-testid='timeline']").wait_for()
     # the projection must not regress below the newest delivered event
     last = page.locator("[data-testid='timeline-last-event']")
     assert last.count() >= 1, "the timeline must render the event projection"
@@ -400,7 +408,7 @@ def test_first_demo_milestone_journey(ui_serve, page):
     _mark_document(page)
 
     page.get_by_test_id("tabbar-item-docs").click()
-    page.get_by_test_id("tab-docs").wait_for()
+    page.locator("[data-testid='view-docs']").wait_for()
     page.get_by_test_id("doc-tree-item-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     assert _same_document(page), "the journey continues in the same document"
