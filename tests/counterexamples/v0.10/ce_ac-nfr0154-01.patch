@@ -1,16 +1,18 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 810ad44..d03fe82 100644
 --- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -64,7 +64,12 @@
-         runId,
-         event_cursor: null,
-         onEvent: (delivered) => {
--          line.textContent = delivered.type;
-+          // counterexample AC-NFR0154-01: the last-event line sticks at the
-+          // first delivered frame — duplicates and stale replays keep the
-+          // projection regressed
-+          if (!line.textContent) {
-+            line.textContent = delivered.type;
-+          }
-         },
-       });
-       await bound(stream.ready);
+@@ -90,7 +90,12 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {})
+           event_cursor: null,
+           onEvent: (delivered) => {
+             fresh.seen.add(delivered.type);
+-            if (fresh.line) fresh.line.textContent = delivered.type;
++            // counterexample AC-NFR0154-01: the last-event line sticks at the
++            // first delivered frame — duplicates and stale replays keep the
++            // projection regressed
++            if (fresh.line && !fresh.line.textContent) {
++              fresh.line.textContent = delivered.type;
++            }
+           },
+         });
+         rowStreams.set(runId, fresh);
