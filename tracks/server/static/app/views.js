@@ -173,9 +173,9 @@ function renderRuns(body, context = {}) {
     }
     const list = element("ul", { class: "run-list", "data-testid": "run-list" });
     for (const run of runs) {
-      // Each row carries the run's live last event (timeline-last-event):
-      // the merged-stream face keeps it current, the cursor guard keeps it
-      // monotonic (IF-STREAM-001).
+      // Each row's last-event line initializes from the snapshot (run.stage)
+      // and streams updates while the run can still advance; terminal runs
+      // stay snapshot-only — their streams never grow again (IF-STREAM-001).
       list.append(
         element("li", {
           class: "run-row",
@@ -196,8 +196,9 @@ function renderRuns(body, context = {}) {
     if (runs.length) body.append(list);
     // The Runs area is the multi-tab run workspace: every known run gets its
     // own coexisting tab (opened in the background — the overview rows stay
-    // the active face) once the row's live event face is subscribed. Tabs
-    // opened by the deep-link bootstrap stay implicit (out of the strip).
+    // the active face). Terminal runs never subscribe; an advancing run's
+    // row settles through one bounded catch-up before its tab surfaces.
+    // Tabs opened by the deep-link bootstrap stay implicit (out of the strip).
     await openRunTabs(runs, body, { implicit: Boolean(context.implicit) });
   });
 }

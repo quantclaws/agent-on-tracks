@@ -411,3 +411,29 @@ def test_first_demo_milestone_journey(ui_serve, page):
     page.get_by_test_id("tabbar-item-account").click()
     page.get_by_test_id("account-logout").click()
     page.get_by_test_id("login-password").wait_for()
+
+
+# Regression lock (operator fix 2026-10-05, OOB): a registry holding many
+# runs must not starve view rendering. Per-run live faces share one channel
+# per run and live streams are capped, so every functional area's data
+# fetches always keep free same-host connection slots (the browser allows
+# ~6 concurrent HTTP/1.1 connections per host; the pre-fix per-row streams
+# starved the whole workbench once the registry held enough runs).
+def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
+    """A multi-run registry (the real service carries the whole release
+    history) leaves the docs centre renderable while the runs area holds
+    live subscriptions for every non-terminal run."""
+    ui_serve.seed_project("proj-ui-1", "v1.0")
+    ui_serve.seed_version_docs("v1.0")
+    for index in range(8):
+        ui_serve.seed_run(f"run-ui-multi-{index}", "v1.0")
+    _login_via_ui(page, ui_serve.base_url)
+
+    page.get_by_test_id("tabbar-item-projects").click()
+    page.locator("[data-testid='overview-run-run-ui-multi-7']").wait_for()
+
+    page.get_by_test_id("tabbar-item-docs").click()
+    page.locator("[data-testid='doc-tree-item-spec']").wait_for(timeout=10000)
+    assert (
+        page.locator("[data-testid='doc-tree-item-story']").count() == 1
+    ), "the docs tree must render its documents under multi-run load"

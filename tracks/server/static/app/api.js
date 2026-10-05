@@ -14,6 +14,11 @@ export const CSRF_HEADER = "X-Trac-CSRF";
 export const IDEMPOTENCY_HEADER = "Idempotency-Key";
 export const MUTATION_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
+// A request that never answers must surface as a failure (§1l.6): without a
+// read deadline a queued fetch hangs silently and the view renders blank
+// instead of its observable error face.
+const READ_DEADLINE_MS = 15000;
+
 let csrfCredential = "";
 
 /** Seed the in-memory CSRF credential (the login response's ``csrf_token``). */
@@ -43,7 +48,7 @@ export async function requestJson(url, options = {}) {
     headers.set(CSRF_HEADER, options.csrfToken || csrfCredential);
     headers.set(IDEMPOTENCY_HEADER, options.idempotencyKey || newIdempotencyKey());
   }
-  const response = await fetch(url, {
+  const response = await readWithDeadline(url, {
     method,
     headers,
     body: options.body,
@@ -56,6 +61,27 @@ export async function requestJson(url, options = {}) {
     return null;
   }
   return response.json();
+}
+
+async function readWithDeadline(url, init) {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), READ_DEADLINE_MS);
+  let response;
+  try {
+    response = await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const fault = new Error(
+        `${init.method || "GET"} ${url} timed out without a response`
+      );
+      fault.status = 0;
+      throw fault;
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+  return response;
 }
 
 async function failure(response, method, url) {

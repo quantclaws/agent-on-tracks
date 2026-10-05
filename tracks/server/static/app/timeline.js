@@ -46,12 +46,23 @@ function bound(promise) {
 
 /**
  * Open one coexisting tab per known run (the Runs area is the multi-tab run
- * workspace) and keep every overview row's live last event current. The tabs
- * open in the background — the overview rows stay the active face — and each
- * row's event line is subscribed through the same cursor-guarded stream face
- * as the run detail, so the newest delivered event is visible before the tab
- * surfaces.
+ * workspace). A row's live last-event face initializes from the snapshot
+ * (``run.stage``) and streams updates only while the run can still advance:
+ * a terminal run's stream never grows again, so its row is snapshot-only and
+ * holds no connection (FR-0296 keeps at most one advancing run). Each
+ * advancing run's row waits — bounded — for its channel's catch-up before
+ * the tab surfaces, so the newest delivered event is already visible (pinned
+ * by the AC-NFR0154-01 anchor). The bound only guards pathological latency:
+ * with shared per-run channels and the live cap, drains always complete.
  */
+
+const rowStreams = new Map(); // runId -> { line, handle } across re-renders
+const detailStreams = new Map(); // runId -> handle (latest timeline detail)
+
+function isTerminal(run) {
+  return run && (run.status === "completed" || run.status === "backlog");
+}
+
 export async function openRunTabs(runs, body = null, { implicit = false } = {}) {
   for (const run of runs) {
     const runId = run.run_id || "unknown";
@@ -59,15 +70,26 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {}) 
       ? body.querySelector(`[data-testid="overview-run-${cssEscape(runId)}"]`)
       : null;
     const line = row ? row.querySelector('[data-testid="timeline-last-event"]') : null;
-    if (line) {
-      const stream = connectEventStream({
-        runId,
-        event_cursor: null,
-        onEvent: (delivered) => {
-          line.textContent = delivered.type;
-        },
-      });
-      await bound(stream.ready);
+    if (line && !isTerminal(run)) {
+      let entry = rowStreams.get(runId);
+      if (!entry) {
+        const fresh = { line: null, handle: null };
+        fresh.handle = connectEventStream({
+          runId,
+          event_cursor: null,
+          onEvent: (delivered) => {
+            if (fresh.line) fresh.line.textContent = delivered.type;
+          },
+        });
+        rowStreams.set(runId, fresh);
+        entry = fresh;
+      }
+      entry.line = line;
+      // The row's live face must already show the newest delivered event
+      // when the tab surfaces (pinned by the AC-NFR0154-01 anchor), on
+      // first render and on re-entry alike: one bounded catch-up drain
+      // rides the shared channel — no new connection is opened.
+      await bound(entry.handle.drain());
     }
     openTab(runId, {
       feature: "runs",
@@ -98,9 +120,13 @@ export function renderTimelineView(body, context = {}) {
     const acChain = await requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []);
 
     const state = { last: events.length ? events[events.length - 1] : null };
+    // The snapshot already reflects everything up to its cursor: resume the
+    // stream strictly after it instead of replaying the whole history.
+    const previous = detailStreams.get(runId);
+    if (previous) previous.close();
     const stream = connectEventStream({
       runId,
-      event_cursor: null,
+      event_cursor: (timeline && timeline.cursor) || null,
       eventTypes: Array.from(new Set(events.map((event) => event.type))),
       onEvent: (delivered) => {
         state.last =
@@ -111,6 +137,7 @@ export function renderTimelineView(body, context = {}) {
         if (line) line.textContent = lastEventText(state.last);
       },
     });
+    detailStreams.set(runId, stream);
     await bound(stream.ready);
 
     body.append(currentCard(detail, events, state));

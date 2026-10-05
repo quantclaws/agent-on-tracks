@@ -770,6 +770,7 @@ def project_overview(home: Path) -> dict:
                         "run_id": run["run_id"],
                         "title": run["version"],
                         "version": run["version"],
+                        "status": run["status"],
                         "stage": run["stage"],
                         "control_state": _run_control_state(
                             conn, state, run["run_id"], []
