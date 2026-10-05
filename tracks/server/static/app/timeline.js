@@ -64,20 +64,32 @@ function isTerminal(run) {
 }
 
 export async function openRunTabs(runs, body = null, { implicit = false } = {}) {
+  const known = new Set();
   for (const run of runs) {
     const runId = run.run_id || "unknown";
+    known.add(runId);
     const row = body
       ? body.querySelector(`[data-testid="overview-run-${cssEscape(runId)}"]`)
       : null;
     const line = row ? row.querySelector('[data-testid="timeline-last-event"]') : null;
-    if (line && !isTerminal(run)) {
+    if (isTerminal(run)) {
+      // A run that ended mid-session never emits again: release its channel
+      // the moment the registry says terminal, before it erodes the live
+      // budget (the server keeps terminal streams open forever).
+      const stale = rowStreams.get(runId);
+      if (stale) {
+        stale.handle.close();
+        rowStreams.delete(runId);
+      }
+    } else if (line) {
       let entry = rowStreams.get(runId);
       if (!entry) {
-        const fresh = { line: null, handle: null };
+        const fresh = { line: null, handle: null, seen: new Set() };
         fresh.handle = connectEventStream({
           runId,
           event_cursor: null,
           onEvent: (delivered) => {
+            fresh.seen.add(delivered.type);
             if (fresh.line) fresh.line.textContent = delivered.type;
           },
         });
@@ -90,6 +102,10 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {}) 
       // first render and on re-entry alike: one bounded catch-up drain
       // rides the shared channel — no new connection is opened.
       await bound(entry.handle.drain());
+      // The row's drain learned the run's event vocabulary: registering it
+      // as typed listeners lets live frames (which always carry ``event:``)
+      // reach this channel — a typeless subscription only ever sees drains.
+      entry.handle.setTypes([...entry.seen]);
     }
     openTab(runId, {
       feature: "runs",
@@ -99,6 +115,14 @@ export async function openRunTabs(runs, body = null, { implicit = false } = {}) 
       implicit,
       title: runId,
     });
+  }
+  // Rows this render no longer lists left the registry: the last subscriber
+  // closing releases their connections.
+  for (const key of Array.from(rowStreams.keys())) {
+    if (!known.has(key)) {
+      rowStreams.get(key).handle.close();
+      rowStreams.delete(key);
+    }
   }
 }
 
@@ -121,9 +145,11 @@ export function renderTimelineView(body, context = {}) {
 
     const state = { last: events.length ? events[events.length - 1] : null };
     // The snapshot already reflects everything up to its cursor: resume the
-    // stream strictly after it instead of replaying the whole history.
-    const previous = detailStreams.get(runId);
-    if (previous) previous.close();
+    // stream strictly after it instead of replaying the whole history. Only
+    // the rendered face holds a stream — coexisting run tabs stay
+    // unrendered in the background, so switching away releases them.
+    for (const handle of detailStreams.values()) handle.close();
+    detailStreams.clear();
     const stream = connectEventStream({
       runId,
       event_cursor: (timeline && timeline.cursor) || null,

@@ -11,6 +11,7 @@ no rendering pixels, no module internals.
 from __future__ import annotations
 
 import pytest
+from playwright.sync_api import expect
 
 from tests._support.ui_browser import (  # noqa: F401  helpers + constants
     SERVE_PASSWORD,
@@ -428,6 +429,13 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
     for index in range(8):
         ui_serve.seed_run(f"run-ui-multi-{index}", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
+
+    # The landing runs view settles each row on the NEWEST drained event:
+    # a JSON poll batch carries one cursor for the whole batch, so applying
+    # only its head row would freeze the line at the OLDEST event.
+    expect(page.locator("[data-testid='timeline-last-event']").first).to_contain_text(
+        "stage.entered", timeout=10000
+    )
 
     page.get_by_test_id("tabbar-item-projects").click()
     page.locator("[data-testid='overview-run-run-ui-multi-7']").wait_for()

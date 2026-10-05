@@ -65,6 +65,10 @@ export function connectEventStream({
     drain: () => channel.drain(),
     cursor: () => channel.lastEventCursor,
     ready: channel.ready,
+    setTypes(types) {
+      subscriber.eventTypes = Array.isArray(types) ? types : [];
+      syncListeners(channel);
+    },
   };
 }
 
@@ -133,7 +137,16 @@ async function catchUp(channel, rounds = DRAIN_ROUNDS) {
     if (channel.stopped) return;
     let applied = 0;
     for (const row of batch.rows) {
-      if (apply(channel, row.cursor, row.type, row.payload)) applied += 1;
+      if (batch.batched) {
+        // A JSON batch carries one cursor for the whole batch and its rows
+        // sit strictly after the request cursor (the server filters), so the
+        // rows apply in order; the channel position advances once at the
+        // tail. Per-row cursor guarding is impossible — rows carry none.
+        channel.emit({ type: row.type, cursor: batch.cursor, payload: row.payload });
+        applied += 1;
+      } else if (apply(channel, row.cursor, row.type, row.payload)) {
+        applied += 1;
+      }
     }
     const next = batch.cursor || "";
     if (next && next !== channel.lastEventCursor && shouldApply(channel, next)) {
@@ -181,17 +194,18 @@ function parseBatch(text) {
     if (data && Array.isArray(data.events)) {
       return {
         rows: data.events.map((row) => ({
-          cursor: data.cursor || "",
+          cursor: "",
           type: row.type,
           payload: row,
         })),
         cursor: data.cursor || "",
+        batched: true,
       };
     }
   } catch (error) {
     /* not a JSON batch — the stream frame body below applies */
   }
-  return { rows: parseFrames(text), cursor: "" };
+  return { rows: parseFrames(text), cursor: "", batched: false };
 }
 
 function parseFrames(text) {
