@@ -162,9 +162,14 @@ async function revealForPendingName(root) {
       if (profile && profile.csrf_token) {
         setCsrfToken(profile.csrf_token);
       }
-      if (!profile.name_set) {
-        revealNameStep(root);
+      if (profile.name_set) {
+        // An already-onboarded session on /login advances to the
+        // workbench (the cookie-attach flake can bounce the first
+        // navigation; re-landing here re-runs this boot, which retries).
+        globalThis.location.assign("/");
+        return;
       }
+      revealNameStep(root);
       return;
     } catch (error) {
       if (attempt === 9) {
