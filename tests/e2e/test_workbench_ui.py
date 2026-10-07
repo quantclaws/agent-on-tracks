@@ -124,6 +124,12 @@ def test_sidebar_tab_atomic_switch_and_coexistence(ui_serve, page):
     page.locator("[data-testid='view-runs']").wait_for()
     page.get_by_test_id("sidebar-tree").wait_for()
     assert _same_document(page)
+    assert page.get_by_test_id("tabbar-item-runs").get_attribute(
+        "aria-current"
+    ) == "page", "the active tab-bar icon must be highlighted"
+    assert page.get_by_test_id("tabbar-item-docs").get_attribute(
+        "aria-current"
+    ) is None, "only the active icon carries the highlight"
 
     # a repeated click keeps the area's single window; no strip ever renders
     page.get_by_test_id("tabbar-item-runs").click()

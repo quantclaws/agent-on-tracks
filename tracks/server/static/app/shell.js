@@ -16,7 +16,7 @@ import { renderView } from "./views.js";
 const TITLES = {
   projects: "projects",
   runs: "runs",
-  docs: "docs centre",
+  docs: "",
   review: "review",
   todos: "todos",
   settings: "settings",

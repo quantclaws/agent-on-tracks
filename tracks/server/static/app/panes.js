@@ -14,16 +14,10 @@ export const MAX_PANES = 4;
 export function createPaneContainer({ version = "", docs = [], onSelect } = {}) {
   const panes = [];
   let ordinal = 0;
-  const addButton = element("button", {
-    type: "button",
-    class: "pane-add",
-    "data-testid": "pane-add",
-    text: "Add pane",
-  });
-  const root = element("div", { class: "panes", "data-testid": "doc-panes" }, [
-    element("div", { class: "pane-controls", "data-testid": "pane-controls" }, [addButton]),
-  ]);
-  addButton.addEventListener("click", () => addPane());
+  // The add control is NOT rendered here: the split icon in the document
+  // tab row (docs.js) drives addPane — panes only exist beside an open
+  // document.
+  const root = element("div", { class: "panes", "data-testid": "doc-panes" });
 
   function addPane() {
     if (panes.length >= MAX_PANES) {

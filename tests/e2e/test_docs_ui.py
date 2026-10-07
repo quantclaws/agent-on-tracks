@@ -166,6 +166,9 @@ def test_multi_pane_independent(ui_serve, page):
     one pane's selection and edits never disturb the others."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
+    # the split icon exists only beside an open document (operator ruling)
+    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tab-spec").wait_for()
     for index in range(4):
         page.get_by_test_id("pane-add").click()
         pane = page.locator(f"[data-testid='doc-pane-{index}']")
@@ -189,6 +192,8 @@ def test_pane_cap_four(ui_serve, page):
     existing four panes keep their content untouched."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
+    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tab-spec").wait_for()
     for _index in range(4):
         page.get_by_test_id("pane-add").click()
     page.locator("[data-testid='doc-pane-3']").wait_for()

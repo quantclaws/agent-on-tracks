@@ -43,6 +43,15 @@ export function openTab(area, context = {}) {
   return window;
 }
 
+function highlightTabbarItem(shell, area) {
+  for (const item of shell.querySelectorAll('[data-testid^="tabbar-item-"]')) {
+    const activeItem =
+      item.getAttribute("data-testid") === `tabbar-item-${area}`;
+    if (activeItem) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  }
+}
+
 export async function activateTab(area) {
   const window = windows.has(area) ? windows.get(area) : null;
   if (!window) return null;
@@ -53,6 +62,7 @@ export async function activateTab(area) {
   // One atomic switch: the sidebar and the main area move together; the
   // settings gear is the documented exception that switches its window
   // without touching the sidebar (FR-0318-03).
+  highlightTabbarItem(shell, area);
   if (!window.context.keepSidebar) {
     renderSidebar({ title: window.title, nodes: window.context.nodes || [] }, shell);
   }

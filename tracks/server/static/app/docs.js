@@ -1,13 +1,15 @@
 /**
- * Docs-centre view (IF-DOCCENTER-001; interfaces §1n).
+ * Docs-centre view (IF-DOCCENTER-001; interfaces §1n, reworked 2026-10-05
+ * per operator directive).
  *
- * The version tree drives document selection; the editor hosts the vendored
- * Vditor build on demand from the same origin in instant-rendering (``ir``)
- * mode, and falls back to a textarea when the asset or initialisation fails
- * so the document stays viewable and editable. The authoritative editable
- * draft is the markdown source area (``doc-editor-content``); panes stay
- * independent (shared container, at most four) and the discussion overlay is
- * read-only navigation only.
+ * The sidebar IS the document tree (one tree, never duplicated in the main
+ * area). The main area opens blank on a fresh session, restores the last
+ * opened document within the session, and once a document is open it gets a
+ * tab carrying the file name — the split icon on the right of the tab row
+ * adds an independent viewer pane beside the editor. The editor hosts the
+ * vendored Vditor build on demand from the same origin in instant-rendering
+ * (``ir``) mode and falls back to a textarea when the asset or
+ * initialisation fails so the document stays viewable and editable.
  */
 
 import { requestJson } from "./api.js";
@@ -18,6 +20,10 @@ import { createPaneContainer } from "./panes.js";
 import { renderSidebar } from "./sidebar.js";
 
 export const VEDITOR_BASE = "/static/vendor/vditor/";
+
+// The last opened document per project/version — session memory only (the
+// client persists nothing; a fresh session starts blank by design).
+const lastOpenDoc = new Map();
 
 let vditorRequest = null;
 
@@ -118,38 +124,58 @@ export function renderDocsView(body, context = {}) {
       body.append(degradedMessage("No documents"));
       return;
     }
-    renderSidebar({
+    // The docs window shows documents, not a category banner.
+    const title = body
+      .closest('[data-testid="main-area"]')
+      ?.querySelector('[data-testid="main-title"]');
+    if (title) title.textContent = "";
+    const workbench = createDocsWorkbench(projectId, version);
+    // The sidebar is the document tree — the one and only tree face; its
+    // nodes open the document (a node is a link, so the default navigation
+    // is suppressed).
+    const sidebarHost = renderSidebar({
       title: version.version || "docs",
       nodes: (version.docs || []).map((doc) => ({
         label: doc.doc,
-        testid: `sidebar-doc-${doc.doc}`,
+        testid: `doc-tree-item-${doc.doc}`,
       })),
     });
-    const workbench = createDocsWorkbench(projectId, version);
+    if (sidebarHost) {
+      for (const anchor of sidebarHost.querySelectorAll(
+        '[data-testid^="doc-tree-item-"]'
+      )) {
+        anchor.addEventListener("click", (event) => {
+          event.preventDefault();
+          const docName = (anchor.getAttribute("data-testid") || "").replace(
+            "doc-tree-item-",
+            ""
+          );
+          workbench.openDoc(docName);
+        });
+      }
+    }
     body.append(workbench.root);
+    // Within the session the window reopens on the last document; a fresh
+    // session starts blank until the sidebar selects one.
+    const last = lastOpenDoc.get(`${projectId}/${version.version}`);
+    if (last && (version.docs || []).some((doc) => doc.doc === last)) {
+      await workbench.openDoc(last);
+    }
   });
 }
 
 function createDocsWorkbench(projectId, version) {
-  const treeHost = element("nav", {
-    class: "doc-tree",
-    "data-testid": "doc-tree",
-    "aria-label": "Document tree",
+  const openDocs = []; // names in open order (session memory)
+  const tabsRow = element("div", {
+    class: "doc-tabs",
+    "data-testid": "doc-tabs",
+    role: "tablist",
+    "aria-label": "Open documents",
   });
-  treeHost.append(
-    element("h3", { class: "doc-tree-version", text: version.version || "unknown" })
-  );
   const editorHost = element("div", {
     class: "doc-editor-host",
     "data-testid": "doc-editor-host",
   });
-  editorHost.append(
-    element("p", {
-      class: "doc-hint",
-      "data-testid": "doc-hint",
-      text: "Select a document from the tree.",
-    })
-  );
   const panes = createPaneContainer({
     version: version.version || "",
     docs: version.docs || [],
@@ -157,21 +183,63 @@ function createDocsWorkbench(projectId, version) {
       loadPaneDocument(projectId, version.version, docName, paneBody);
     },
   });
+  // The split icon lives on the right of the document tab row — it adds an
+  // independent viewer pane beside the editor (never in the blank state).
+  const split = element("button", {
+    type: "button",
+    class: "pane-add",
+    "data-testid": "pane-add",
+    "aria-label": "Split view",
+    title: "Split view",
+    text: "⧉",
+  });
+  split.addEventListener("click", () => panes.addPane());
   const root = element("div", {
     class: "docs-workbench",
     "data-testid": "docs-workbench",
-  }, [treeHost, editorHost, panes.root]);
+  }, [
+    tabsRow,
+    element("div", { class: "docs-main" }, [editorHost, panes.root]),
+  ]);
   let discussions = null;
 
-  for (const doc of version.docs || []) {
-    const item = element("button", {
-      type: "button",
-      class: "doc-item",
-      "data-testid": `doc-tree-item-${doc.doc}`,
-      text: doc.doc,
-    });
-    item.addEventListener("click", () => openDoc(doc.doc));
-    treeHost.append(item);
+  function renderTabs(activeName) {
+    clear(tabsRow);
+    if (!openDocs.length) return; // blank state: no tab row at all
+    for (const name of openDocs) {
+      const close = element("button", {
+        type: "button",
+        class: "doc-tab-close",
+        "data-testid": `doc-tab-close-${name}`,
+        "aria-label": `Close ${name}`,
+        text: "x",
+      });
+      close.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeDoc(name);
+      });
+      const tab = element("div", {
+        class: "doc-tab",
+        "data-testid": `doc-tab-${name}`,
+        role: "tab",
+        "aria-selected": name === activeName ? "true" : "false",
+      }, [element("span", { class: "doc-tab-label", text: name }), close]);
+      tab.addEventListener("click", (event) => {
+        if (close.contains(event.target)) return;
+        openDoc(name);
+      });
+      tabsRow.append(tab);
+    }
+    tabsRow.append(split);
+  }
+
+  function markSidebarCurrent(docName) {
+    for (const node of document.querySelectorAll('[data-testid^="doc-tree-item-"]')) {
+      node.setAttribute(
+        "aria-current",
+        node.getAttribute("data-testid") === `doc-tree-item-${docName}` ? "true" : "false"
+      );
+    }
   }
 
   async function openDoc(docName) {
@@ -183,7 +251,6 @@ function createDocsWorkbench(projectId, version) {
     try {
       payload = await requestJson(docUrl(projectId, version.version, docName));
     } catch (error) {
-      clear(editorHost);
       editorHost.append(
         error && error.status === 404
           ? degradedMessage(`Unknown document: ${docName}`)
@@ -198,12 +265,10 @@ function createDocsWorkbench(projectId, version) {
       );
       return;
     }
-    for (const item of treeHost.querySelectorAll(".doc-item")) {
-      item.setAttribute(
-        "aria-current",
-        item.getAttribute("data-testid") === `doc-tree-item-${docName}` ? "true" : "false"
-      );
-    }
+    if (!openDocs.includes(docName)) openDocs.push(docName);
+    lastOpenDoc.set(`${projectId}/${version.version}`, docName);
+    renderTabs(docName);
+    markSidebarCurrent(docName);
     clear(editorHost);
     const editor = createEditor({
       url: `/api/runs/${encodeURIComponent(
@@ -241,6 +306,19 @@ function createDocsWorkbench(projectId, version) {
     });
   }
 
+  function closeDoc(name) {
+    const index = openDocs.indexOf(name);
+    if (index === -1) return;
+    openDocs.splice(index, 1);
+    if (!openDocs.length) {
+      clear(editorHost);
+      renderTabs(null);
+      return;
+    }
+    openDoc(openDocs[Math.max(0, index - 1)]);
+  }
+
+  renderTabs(null);
   return { root, openDoc, panes };
 }
 

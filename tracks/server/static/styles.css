@@ -59,6 +59,11 @@ body {
   background: rgb(31 36 48 / 8%);
 }
 
+.tabbar-item[aria-current="page"] {
+  background: rgb(31 36 48 / 14%);
+  box-shadow: inset 3px 0 0 currentColor;
+}
+
 .sidebar {
   padding: 12px;
   border-right: 1px solid var(--border);
@@ -204,10 +209,80 @@ body {
 /* -- docs centre (§1n) ------------------------------------------------------ */
 
 .docs-workbench {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  min-height: 100%;
+}
+
+.doc-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid rgb(31 36 48 / 15%);
+  padding-bottom: 6px;
+}
+
+.doc-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px 8px 0 0;
+  background: rgb(31 36 48 / 6%);
+  cursor: pointer;
+  max-width: 220px;
+}
+
+.doc-tab[aria-selected="true"] {
+  background: rgb(31 36 48 / 14%);
+  font-weight: 600;
+}
+
+.doc-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-tab-close {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  padding: 0 2px;
+}
+
+.pane-add {
+  margin-left: auto;
+  border: 1px solid rgb(31 36 48 / 25%);
+  background: transparent;
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.docs-main {
+  display: flex;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+
+.docs-main .doc-editor-host {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.docs-main .panes {
+  display: flex;
+  gap: 12px;
+  flex: 0 1 42%;
+  margin-top: 0;
 }
 
 .doc-tree {
