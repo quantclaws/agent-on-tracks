@@ -339,6 +339,28 @@
       "outcome": "killed"
      }
     ]
+   },
+   {
+    "head": "ff810fd7be5620ddc3860a10ec73ce545bd11908",
+    "date": "2026-10-05",
+    "note": "operator ruling: the docs centre copies louke's Dev Docs design — every pane is a full editable document face (selector + status + discussion nav + split/close in the pane bar; the editor lives inside the pane). ce_ac-fr0322-02 (fallback region moved into loadDocIntoPane), ce_ac-fr0324-01 (per-pane selection wiring) and ce_ac-fr0324-02 (cap guard context) re-minted as minimal mutations; all three kills executed red/green on the reworked tree.",
+    "executed_kills": [
+     {
+      "patch": "ce_ac-fr0322-02.patch",
+      "test": "tests/e2e/test_docs_ui.py::test_vditor_failure_textarea_fallback",
+      "outcome": "killed"
+     },
+     {
+      "patch": "ce_ac-fr0324-01.patch",
+      "test": "tests/e2e/test_docs_ui.py::test_multi_pane_independent",
+      "outcome": "killed"
+     },
+     {
+      "patch": "ce_ac-fr0324-02.patch",
+      "test": "tests/e2e/test_docs_ui.py::test_pane_cap_four",
+      "outcome": "killed"
+     }
+    ]
    }
   ],
   "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
@@ -677,7 +699,7 @@
    "if_ref": "IF-DOCCENTER-001",
    "mutation": "a blocked Vditor asset leaves a blank editor with no textarea fallback (surface: docs view)",
    "patch": "ce_ac-fr0322-02.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_docs_ui.py::test_vditor_failure_textarea_fallback"
   },
   {
@@ -701,7 +723,7 @@
    "if_ref": "IF-DOCCENTER-001",
    "mutation": "panes share one selector/toolbar state (surface: docs view)",
    "patch": "ce_ac-fr0324-01.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_docs_ui.py::test_multi_pane_independent"
   },
   {

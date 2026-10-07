@@ -1,6 +1,6 @@
 --- a/tracks/server/static/app/panes.js
 +++ b/tracks/server/static/app/panes.js
-@@ -20,7 +20,9 @@
+@@ -22,7 +22,9 @@
    const root = element("div", { class: "panes", "data-testid": "doc-panes" });
  
    function addPane() {
@@ -10,4 +10,4 @@
 +    if (false && panes.length >= MAX_PANES) {
        return null; // refuse the fifth column; existing panes stay untouched
      }
-     const pane = createPane({ version, ordinal }, docs, onSelect);
+     const pane = createPane({ version, ordinal }, docs, {

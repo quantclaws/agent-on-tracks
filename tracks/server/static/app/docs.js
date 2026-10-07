@@ -165,93 +165,60 @@ export function renderDocsView(body, context = {}) {
 }
 
 function createDocsWorkbench(projectId, version) {
-  const openDocs = []; // names in open order (session memory)
-  const tabsRow = element("div", {
-    class: "doc-tabs",
-    "data-testid": "doc-tabs",
-    role: "tablist",
-    "aria-label": "Open documents",
-  });
-  const editorHost = element("div", {
-    class: "doc-editor-host",
-    "data-testid": "doc-editor-host",
-  });
+  // louke Dev Docs layout: a slim toolbar (label + the split button on the
+  // right) above a pane container; every pane is a full document face.
+  let activePane = null;
+  let discussions = null;
   const panes = createPaneContainer({
     version: version.version || "",
     docs: version.docs || [],
-    onSelect: (reference, docName, paneBody) => {
-      loadPaneDocument(projectId, version.version, docName, paneBody);
+    load: (pane, docName) => loadDocIntoPane(pane, docName),
+    activate: (pane) => {
+      activePane = pane;
     },
   });
-  // The split icon lives on the right of the document tab row — it adds an
-  // independent viewer pane beside the editor (never in the blank state).
   const split = element("button", {
     type: "button",
-    class: "pane-add",
+    class: "devdocs-tool",
     "data-testid": "pane-add",
-    "aria-label": "Split view",
-    title: "Split view",
-    text: "⧉",
+    title: "新增文档分屏",
+    text: "＋ 新增分屏",
   });
-  split.addEventListener("click", () => panes.addPane());
+  split.addEventListener("click", () => {
+    const pane = panes.addPane();
+    if (pane) loadDocIntoPane(pane, activeDocName());
+  });
+  const toolbar = element("header", { class: "devdocs-toolbar" }, [
+    element("strong", { text: "Docs" }),
+    element("span", { text: "多文档实时编辑工作区" }),
+    element("div", { class: "devdocs-tools" }, [split]),
+  ]);
   const root = element("div", {
     class: "docs-workbench",
     "data-testid": "docs-workbench",
-  }, [
-    tabsRow,
-    element("div", { class: "docs-main" }, [editorHost, panes.root]),
-  ]);
-  let discussions = null;
+  }, [toolbar, panes.root]);
 
-  function renderTabs(activeName) {
-    clear(tabsRow);
-    if (!openDocs.length) return; // blank state: no tab row at all
-    for (const name of openDocs) {
-      const close = element("button", {
-        type: "button",
-        class: "doc-tab-close",
-        "data-testid": `doc-tab-close-${name}`,
-        "aria-label": `Close ${name}`,
-        text: "x",
-      });
-      close.addEventListener("click", (event) => {
-        event.stopPropagation();
-        closeDoc(name);
-      });
-      const tab = element("div", {
-        class: "doc-tab",
-        "data-testid": `doc-tab-${name}`,
-        role: "tab",
-        "aria-selected": name === activeName ? "true" : "false",
-      }, [element("span", { class: "doc-tab-label", text: name }), close]);
-      tab.addEventListener("click", (event) => {
-        if (close.contains(event.target)) return;
-        openDoc(name);
-      });
-      tabsRow.append(tab);
-    }
-    tabsRow.append(split);
+  function activeDocName() {
+    return activePane && activePane.select.value ? activePane.select.value : null;
   }
 
-  function markSidebarCurrent(docName) {
-    for (const node of document.querySelectorAll('[data-testid^="doc-tree-item-"]')) {
-      node.setAttribute(
-        "aria-current",
-        node.getAttribute("data-testid") === `doc-tree-item-${docName}` ? "true" : "false"
-      );
-    }
+  function setPaneStatus(pane, text) {
+    if (pane && pane.status) pane.status.textContent = text;
   }
 
-  async function openDoc(docName) {
-    if (!docName) {
-      editorHost.append(degradedMessage("Unknown document"));
-      return;
-    }
+  async function loadDocIntoPane(pane, docName) {
+    if (!pane || !docName) return;
+    activePane = pane;
+    pane.select.value = docName;
+    lastOpenDoc.set(`${projectId}/${version.version}`, docName);
+    markSidebarCurrent(docName);
+    setPaneStatus(pane, "加载中");
     let payload;
     try {
       payload = await requestJson(docUrl(projectId, version.version, docName));
     } catch (error) {
-      editorHost.append(
+      setPaneStatus(pane, "加载失败");
+      pane.body.append(
         error && error.status === 404
           ? degradedMessage(`Unknown document: ${docName}`)
           : element("p", {
@@ -265,11 +232,7 @@ function createDocsWorkbench(projectId, version) {
       );
       return;
     }
-    if (!openDocs.includes(docName)) openDocs.push(docName);
-    lastOpenDoc.set(`${projectId}/${version.version}`, docName);
-    renderTabs(docName);
-    markSidebarCurrent(docName);
-    clear(editorHost);
+    clear(pane.body);
     const editor = createEditor({
       url: `/api/runs/${encodeURIComponent(
         version.editable_run_id || "unassigned"
@@ -279,12 +242,27 @@ function createDocsWorkbench(projectId, version) {
       reload: async () =>
         requestJson(docUrl(projectId, version.version, docName)).catch(() => null),
     });
-    editorHost.append(editor.root);
+    pane.body.append(editor.root);
     discussions = createDiscussionNav({ threads: [] });
     editor
       .root.querySelector('[data-testid="doc-toolbar"]')
       .append(discussions.controls);
     loadThreads(projectId, version.version, docName, discussions);
+    // The pane-bar discussion navigation (louke): ↯ walks threads, ! jumps
+    // unresolved-only.
+    pane.root.querySelector('[data-testid="pane-next-discussion"]').onclick = () => {
+      discussions.toggle();
+      discussions.nextThread();
+    };
+    pane.root.querySelector('[data-testid="pane-next-unresolved"]').onclick = () => {
+      discussions.toggle();
+      // advance until the cursor lands on an unresolved thread (a full
+      // cycle gives up — everything may be resolved)
+      for (let step = 0; step < 32; step += 1) {
+        const thread = discussions.nextThread();
+        if (!thread || thread.status !== "resolved") break;
+      }
+    };
     // The ir host renders live: its markdown serialization is the editable
     // document (the mount-time adoption is what makes a freshly opened,
     // normalised document savable). Any asset/init failure falls back to the
@@ -304,22 +282,28 @@ function createDocsWorkbench(projectId, version) {
         editor.hostDraft(area.value);
       });
     });
+    setPaneStatus(pane, "已加载");
   }
 
-  function closeDoc(name) {
-    const index = openDocs.indexOf(name);
-    if (index === -1) return;
-    openDocs.splice(index, 1);
-    if (!openDocs.length) {
-      clear(editorHost);
-      renderTabs(null);
-      return;
+  function openDoc(docName) {
+    if (!docName) return;
+    if (!activePane) {
+      const pane = panes.addPane();
+      if (!pane) return;
     }
-    openDoc(openDocs[Math.max(0, index - 1)]);
+    loadDocIntoPane(activePane || panes.panes[0], docName);
   }
 
-  renderTabs(null);
   return { root, openDoc, panes };
+}
+
+function markSidebarCurrent(docName) {
+  for (const node of document.querySelectorAll('[data-testid^="doc-tree-item-"]')) {
+    node.setAttribute(
+      "aria-current",
+      node.getAttribute("data-testid") === `doc-tree-item-${docName}` ? "true" : "false"
+    );
+  }
 }
 
 function docUrl(projectId, version, docName) {
@@ -334,18 +318,5 @@ async function loadThreads(projectId, version, docName, discussions) {
     discussions.setThreads(Array.isArray(payload.threads) ? payload.threads : []);
   } catch (error) {
     discussions.setThreads([]);
-  }
-}
-
-async function loadPaneDocument(projectId, version, docName, paneBody) {
-  if (!docName) return;
-  try {
-    const payload = await requestJson(docUrl(projectId, version, docName));
-    const view = element("pre", { class: "pane-doc", text: payload.content || "" });
-    clear(paneBody);
-    paneBody.append(view);
-  } catch (error) {
-    clear(paneBody);
-    paneBody.append(degradedMessage(`Unknown document: ${docName}`));
   }
 }

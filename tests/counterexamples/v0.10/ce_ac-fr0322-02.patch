@@ -1,6 +1,6 @@
 --- a/tracks/server/static/app/docs.js
 +++ b/tracks/server/static/app/docs.js
-@@ -234,10 +234,8 @@
+@@ -277,10 +277,8 @@
          }
        },
      }).catch(() => {
@@ -11,5 +11,5 @@
 +      // counterexample AC-FR0322-02: the blocked editor stays blank —
 +      // no textarea fallback is offered
      });
+     setPaneStatus(pane, "已加载");
    }
- 

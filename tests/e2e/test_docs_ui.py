@@ -166,14 +166,16 @@ def test_multi_pane_independent(ui_serve, page):
     one pane's selection and edits never disturb the others."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    # the split icon exists only beside an open document (operator ruling)
+    # panes exist only beside an open document, and opening one creates the
+    # initial pane (louke semantics) — three splits reach the cap of four
     page.get_by_test_id("doc-tree-item-spec").click()
-    page.get_by_test_id("doc-tab-spec").wait_for()
-    for index in range(4):
+    page.get_by_test_id("doc-pane-0").wait_for()
+    page.locator("[data-testid='doc-pane-0'] [data-testid='vditor-ir-host']").wait_for()
+    for index in range(3):
         page.get_by_test_id("pane-add").click()
-        pane = page.locator(f"[data-testid='doc-pane-{index}']")
+        pane = page.locator(f"[data-testid='doc-pane-{index + 1}']")
         pane.wait_for()
-        assert page.locator("[data-testid^='doc-pane-']").count() == index + 1
+        assert page.locator("[data-testid^='doc-pane-']").count() == index + 2
     panes = page.locator("[data-testid^='doc-pane-']")
     assert panes.count() == 4, "at most four panes may be open"
     panes.nth(0).get_by_test_id("pane-selector").select_option(label="spec")
@@ -193,8 +195,8 @@ def test_pane_cap_four(ui_serve, page):
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
     page.get_by_test_id("doc-tree-item-spec").click()
-    page.get_by_test_id("doc-tab-spec").wait_for()
-    for _index in range(4):
+    page.get_by_test_id("doc-pane-0").wait_for()
+    for _index in range(3):
         page.get_by_test_id("pane-add").click()
     page.locator("[data-testid='doc-pane-3']").wait_for()
     before = [

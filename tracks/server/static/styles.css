@@ -211,79 +211,111 @@ body {
 .docs-workbench {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   align-items: stretch;
   min-height: 100%;
 }
 
-.doc-tabs {
+/* louke Dev Docs toolbar: slim bar, label + subtitle left, tools right */
+.devdocs-toolbar {
   display: flex;
+  min-height: 42px;
   align-items: center;
-  gap: 4px;
-  border-bottom: 1px solid rgb(31 36 48 / 15%);
-  padding-bottom: 6px;
-}
-
-.doc-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 8px 8px 0 0;
-  background: rgb(31 36 48 / 6%);
-  cursor: pointer;
-  max-width: 220px;
-}
-
-.doc-tab[aria-selected="true"] {
-  background: rgb(31 36 48 / 14%);
-  font-weight: 600;
-}
-
-.doc-tab-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.doc-tab-close {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  color: inherit;
-  padding: 0 2px;
-}
-
-.pane-add {
-  margin-left: auto;
-  border: 1px solid rgb(31 36 48 / 25%);
-  background: transparent;
-  border-radius: 8px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-}
-
-.docs-main {
-  display: flex;
-  gap: 18px;
-  align-items: stretch;
-  flex: 1;
-  min-height: 0;
-}
-
-.docs-main .doc-editor-host {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.docs-main .panes {
-  display: flex;
   gap: 12px;
-  flex: 0 1 42%;
+  margin-bottom: 12px;
+}
+
+.devdocs-toolbar strong { font-size: 14px; }
+.devdocs-toolbar > span { margin-right: auto; opacity: 0.65; font-size: 11px; }
+
+.devdocs-tools { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
+
+.devdocs-tools button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid rgb(31 36 48 / 25%);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.devdocs-tools button:hover { background: rgb(31 36 48 / 8%); }
+
+/* louke pane container: the pane count drives the grid */
+.panes {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  gap: 12px;
+  overflow: auto;
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 0;
 }
+
+.panes[data-pane-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.panes[data-pane-count="3"] { grid-template-columns: repeat(3, minmax(340px, 1fr)); }
+.panes[data-pane-count="4"] { grid-template-columns: repeat(4, minmax(300px, 1fr)); }
+
+.pane {
+  display: flex;
+  min-width: 0;
+  min-height: 480px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgb(31 36 48 / 18%);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.pane-header {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border-bottom: 1px solid rgb(31 36 48 / 18%);
+  background: rgb(31 36 48 / 4%);
+}
+
+.pane-header select {
+  min-width: 0;
+  max-width: 190px;
+  padding: 6px 7px;
+  border: 1px solid rgb(31 36 48 / 25%);
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.doc-pane-status { min-width: 42px; opacity: 0.6; font-size: 10px; white-space: nowrap; }
+
+.pane-toolbar { display: flex; min-width: 0; margin-left: auto; gap: 3px; }
+
+.pane-toolbar button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.pane-toolbar button:hover { border-color: rgb(31 36 48 / 25%); background: rgb(31 36 48 / 8%); }
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-body .doc-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.pane-body .doc-surface { flex: 1; min-height: 0; }
+.pane-body .vditor-host { height: 100%; }
+.pane-body .vditor, .pane-body .vditor .vditor-content { min-height: 100%; }
 
 .doc-tree {
   display: flex;
@@ -381,46 +413,7 @@ body {
   margin-top: 18px;
 }
 
-.pane-controls {
-  margin-bottom: 8px;
-}
 
-.pane {
-  min-height: 120px;
-  min-width: 140px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.panes {
-  display: block;
-}
-
-.panes .pane {
-  display: inline-block;
-  vertical-align: top;
-  margin: 0 10px 10px 0;
-}
-
-.pane-header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.pane-body {
-  min-height: 60px;
-}
-
-.pane-doc {
-  margin: 0;
-  max-height: 180px;
-  overflow: auto;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
 
 /* -- read-only discussion overlay (§1p) ------------------------------------- */
 
