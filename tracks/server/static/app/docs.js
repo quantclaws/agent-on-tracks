@@ -1,12 +1,14 @@
 /**
  * Docs-centre view (IF-DOCCENTER-001; interfaces §1n, reworked 2026-10-05
- * per operator directive).
+ * per operator directive; multi-version tree + banner removal 2026-10-07
+ * per operator directive, #221/#222).
  *
- * The sidebar IS the document tree (one tree, never duplicated in the main
- * area). The main area opens blank on a fresh session, restores the last
- * opened document within the session, and once a document is open it gets a
- * tab carrying the file name — the split icon on the right of the tab row
- * adds an independent viewer pane beside the editor. The editor hosts the
+ * The sidebar IS the whole version tree (louke Dev Docs model): one
+ * collapsible group per version directory, newest first, group label
+ * carrying the story title when present. The main area opens blank on a
+ * fresh session, restores the last opened document (any version) within the
+ * session, and every pane is a full document face — the pane bars are the
+ * only control surface (no workbench-level banner). The editor hosts the
  * vendored Vditor build on demand from the same origin in instant-rendering
  * (``ir``) mode and falls back to a textarea when the asset or
  * initialisation fails so the document stays viewable and editable.
@@ -21,8 +23,8 @@ import { renderSidebar } from "./sidebar.js";
 
 export const VEDITOR_BASE = "/static/vendor/vditor/";
 
-// The last opened document per project/version — session memory only (the
-// client persists nothing; a fresh session starts blank by design).
+// The last opened document per project — {version, doc} session memory only
+// (the client persists nothing; a fresh session starts blank by design).
 const lastOpenDoc = new Map();
 
 let vditorRequest = null;
@@ -117,9 +119,9 @@ export function renderDocsView(body, context = {}) {
     const tree = await requestJson(
       `/api/projects/${encodeURIComponent(projectId)}/docs/tree`
     );
-    const versions = Array.isArray(tree.versions) ? tree.versions : [];
-    const version = versions[0];
-    if (!version || !(version.docs || []).length) {
+    const all = Array.isArray(tree.versions) ? tree.versions : [];
+    const versions = all.filter((version) => (version.docs || []).length);
+    if (!versions.length) {
       renderSidebar({ title: "docs centre", nodes: [] });
       body.append(degradedMessage("No documents"));
       return;
@@ -129,93 +131,120 @@ export function renderDocsView(body, context = {}) {
       .closest('[data-testid="main-area"]')
       ?.querySelector('[data-testid="main-title"]');
     if (title) title.textContent = "";
-    const workbench = createDocsWorkbench(projectId, version);
-    // The sidebar is the document tree — the one and only tree face; its
-    // nodes open the document (a node is a link, so the default navigation
-    // is suppressed).
+    const workbench = createDocsWorkbench(projectId, versions);
+    // The sidebar is the whole version tree (louke Dev Docs model, #221): one
+    // collapsible group per version directory, newest first; a group node
+    // opens that version's document (the default navigation is suppressed).
     const sidebarHost = renderSidebar({
-      title: version.version || "docs",
-      nodes: (version.docs || []).map((doc) => ({
-        label: doc.doc,
-        testid: `doc-tree-item-${doc.doc}`,
+      title: "docs",
+      groups: versions.map((version) => ({
+        label: version.title
+          ? `${version.version} · ${version.title}`
+          : version.version || "unknown",
+        testid: `doc-tree-version-${version.version}`,
+        children: (version.docs || []).map((doc) => ({
+          label: doc.doc,
+          testid: `doc-tree-item-${version.version}-${doc.doc}`,
+          attrs: { "data-version": version.version, "data-doc": doc.doc },
+        })),
       })),
     });
+    // The version and doc travel on data attributes — version names contain
+    // hyphens (v0.9-hotfix-7), so the testid itself must never be parsed.
     if (sidebarHost) {
       for (const anchor of sidebarHost.querySelectorAll(
         '[data-testid^="doc-tree-item-"]'
       )) {
         anchor.addEventListener("click", (event) => {
           event.preventDefault();
-          const docName = (anchor.getAttribute("data-testid") || "").replace(
-            "doc-tree-item-",
-            ""
-          );
-          workbench.openDoc(docName);
+          const version = anchor.getAttribute("data-version");
+          const docName = anchor.getAttribute("data-doc");
+          if (version && docName) workbench.openDoc(docName, version);
         });
       }
     }
     body.append(workbench.root);
-    // Within the session the window reopens on the last document; a fresh
-    // session starts blank until the sidebar selects one.
-    const last = lastOpenDoc.get(`${projectId}/${version.version}`);
-    if (last && (version.docs || []).some((doc) => doc.doc === last)) {
-      await workbench.openDoc(last);
+    // Within the session the window reopens on the last document (any
+    // version); a fresh session starts blank until the sidebar selects one.
+    const last = lastOpenDoc.get(projectId);
+    if (
+      last &&
+      versions.some(
+        (version) =>
+          version.version === last.version &&
+          (version.docs || []).some((doc) => doc.doc === last.doc)
+      )
+    ) {
+      await workbench.openDoc(last.doc, last.version);
     }
   });
 }
 
-function createDocsWorkbench(projectId, version) {
-  // louke Dev Docs layout: a slim toolbar (label + the split button on the
-  // right) above a pane container; every pane is a full document face.
+function createDocsWorkbench(projectId, versions) {
+  // louke Dev Docs layout (#221/#222): no workbench-level banner — the pane
+  // bars are the only control surface; every pane is a full document face and
+  // carries the document selector for the version it currently shows.
   let activePane = null;
   let discussions = null;
+  const docsByVersion = new Map(
+    versions.map((version) => [version.version, version])
+  );
+  // The panes.js contract is onLoad/onActivate/onSplit — the historical
+  // load:/activate: keys never matched the destructured parameter names, so
+  // the selector-change and pane-activation callbacks silently never fired.
   const panes = createPaneContainer({
-    version: version.version || "",
-    docs: version.docs || [],
-    load: (pane, docName) => loadDocIntoPane(pane, docName),
-    activate: (pane) => {
+    version: "",
+    docs: [],
+    onLoad: (pane, docName) =>
+      loadDocIntoPane(pane, docName, pane.currentVersion),
+    onActivate: (pane) => {
       activePane = pane;
     },
+    // a split from any pane bar opens the active pane's document in the new
+    // pane (the pane is never born empty)
+    onSplit: (pane) => {
+      if (activePane && activePane.currentVersion) {
+        loadDocIntoPane(pane, activeDocName(), activePane.currentVersion);
+      }
+    },
   });
-  const split = element("button", {
-    type: "button",
-    class: "devdocs-tool",
-    "data-testid": "pane-add",
-    title: "新增文档分屏",
-    text: "＋ 新增分屏",
-  });
-  split.addEventListener("click", () => {
-    const pane = panes.addPane();
-    if (pane) loadDocIntoPane(pane, activeDocName());
-  });
-  const toolbar = element("header", { class: "devdocs-toolbar" }, [
-    element("strong", { text: "Docs" }),
-    element("span", { text: "多文档实时编辑工作区" }),
-    element("div", { class: "devdocs-tools" }, [split]),
-  ]);
   const root = element("div", {
     class: "docs-workbench",
     "data-testid": "docs-workbench",
-  }, [toolbar, panes.root]);
+  }, [panes.root]);
 
   function activeDocName() {
     return activePane && activePane.select.value ? activePane.select.value : null;
+  }
+
+  function setPaneOptions(pane, version) {
+    const model = docsByVersion.get(version);
+    pane.select.textContent = "";
+    for (const doc of (model && model.docs) || []) {
+      pane.select.append(element("option", { value: doc.doc, text: doc.doc }));
+    }
+    if (!pane.select.options.length) {
+      pane.select.append(element("option", { value: "", text: "no documents" }));
+    }
   }
 
   function setPaneStatus(pane, text) {
     if (pane && pane.status) pane.status.textContent = text;
   }
 
-  async function loadDocIntoPane(pane, docName) {
-    if (!pane || !docName) return;
+  async function loadDocIntoPane(pane, docName, version) {
+    const model = docsByVersion.get(version);
+    if (!pane || !docName || !model) return;
     activePane = pane;
+    pane.currentVersion = version;
+    setPaneOptions(pane, version);
     pane.select.value = docName;
-    lastOpenDoc.set(`${projectId}/${version.version}`, docName);
-    markSidebarCurrent(docName);
+    lastOpenDoc.set(projectId, { version, doc: docName });
+    markSidebarCurrent(version, docName);
     setPaneStatus(pane, "加载中");
     let payload;
     try {
-      payload = await requestJson(docUrl(projectId, version.version, docName));
+      payload = await requestJson(docUrl(projectId, version, docName));
     } catch (error) {
       setPaneStatus(pane, "加载失败");
       pane.body.append(
@@ -235,19 +264,19 @@ function createDocsWorkbench(projectId, version) {
     clear(pane.body);
     const editor = createEditor({
       url: `/api/runs/${encodeURIComponent(
-        version.editable_run_id || "unassigned"
+        model.editable_run_id || "unassigned"
       )}/docs/${encodeURIComponent(docName)}/edits`,
       revision: payload.revision,
       content: payload.content,
       reload: async () =>
-        requestJson(docUrl(projectId, version.version, docName)).catch(() => null),
+        requestJson(docUrl(projectId, version, docName)).catch(() => null),
     });
     pane.body.append(editor.root);
     discussions = createDiscussionNav({ threads: [] });
     editor
       .root.querySelector('[data-testid="doc-toolbar"]')
       .append(discussions.controls);
-    loadThreads(projectId, version.version, docName, discussions);
+    loadThreads(projectId, version, docName, discussions);
     // The pane-bar discussion navigation (louke): ↯ walks threads, ! jumps
     // unresolved-only.
     pane.root.querySelector('[data-testid="pane-next-discussion"]').onclick = () => {
@@ -285,23 +314,26 @@ function createDocsWorkbench(projectId, version) {
     setPaneStatus(pane, "已加载");
   }
 
-  function openDoc(docName) {
-    if (!docName) return;
+  function openDoc(docName, version) {
+    if (!docName || !docsByVersion.has(version)) return;
     if (!activePane) {
       const pane = panes.addPane();
       if (!pane) return;
     }
-    loadDocIntoPane(activePane || panes.panes[0], docName);
+    loadDocIntoPane(activePane || panes.panes[0], docName, version);
   }
 
   return { root, openDoc, panes };
 }
 
-function markSidebarCurrent(docName) {
+function markSidebarCurrent(version, docName) {
   for (const node of document.querySelectorAll('[data-testid^="doc-tree-item-"]')) {
     node.setAttribute(
       "aria-current",
-      node.getAttribute("data-testid") === `doc-tree-item-${docName}` ? "true" : "false"
+      node.getAttribute("data-version") === version &&
+        node.getAttribute("data-doc") === docName
+        ? "true"
+        : "false"
     );
   }
 }

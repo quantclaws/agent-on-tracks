@@ -19,6 +19,7 @@ import base64
 import json
 import re
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -114,7 +115,53 @@ def _load_payload(raw: object, repo_path: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+# -- per-run event/state caches (#225) ----------------------------------------
+#
+# Events are append-only with a monotonic per-run ``seq``, so ``MAX(seq)`` is
+# a sound watermark: unchanged watermark means an already-built envelope list
+# / folded State is still current. One cheap indexed scalar query per run per
+# request replaces the multi-hundred-ms full replay (blob reads + json.loads)
+# the overview/todo/detail projections used to pay on every request. The
+# capacity cap bounds memory; entries beyond it age out oldest-first.
+
+_CACHE_CAP = 64
+_CACHE_LOCK = threading.Lock()
+_EVENTS_CACHE: dict[tuple[str, str], tuple[Any, list[EventEnvelope]]] = {}
+_STATE_CACHE: dict[tuple[str, str], tuple[Any, State]] = {}
+
+
+def _cache_put(cache: dict, key: tuple[str, str], value: tuple) -> None:
+    with _CACHE_LOCK:
+        if key in cache:
+            del cache[key]
+        cache[key] = value
+        while len(cache) > _CACHE_CAP:
+            del cache[next(iter(cache))]
+
+
+def _cache_get(cache: dict, key: tuple[str, str]) -> tuple | None:
+    with _CACHE_LOCK:
+        return cache.get(key)
+
+
+def _run_watermark(repo_path: str, run_id: str) -> Any:
+    """The run's current event watermark (``MAX(seq)``); None = no events."""
+    conn = _tracks_db(repo_path)
+    try:
+        rows = _rows(
+            conn, "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,)
+        )
+    finally:
+        if conn is not None:
+            conn.close()
+    return rows[0][0] if rows else None
+
+
 def _run_events(repo_path: str, run_id: str) -> list[EventEnvelope]:
+    cached = _cache_get(_EVENTS_CACHE, (repo_path, run_id))
+    watermark = _run_watermark(repo_path, run_id)
+    if cached is not None and watermark is not None and cached[0] == watermark:
+        return cached[1]
     conn = _tracks_db(repo_path)
     try:
         rows = _rows(
@@ -126,14 +173,24 @@ def _run_events(repo_path: str, run_id: str) -> list[EventEnvelope]:
     finally:
         if conn is not None:
             conn.close()
-    return [
+    events = [
         event_envelope_from_row(row, _load_payload(row[8], repo_path))
         for row in rows
     ]
+    _cache_put(
+        _EVENTS_CACHE, (repo_path, run_id), (rows[-1][1] if rows else 0, events)
+    )
+    return events
 
 
 def _state_of(repo_path: str, run_id: str) -> State:
-    return project_state(_run_events(repo_path, run_id))
+    cached = _cache_get(_STATE_CACHE, (repo_path, run_id))
+    watermark = _run_watermark(repo_path, run_id)
+    if cached is not None and watermark is not None and cached[0] == watermark:
+        return cached[1]
+    state = project_state(_run_events(repo_path, run_id))
+    _cache_put(_STATE_CACHE, (repo_path, run_id), (watermark or 0, state))
+    return state
 
 
 # -- project / run discovery ------------------------------------------------
@@ -603,6 +660,25 @@ def _version_path(project: dict, version: str) -> Path:
     return _projects_root(project) / version
 
 
+_STORY_TITLE_RE = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+
+
+def _version_story_title(project: dict, version: str) -> str | None:
+    """The story.md frontmatter ``title:`` of one version (human label, #224).
+
+    Searched in the file head only — the frontmatter block leads the document
+    by construction; a missing/unreadable story or a missing field degrades to
+    ``None`` and callers fall back to the run id.
+    """
+    story = _version_path(project, version) / DOC_FILES["story"]
+    try:
+        head = story.read_text(encoding="utf-8")[:2048]
+    except (OSError, UnicodeDecodeError):
+        return None
+    match = _STORY_TITLE_RE.search(head)
+    return match.group(1) if match else None
+
+
 def _revision_or_none(vdir: Path) -> str | None:
     try:
         return revision_digest(vdir)
@@ -656,6 +732,7 @@ def docs_tree_for_project(project: dict) -> dict:
         versions.append(
             {
                 "version": version,
+                "title": _version_story_title(project, version),
                 "docs": docs,
                 "editable_run_id": _editable_run_id(runs, version),
             }
@@ -760,15 +837,20 @@ def project_overview(home: Path) -> dict:
         runs = []
         todo_count = 0
         for project in projects:
+            titles: dict[str, str | None] = {}
             for run in _project_runs(project["repo_path"]):
                 state = _state_of(project["repo_path"], run["run_id"])
                 todo = _todo_for(run["run_id"], state, project)
                 if todo is not None:
                     todo_count += 1
+                if run["version"] not in titles:
+                    titles[run["version"]] = _version_story_title(
+                        project, run["version"]
+                    )
                 runs.append(
                     {
                         "run_id": run["run_id"],
-                        "title": run["version"],
+                        "title": titles[run["version"]] or run["run_id"],
                         "version": run["version"],
                         "status": run["status"],
                         "stage": run["stage"],

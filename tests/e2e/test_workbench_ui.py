@@ -415,7 +415,7 @@ def test_first_demo_milestone_journey(ui_serve, page):
 
     page.get_by_test_id("tabbar-item-docs").click()
     page.locator("[data-testid='view-docs']").wait_for()
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     assert _same_document(page), "the journey continues in the same document"
 
@@ -465,7 +465,49 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
     page.locator("[data-testid='overview-run-run-ui-multi-7']").wait_for()
 
     page.get_by_test_id("tabbar-item-docs").click()
-    page.locator("[data-testid='doc-tree-item-spec']").wait_for(timeout=10000)
+    page.locator("[data-testid='doc-tree-item-v1.0-spec']").wait_for(timeout=10000)
     assert (
-        page.locator("[data-testid='doc-tree-item-story']").count() == 1
+        page.locator("[data-testid='doc-tree-item-v1.0-story']").count() == 1
     ), "the docs tree must render its documents under multi-run load"
+
+
+# TRACKS-TRACE #224 runs registry carries human-friendly story titles
+# TRACKS-TRACE #227 registry rows stay compact; the main area keeps the full title
+def test_runs_registry_human_titles(ui_serve, page):
+    """#224: the runs sidebar and the overview rows lead with the version's
+    story title (from story.md frontmatter) instead of the raw ULID run id.
+    #227: registry rows are compact index entries — a long title truncates at
+    20 characters with an ellipsis (the main area still shows the full title)
+    and a run without a story title (the hotfix case, where the projection
+    falls back to the raw ULID) shows the bare version."""
+    ui_serve.seed_project("proj-ui-title", "v1.0")
+    ui_serve.seed_version_docs("v0.9-hotfix-7", ("story.md", "spec.md"))
+    ui_serve.seed_run("run-ui-hotfix-1", "v0.9-hotfix-7")
+    ui_serve.seed_version_docs(
+        "v1.0", story_title="Web 工作台完善（UI）+ 发布卫生"
+    )
+    ui_serve.seed_run("run-ui-title-1", "v1.0")
+    _login_via_ui(page, ui_serve.base_url)
+
+    node = page.get_by_test_id("sidebar-run-run-ui-title-1")
+    node.wait_for()
+    label = node.inner_text() or ""
+    assert label == "v1.0 · Web 工作台完善（UI）...", (
+        f"the sidebar run label truncates at 20 characters: {label!r}"
+    )
+    hotfix = page.get_by_test_id("sidebar-run-run-ui-hotfix-1")
+    assert (hotfix.inner_text() or "") == "v0.9-hotfix-7", (
+        "a run without a story title shows the bare version, not the ULID"
+    )
+
+    # the main area keeps the untruncated title
+    main_title = page.locator("[data-testid='main-title']")
+    assert "Web 工作台完善（UI）+ 发布卫生" in (main_title.inner_text() or ""), (
+        "the main area title stays complete"
+    )
+
+    page.get_by_test_id("tabbar-item-projects").click()
+    overview = page.get_by_test_id("overview-run-run-ui-title-1")
+    assert (overview.inner_text() or "") == "v1.0 · Web 工作台完善（UI）...", (
+        "the overview run row truncates the same way"
+    )

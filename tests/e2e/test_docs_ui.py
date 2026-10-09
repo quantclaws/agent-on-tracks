@@ -60,7 +60,7 @@ def test_docs_center_vditor_ir_same_origin(ui_serve, page):
     _login_and_open_docs(ui_serve, page)
     cross_origin: list[str] = []
     page.on("request", lambda request: cross_origin.append(request.url))
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     origin = ui_serve.base_url
     vendor = [url for url in cross_origin if "vditor" in url]
@@ -80,7 +80,7 @@ def test_vditor_failure_textarea_fallback(ui_serve, page):
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
     page.route("**/static/vendor/vditor/**", lambda route: route.abort())
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     fallback = page.get_by_test_id("doc-editor-fallback")
     fallback.wait_for()
     assert "fixture body for spec.md" in (fallback.input_value() or ""), (
@@ -97,7 +97,7 @@ def test_save_button_dirty_gating(ui_serve, page):
     revision and the editor baseline switches to it."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     save = page.get_by_test_id("doc-save")
     assert save.is_disabled(), "a clean editor must not offer the save"
@@ -109,6 +109,15 @@ def test_save_button_dirty_gating(ui_serve, page):
     assert revision and revision != "rev-clean", (
         "the save must move the editor to the new revision baseline"
     )
+    # #223: the visible revision is a short prefix; the full sha rides in the
+    # title tooltip so the toolbar stays on one line
+    assert len(revision) <= 12, (
+        f"the visible revision must be the short prefix, got {revision!r}"
+    )
+    tooltip = page.get_by_test_id("doc-revision").get_attribute("title") or ""
+    assert len(tooltip) > len(revision), (
+        f"the tooltip must carry the full revision: {tooltip!r}"
+    )
 
 
 # AC-FR0323-02@v0.10 TRACKS-TRACE conflict dialog two options
@@ -119,7 +128,7 @@ def test_conflict_dialog_two_options(ui_serve, page):
     with current_revision as the new base); nothing is silently overwritten."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
 
     submissions: list[dict] = []
@@ -168,11 +177,11 @@ def test_multi_pane_independent(ui_serve, page):
     _login_and_open_docs(ui_serve, page)
     # panes exist only beside an open document, and opening one creates the
     # initial pane (louke semantics) — three splits reach the cap of four
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("doc-pane-0").wait_for()
     page.locator("[data-testid='doc-pane-0'] [data-testid='vditor-ir-host']").wait_for()
     for index in range(3):
-        page.get_by_test_id("pane-add").click()
+        page.get_by_test_id("doc-pane-0").get_by_test_id("pane-split").click()
         pane = page.locator(f"[data-testid='doc-pane-{index + 1}']")
         pane.wait_for()
         assert page.locator("[data-testid^='doc-pane-']").count() == index + 2
@@ -194,16 +203,16 @@ def test_pane_cap_four(ui_serve, page):
     existing four panes keep their content untouched."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("doc-pane-0").wait_for()
     for _index in range(3):
-        page.get_by_test_id("pane-add").click()
+        page.get_by_test_id("doc-pane-0").get_by_test_id("pane-split").click()
     page.locator("[data-testid='doc-pane-3']").wait_for()
     before = [
         pane.get_by_test_id("pane-selector").input_value()
         for pane in page.locator("[data-testid^='doc-pane-']").all()
     ]
-    page.get_by_test_id("pane-add").click()
+    page.get_by_test_id("doc-pane-0").get_by_test_id("pane-split").click()
     assert page.locator("[data-testid^='doc-pane-']").count() == 4, (
         "a fifth pane request must not add a pane"
     )
@@ -221,7 +230,7 @@ def test_discussion_navigation_controls(ui_serve, page):
     unresolved-only filter — over the server-parsed read model."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     page.get_by_test_id("discussion-toggle").click()
     overlay = page.get_by_test_id("discussion-overlay")
@@ -244,7 +253,7 @@ def test_no_discussion_write_controls(ui_serve, page):
     CLI)."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     page.get_by_test_id("discussion-toggle").click()
     page.get_by_test_id("discussion-overlay").wait_for()
@@ -262,7 +271,7 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
     ui_serve.seed_run("run-ui-1", "v1.0")
     _seed_canary_event(ui_serve, "run-ui-1")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
 
     writes: list[dict] = []
@@ -291,4 +300,93 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
     content = page.content()
     assert _CANARY not in content, (
         "the redaction projection must scrub the canary from every surface"
+    )
+
+
+# TRACKS-TRACE #221/#222 multi-version tree, banner removal
+def test_docs_tree_all_versions_and_no_banner(ui_serve, page):
+    """#221: the sidebar renders one collapsible group per version directory
+    (louke Dev Docs model) — newest first, the story title in the group label —
+    and a document from ANY version opens in the pane with that version's
+    content. #222: the workbench banner (Docs / 多文档实时编辑工作区 / ＋新增分屏)
+    is gone; the pane bars are the only control surface."""
+    ui_serve.seed_version_docs("v1.0", story_title="Web 工作台完善")
+    ui_serve.seed_version_docs(
+        "v0.9-hotfix-7", ("story.md", "spec.md", "acceptance.md")
+    )
+    _login_and_open_docs(ui_serve, page)
+
+    newest = page.get_by_test_id("doc-tree-version-v1.0")
+    newest.wait_for()
+    older = page.get_by_test_id("doc-tree-version-v0.9-hotfix-7")
+    assert "Web 工作台完善" in (newest.locator("summary").inner_text() or ""), (
+        "the group label carries the story title"
+    )
+    assert newest.get_attribute("open") is not None, "the newest group renders open"
+    assert older.get_attribute("open") is None, "older groups render collapsed"
+    assert page.get_by_test_id("doc-tree-item-v1.0-spec").count() == 1
+    assert page.get_by_test_id("doc-tree-item-v0.9-hotfix-7-spec").count() == 1
+
+    # a document from the older version opens with that version's content
+    older.locator("summary").click()
+    page.get_by_test_id("doc-tree-item-v0.9-hotfix-7-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+    source = page.get_by_test_id("doc-editor-content").input_value()
+    assert "v0.9-hotfix-7 spec" in (source or ""), (
+        "the pane shows the older version's document"
+    )
+
+    # #222: the banner and its workbench-level split button are gone
+    assert page.locator(".devdocs-toolbar").count() == 0, "the banner is removed"
+    assert page.get_by_test_id("pane-add").count() == 0, (
+        "the workbench-level split button is removed"
+    )
+    assert page.get_by_test_id("pane-split").count() >= 1, (
+        "the pane bar keeps the split control"
+    )
+
+
+# TRACKS-TRACE #228 app shell pinned to the viewport; regions scroll internally
+def test_app_shell_pinned_chrome_while_document_scrolls(ui_serve, page):
+    """#228: the workbench is exactly the viewport — reading a document much
+    taller than the viewport scrolls the pane body only. The tab bar and the
+    sidebar (and the pane bar) keep their exact position: the page itself
+    never scrolls."""
+    ui_serve.seed_version_docs("v1.0")
+    spec = ui_serve.repo / ".tracks" / "projects" / "v1.0" / "spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8")
+        + "\n"
+        + "\n".join(f"paragraph {index} of the long document\n" for index in range(300)),
+        encoding="utf-8",
+    )
+    _login_and_open_docs(ui_serve, page)
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+
+    tabbar_before = page.get_by_test_id("tabbar").bounding_box()
+    sidebar_before = page.get_by_test_id("sidebar").bounding_box()
+    pane_header_before = page.locator(".pane-header").first.bounding_box()
+
+    # read to the bottom of the document: the pane body is the scroller
+    pane_body = page.locator("[data-testid='doc-pane-0'] [data-testid='pane-body']")
+    assert pane_body.evaluate(
+        "el => { el.scrollTop = el.scrollHeight; return el.scrollTop; }"
+    ) > 0, "the long document must make the pane body scrollable"
+    page.wait_for_timeout(100)
+
+    assert page.evaluate("() => window.scrollY") == 0, (
+        "the page itself must never scroll — the shell is the viewport (#228)"
+    )
+    assert page.evaluate(
+        "() => document.documentElement.scrollHeight <= window.innerHeight"
+    ), "the shell must not have grown beyond the viewport (#228)"
+    assert page.get_by_test_id("tabbar").bounding_box() == tabbar_before, (
+        "the tab bar stays pinned while the document scrolls (#228)"
+    )
+    assert page.get_by_test_id("sidebar").bounding_box() == sidebar_before, (
+        "the sidebar stays pinned while the document scrolls (#228)"
+    )
+    assert page.locator(".pane-header").first.bounding_box() == pane_header_before, (
+        "the pane bar stays pinned while its document scrolls (#228)"
     )

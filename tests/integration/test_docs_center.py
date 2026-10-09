@@ -107,12 +107,15 @@ def _seed_run(home: Path, repo: Path, run_id: str, version: str) -> None:
         store.close()
 
 
-def _write_version(repo: Path, version: str, docs) -> Path:
+def _write_version(repo: Path, version: str, docs, story_title: str | None = None) -> Path:
     vdir = repo / ".tracks" / "projects" / version
     vdir.mkdir(parents=True, exist_ok=True)
     for name in docs:
+        front = "---\nenvelope: tracks-envelope:v2\n"
+        if name == "story.md" and story_title is not None:
+            front += f"title: {story_title}\n"
         (vdir / name).write_text(
-            f"---\nenvelope: tracks-envelope:v2\n---\n\n"
+            f"{front}---\n\n"
             f"# {version} {name}\n\nfixture body for {name}\n",
             encoding="utf-8",
         )
@@ -170,7 +173,7 @@ def test_tree_version_desc_and_six_piece_read(tmp_path: Path):
         run_id = "run-docs-1"
         _seed_project(home, repo, "proj-docs-1", "v1.0")
         _seed_run(home, repo, run_id, "v1.0")
-        _write_version(repo, "v1.0", _SIX_PIECE)
+        _write_version(repo, "v1.0", _SIX_PIECE, story_title="Web 工作台完善")
         _write_version(repo, "v0.9", _TRIO)
         _write_version(repo, "v0.9-hotfix-7", _TRIO)
 
@@ -182,6 +185,9 @@ def test_tree_version_desc_and_six_piece_read(tmp_path: Path):
             f"versions must sort newest-first with the hotfix dir after its baseline: {versions}"
         )
         top = tree["versions"][0]
+        assert top["title"] == "Web 工作台完善", (
+            "the version row carries the story.md frontmatter title (#221)"
+        )
         assert [doc["doc"] for doc in top["docs"]] == [
             "story",
             "spec",
@@ -201,6 +207,7 @@ def test_tree_version_desc_and_six_piece_read(tmp_path: Path):
             "missing six-piece members must not appear in the tree"
         )
         assert hotfix["editable_run_id"] is None
+        assert hotfix["title"] is None, "an untitled story degrades to None"
 
         # the versioned read: content from the fixture + revision + history
         status, body = http_get(

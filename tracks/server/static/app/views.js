@@ -25,6 +25,20 @@ const VIEW_RENDERERS = {
   run_detail: renderTimelineView,
 };
 
+// #227: registry rows are compact index entries — the full title stays on the
+// main area's face, so a row label keeps at most 20 characters and a run
+// without a story title (the projection falls back to the raw ULID run id,
+// e.g. hotfix runs) shows the bare version instead of id noise.
+const RUN_ROW_MAX_CHARS = 20;
+
+function runRowLabel(run) {
+  const version = run.version || "unknown";
+  if (!run.title || run.title === run.run_id) return version;
+  const chars = Array.from(`${version} · ${run.title}`);
+  if (chars.length <= RUN_ROW_MAX_CHARS) return chars.join("");
+  return `${chars.slice(0, RUN_ROW_MAX_CHARS).join("")}...`;
+}
+
 export function renderView(route, mainArea, context = {}) {
   if (!mainArea) return null;
   const view = context.view || route;
@@ -96,7 +110,7 @@ async function collectOverviewRows(body, { withRuns = true } = {}) {
           element("li", {
             class: "run-row",
             "data-testid": `overview-run-${run.run_id || "unknown"}`,
-            text: `${run.run_id || "unknown"} · ${run.version || "unknown"}`,
+            text: runRowLabel(run),
           })
         );
       }
@@ -188,7 +202,7 @@ function renderRuns(body, context = {}) {
     const sidebar = renderSidebar({
       title: "runs",
       nodes: newestFirst.map((run) => ({
-        label: `${run.version || "unknown"} · ${run.run_id || "unknown"}`,
+        label: runRowLabel(run),
         testid: `sidebar-run-${run.run_id || "unknown"}`,
       })),
     });
@@ -224,7 +238,11 @@ function renderRuns(body, context = {}) {
     const title = body
       .closest('[data-testid="main-area"]')
       ?.querySelector('[data-testid="main-title"]');
-    if (title) title.textContent = focus.run_id || "unknown";
+    if (title) {
+      title.textContent = `${focus.version || "unknown"} · ${
+        focus.title || focus.run_id || "unknown"
+      }`;
+    }
     await renderTimelineView(body, { runId: focus.run_id });
   });
 }

@@ -13,12 +13,14 @@ import { element } from "./dom.js";
 
 export const MAX_PANES = 4;
 
-export function createPaneContainer({ version = "", docs = [], onLoad, onActivate } = {}) {
+export function createPaneContainer({ version = "", docs = [], onLoad, onActivate, onSplit } = {}) {
   const panes = [];
   let ordinal = 0;
-  // The add control is NOT rendered here: the split button in the docs
-  // toolbar and each pane's own split control drive addPane — panes only
-  // exist beside an open document.
+  // The add control is NOT rendered here: each pane's own split control (and
+  // any caller surface) drives addPane — panes only exist beside an open
+  // document. ``onSplit`` receives each newly added pane so the caller can
+  // load the active document into it (#222 moved the split entry point to
+  // the pane bar).
   const root = element("div", { class: "panes", "data-testid": "doc-panes" });
 
   function addPane() {
@@ -28,7 +30,10 @@ export function createPaneContainer({ version = "", docs = [], onLoad, onActivat
     const pane = createPane({ version, ordinal }, docs, {
       load: onLoad,
       activate: onActivate,
-      split: () => addPane(),
+      split: () => {
+        const added = addPane();
+        if (added && onSplit) onSplit(added);
+      },
       close: () => closePane(pane),
     });
     ordinal += 1;

@@ -66,13 +66,16 @@ class UiServe:
             conn.close()
         return project_id
 
-    def seed_version_docs(self, version: str, docs=_SIX_PIECE) -> Path:
+    def seed_version_docs(self, version: str, docs=_SIX_PIECE, story_title: str | None = None) -> Path:
         """Write one version dir of the docs tree under the host repo."""
         vdir = self.repo / ".tracks" / "projects" / version
         vdir.mkdir(parents=True, exist_ok=True)
         for name in docs:
+            front = "---\nenvelope: tracks-envelope:v2\n"
+            if name == "story.md" and story_title is not None:
+                front += f"title: {story_title}\n"
             (vdir / name).write_text(
-                f"---\nenvelope: tracks-envelope:v2\n---\n\n"
+                f"{front}---\n\n"
                 f"# {version} {name}\n\nfixture body for {name}\n",
                 encoding="utf-8",
             )

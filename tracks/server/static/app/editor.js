@@ -18,6 +18,10 @@
 import { postJson } from "./api.js";
 import { element } from "./dom.js";
 
+function shortRevision(revision) {
+  return revision ? revision.slice(0, 12) : "unknown revision";
+}
+
 export function createEditor({ url, revision, content, reload } = {}) {
   const draft = {
     content: content || "",
@@ -54,10 +58,14 @@ export function createEditor({ url, revision, content, reload } = {}) {
     "data-testid": "doc-status",
     text: "Saved",
   });
+  // The revision is the optimistic-concurrency baseline (base_revision) —
+  // the full sha rides in the title tooltip; the visible face shows a short
+  // prefix so the toolbar stays on one line (#223).
   const revisionLine = element("span", {
     class: "doc-revision",
     "data-testid": "doc-revision",
-    text: draft.baseRevision || "unknown revision",
+    title: draft.baseRevision || "",
+    text: shortRevision(draft.baseRevision),
   });
   const errorLine = element("p", {
     class: "doc-error",
@@ -116,7 +124,8 @@ export function createEditor({ url, revision, content, reload } = {}) {
 
   function setRevision(revision_) {
     draft.baseRevision = revision_ || "";
-    revisionLine.textContent = draft.baseRevision || "unknown revision";
+    revisionLine.textContent = shortRevision(draft.baseRevision);
+    revisionLine.setAttribute("title", draft.baseRevision || "");
     return draft.baseRevision;
   }
 

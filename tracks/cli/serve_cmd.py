@@ -439,6 +439,7 @@ def _serve(opts: dict, home: Path, db: ServiceDB) -> int:
     supervisor = SimpleNamespace(db=db, scheduler=scheduler, worker=worker)
     app = create_app(home, service, supervisor, config)
     stop, thread = _start_supervisor(db, service, scheduler, worker, config)
+    _start_cache_warmup(home)
     server = _AnnouncingServer(app, opts, home, db, stop, thread)
     if not server.run():
         stop.set()
@@ -450,6 +451,31 @@ def _serve(opts: dict, home: Path, db: ServiceDB) -> int:
         )
         return 1
     return 0
+
+
+def _start_cache_warmup(home: Path) -> threading.Thread:
+    """Fold every registered run's events once at startup (#225).
+
+    The projection caches are watermark-invalidated, so one cold replay in a
+    daemon thread moves the multi-second first-request cost off the request
+    path entirely; failures are logged and never block serving.
+    """
+    def _warm() -> None:
+        try:
+            from tracks.server import projections
+
+            started = time.monotonic()
+            projections.project_overview(home)
+            _log(
+                "info",
+                f"projection cache warmed in {time.monotonic() - started:.1f}s",
+            )
+        except Exception as exc:  # warmup is best-effort; serving must not fail
+            _log("error", f"projection cache warmup failed: {exc}")
+
+    thread = threading.Thread(target=_warm, name="trac-cache-warmup", daemon=True)
+    thread.start()
+    return thread
 
 
 def _start_supervisor(

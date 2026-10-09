@@ -259,4 +259,31 @@ def test_interactive_controls_bind_data_testid_anchors():
     sources = _sources()
     assert "data-testid" in sources, "interactive controls carry data-testid (§1l.1)"
     assert "doc-save" in sources, "the explicit save control carries its testid (§1l.1)"
-    assert "pane-add" in sources, "the add-pane control carries its testid (§1l.1)"
+    assert "pane-split" in sources, "the pane-bar add-pane control carries its testid (§1l.1)"
+
+
+# -- #227 compact run registry labels -----------------------------------------
+
+# AC-#227@v0.10 TRACKS-TRACE IF-WORKBENCH-001 registry rows are compact index entries
+def test_run_registry_rows_truncate_labels_and_drop_id_fallback():
+    """#227: the run registry's rows are compact — a long story title
+    truncates at 20 characters with an ellipsis (the main area keeps the full
+    title) and a projection title that fell back to the raw ULID run id (the
+    hotfix case) renders as the bare version."""
+    views = _module("views.js")
+    assert re.search(r"RUN_ROW_MAX_CHARS\s*=\s*20", views), (
+        "the registry row label cap is 20 characters (#227)"
+    )
+    assert re.search(r"run\.title\s*===\s*run\.run_id", views), (
+        "a title that fell back to the raw run id renders as the bare "
+        "version — no ULID noise in the registry (#227)"
+    )
+    assert 'join("")}...' in views, (
+        "a truncated registry row ends with an ellipsis (#227)"
+    )
+    assert "text: runRowLabel(run)" in views, (
+        "the overview run rows use the compact label (#227)"
+    )
+    assert "label: runRowLabel(run)" in views, (
+        "the runs sidebar registry uses the compact label (#227)"
+    )

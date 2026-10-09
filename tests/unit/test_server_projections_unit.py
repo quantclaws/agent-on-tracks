@@ -505,3 +505,71 @@ def test_waits_never_appear_in_todos(tmp_path: Path):
 
     assert [row for row in todos if row["run_id"] == run_id] == []
     assert all(row["kind"] != "quota" for row in todos)
+
+
+# TRACKS-TRACE #221/#224 story titles feed the docs tree and the runs registry
+def _write_story(repo: Path, version: str, title: str | None) -> None:
+    vdir = repo / ".tracks" / "projects" / version
+    vdir.mkdir(parents=True, exist_ok=True)
+    front = "---\nenvelope: tracks-envelope:v2\n"
+    if title is not None:
+        front += f"title: {title}\n"
+    (vdir / "story.md").write_text(
+        f"{front}---\n\n# {version} story\n\nbody\n", encoding="utf-8"
+    )
+
+
+def test_docs_tree_carries_story_titles(tmp_path: Path):
+    run_id = "run-titled"
+    home, repo = _seed(
+        tmp_path,
+        run_id=run_id,
+        events=[{"type": "stage.entered", "payload": {"stage": "M-IMPL"}}],
+    )
+    _write_story(repo, _VERSION, "可信发布闭环")
+    _write_story(repo, "v0.8", None)
+
+    project = {"project_id": "proj-1", "repo_path": str(repo), "version": _VERSION}
+    tree = projections.docs_tree_for_project(project)
+
+    titled = next(row for row in tree["versions"] if row["version"] == _VERSION)
+    untitled = next(row for row in tree["versions"] if row["version"] == "v0.8")
+    assert titled["title"] == "可信发布闭环", (
+        "the story.md frontmatter title must ride on the version row"
+    )
+    assert untitled["title"] is None, "a missing title degrades to None, never a guess"
+
+
+def test_overview_runs_carry_story_titles(tmp_path: Path):
+    run_id = "run-overview-title"
+    home, repo = _seed(
+        tmp_path,
+        run_id=run_id,
+        events=[{"type": "stage.entered", "payload": {"stage": "M-IMPL"}}],
+    )
+    _write_story(repo, _VERSION, "Web 工作台完善（UI）+ 发布卫生")
+
+    overview = projections.project_overview(home)
+
+    rows = [row for row in overview["runs"] if row["run_id"] == run_id]
+    assert rows, "the seeded run must appear in the overview"
+    assert rows[0]["title"] == "Web 工作台完善（UI）+ 发布卫生", (
+        f"the run title must be the story title, got {rows[0]['title']!r}"
+    )
+
+
+def test_overview_run_title_falls_back_to_run_id(tmp_path: Path):
+    run_id = "run-overview-plain"
+    home, _ = _seed(
+        tmp_path,
+        run_id=run_id,
+        events=[{"type": "stage.entered", "payload": {"stage": "M-IMPL"}}],
+    )
+
+    overview = projections.project_overview(home)
+
+    rows = [row for row in overview["runs"] if row["run_id"] == run_id]
+    assert rows, "the seeded run must appear in the overview"
+    assert rows[0]["title"] == run_id, (
+        "a run without a story title falls back to the run id"
+    )

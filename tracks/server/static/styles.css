@@ -1,16 +1,72 @@
 /* tracks workbench chrome (IF-WORKBENCH-001; E-01 / E-02).
    Loaded by both shells: the three-zone workbench layout with its fixed
    icon-only tab bar (FR-0317) and the dual-column auth shell that collapses
-   to a single column on narrow viewports (§1m.1). */
+   to a single column on narrow viewports (§1m.1).
+   #226: minimal Vercel-style design system — every size, color, spacing and
+   shadow below comes from the :root tokens; component rules only reference
+   tokens. Near-monochrome, 1px borders as the only separator, shadows
+   reserved for overlays. */
 
 :root {
-  --tabbar-width: 56px;
-  --sidebar-width: 248px;
-  --border: #d8dee6;
-  --surface: #f6f7f9;
-  --ink: #1f2430;
-  --muted: #6b7280;
-  --danger: #b91c1c;
+  /* layout */
+  --tabbar-width: 48px;
+  --sidebar-width: 240px;
+
+  /* palette — near-monochrome, one blue accent */
+  --fg: #000000;
+  --ink: #000000;
+  --fg-muted: #666666;
+  --muted: #666666;
+  --fg-subtle: #999999;
+  --bg: #ffffff;
+  --bg-subtle: #fafafa;
+  --surface: #fafafa;
+  --border: #eaeaea;
+  --border-strong: #cccccc;
+  --accent: #000000;
+  --accent-fg: #ffffff;
+  --focus: #0070f3;
+  --danger: #ee0000;
+  --danger-bg: #fff0f0;
+  --success: #0cce6b;
+  --warn: #f5a623;
+
+  /* type */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --fs-caption: 12px;
+  --fs-body: 13px;
+  --fs-base: 14px;
+  --fs-title: 16px;
+  --fs-headline: 20px;
+  --lh: 1.5;
+  --tracking-tight: -0.02em;
+
+  /* spacing — 4px grid */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  /* radii + shadows (overlays only) */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --shadow-overlay: 0 1px 2px rgb(0 0 0 / 8%);
+  --shadow-modal: 0 4px 12px rgb(0 0 0 / 12%);
+
+  /* control + icon sizes */
+  --control-h: 32px;
+  --control-h-sm: 26px;
+  --control-h-xs: 24px;
+  --icon-btn: 36px;
+  --icon-size: 20px;
 }
 
 * {
@@ -20,64 +76,161 @@
 body {
   margin: 0;
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  line-height: 1.45;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* -- workbench: tab bar | sidebar | multi-tab main area -------------------- */
+h1,
+h2,
+h3 {
+  letter-spacing: var(--tracking-tight);
+  font-weight: 600;
+}
 
+a {
+  color: var(--focus);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+}
+
+/* -- global controls: buttons + form fields -------------------------------- */
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control-h);
+  padding: 0 var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+button:hover {
+  border-color: var(--fg);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+}
+
+input,
+select,
+textarea {
+  min-height: var(--control-h);
+  padding: 0 var(--s-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--fs-base);
+}
+
+/* -- workbench: tab bar | sidebar | main area ------------------------------- */
+
+/* App shell (#228): the workbench is exactly the viewport — the page itself
+   never scrolls. Each region (sidebar, main window, document pane body)
+   scrolls internally, so the tab bar and the sidebar stay pinned while long
+   documents read. The single row is minmax(0, 1fr) so the grid children can
+   shrink below their content and own their scrollbars. */
 .workbench {
   display: grid;
   grid-template-columns: var(--tabbar-width) var(--sidebar-width) minmax(0, 1fr);
-  min-height: 100vh;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .tabbar {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 6px;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-1);
   border-right: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.tabbar-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
 }
 
 .tabbar-item {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--icon-btn);
+  min-height: var(--icon-btn);
   padding: 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: transparent;
-  color: inherit;
+  color: var(--fg-muted);
   cursor: pointer;
 }
 
 .tabbar-item:hover {
-  background: rgb(31 36 48 / 8%);
+  background: var(--bg-subtle);
+  border-color: transparent;
 }
 
 .tabbar-item[aria-current="page"] {
-  background: rgb(31 36 48 / 14%);
-  box-shadow: inset 3px 0 0 currentColor;
+  background: var(--bg-subtle);
+  color: var(--fg);
+  border-color: transparent;
 }
 
 .sidebar {
-  padding: 12px;
+  padding: var(--s-3) var(--s-2);
   border-right: 1px solid var(--border);
   overflow-y: auto;
 }
 
 .main {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  padding: 16px 24px;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--s-6) var(--s-7);
+}
+
+.main-header {
+  flex: none;
 }
 
 .main-title {
-  margin: 0 0 16px;
-  font-size: 20px;
+  margin: 0 0 var(--s-5);
+  font-size: var(--fs-headline);
 }
 
 /* the global hidden attribute wins over every author display rule (the name
@@ -87,16 +240,17 @@ body {
   display: none !important;
 }
 
-/* -- multi-tab strip + main body ------------------------------------------- */
+/* -- tab strip (legacy module; the strip itself is gone per the 2026-10-05
+      operator directive, kept for the module's own class surface) ----------- */
 
 .tab-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--s-2);
   min-height: 36px;
-  padding: 4px 0 10px;
+  padding: var(--s-1) 0 10px;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 12px;
+  margin-bottom: var(--s-3);
 }
 
 .tab-strip:empty {
@@ -106,41 +260,71 @@ body {
 .tab {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
-  font-size: 13px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 
 .tab[aria-selected="true"] {
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .tab-close {
+  min-height: 0;
+  padding: 2px 4px;
   border: 0;
   background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-caption);
   line-height: 1;
-  padding: 2px 4px;
+}
+
+/* -- list rows: runs / projects / todos ------------------------------------- */
+
+/* The main window column: the body fills the remaining viewport slice and the
+   view inside it scrolls (#228). */
+.main-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .view {
   display: block;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The docs workspace manages its own scrolling (#228): the pane bodies scroll,
+   so the workspace must not grow a scrollbar of its own. */
+.view[data-testid="view-docs"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .view ul {
-  margin: 8px 0;
-  padding-left: 20px;
+  margin: var(--s-2) 0;
+  padding-left: var(--s-5);
 }
 
 .view li {
-  margin: 3px 0;
+  margin: var(--s-1) 0;
+}
+
+/* classed row lists drop the browser indent/bullets — flat Vercel rows */
+.project-list,
+.run-list,
+.todo-list {
+  margin: 0 0 var(--s-4);
+  padding-left: 0;
+  list-style: none;
 }
 
 .project-row,
@@ -149,32 +333,58 @@ body {
   list-style: none;
 }
 
+.project-row,
+.run-row,
+.todo-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius);
+  font-size: var(--fs-body);
+  color: var(--fg);
+}
+
+.project-row:hover,
+.run-row:hover,
+.todo-row:hover {
+  background: var(--bg-subtle);
+}
+
+.review-hint,
+.settings-hint {
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
 .run-row .last-event {
   display: inline-block;
-  margin-left: 10px;
-  padding: 1px 8px;
+  margin-left: var(--s-2);
+  padding: 2px var(--s-2);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 12px;
-  color: var(--muted);
+  background: var(--bg-subtle);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
 /* -- explicit degradation + observable failure (§1l.5/§1l.6) --------------- */
 
 .degraded {
-  margin: 12px 0;
-  padding: 10px 12px;
+  margin: var(--s-3) 0;
+  padding: var(--s-2) var(--s-3);
   border: 1px dashed var(--danger);
-  border-radius: 8px;
+  border-radius: var(--radius);
   color: var(--danger);
 }
 
 .request-error {
-  margin: 12px 0;
-  padding: 10px 12px;
+  margin: var(--s-3) 0;
+  padding: var(--s-2) var(--s-3);
   border: 1px solid var(--danger);
-  border-radius: 8px;
-  background: #fef2f2;
+  border-radius: var(--radius);
+  background: var(--danger-bg);
   color: var(--danger);
 }
 
@@ -182,12 +392,86 @@ body {
 
 .sidebar-list {
   min-height: 32px;
-  margin: 8px 0 0;
-  padding-left: 14px;
+  margin: var(--s-2) 0 0;
+  padding-left: 0;
+  list-style: none;
 }
 
 .sidebar-node {
-  color: inherit;
+  display: block;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
+.sidebar-node:hover {
+  background: var(--bg-subtle);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.sidebar-node[aria-current="true"],
+.sidebar-node[aria-current="page"] {
+  background: var(--bg-subtle);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* version groups (louke Dev Docs tree, #221): one collapsible block per
+   version directory, its documents indented beneath the summary */
+.sidebar-group-wrap {
+  list-style: none;
+  margin: 0 0 var(--s-1);
+  padding: 0;
+}
+
+.sidebar-group > summary {
+  display: block;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg-subtle);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* summary{display:block} drops the browser's disclosure marker — an explicit
+   chevron keeps the collapsed/expanded affordance */
+.sidebar-group > summary::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: var(--s-1);
+  vertical-align: middle;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform 120ms ease;
+}
+
+.sidebar-group[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.sidebar-group > summary:hover {
+  color: var(--fg);
+}
+
+.sidebar-group[open] > summary {
+  color: var(--fg);
+}
+
+.sidebar-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: var(--s-1) 0 var(--s-2);
+  padding-left: var(--s-3);
+  list-style: none;
 }
 
 /* -- account ---------------------------------------------------------------- */
@@ -195,14 +479,15 @@ body {
 .account-menu {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 10px 12px;
+  gap: var(--s-4);
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .account-name {
   margin: 0;
+  font-size: var(--fs-title);
   font-weight: 600;
 }
 
@@ -213,44 +498,32 @@ body {
   flex-direction: column;
   gap: 0;
   align-items: stretch;
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
-/* louke Dev Docs toolbar: slim bar, label + subtitle left, tools right */
-.devdocs-toolbar {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.devdocs-toolbar strong { font-size: 14px; }
-.devdocs-toolbar > span { margin-right: auto; opacity: 0.65; font-size: 11px; }
-
-.devdocs-tools { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end; }
-
-.devdocs-tools button {
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid rgb(31 36 48 / 25%);
-  border-radius: 6px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.devdocs-tools button:hover { background: rgb(31 36 48 / 8%); }
-
-/* louke pane container: the pane count drives the grid */
+/* louke Dev Docs layout (#222): the pane bars are the only control surface —
+   the workbench-level banner is gone; the container starts on the panes.
+   A fresh session opens no pane, so the workspace keeps a visible floor
+   instead of collapsing to a zero-height strip. The row is minmax(0, 1fr)
+   (#228): the pane is bounded by the viewport slice and its body scrolls. */
 .panes {
   display: grid;
-  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 320px;
   flex: 1;
-  gap: 12px;
+  gap: var(--s-3);
   overflow: auto;
   grid-template-columns: minmax(0, 1fr);
   margin-top: 0;
+}
+
+.panes:empty::before {
+  content: "Select a document from the sidebar to open it here.";
+  padding: var(--s-7) var(--s-4);
+  color: var(--fg-subtle);
+  font-size: var(--fs-body);
+  text-align: center;
 }
 
 .panes[data-pane-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -260,49 +533,67 @@ body {
 .pane {
   display: flex;
   min-width: 0;
-  min-height: 480px;
+  /* #228: the pane no longer grows with its document — the pane-body scrolls,
+     so the pane bar (selector/status/controls) stays pinned at the top. */
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgb(31 36 48 / 18%);
-  border-radius: 9px;
-  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
 }
 
 .pane-header {
   display: flex;
   min-height: 40px;
   align-items: center;
-  gap: 6px;
-  padding: 5px 7px;
-  border-bottom: 1px solid rgb(31 36 48 / 18%);
-  background: rgb(31 36 48 / 4%);
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-2);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
 }
 
 .pane-header select {
   min-width: 0;
   max-width: 190px;
-  padding: 6px 7px;
-  border: 1px solid rgb(31 36 48 / 25%);
-  border-radius: 5px;
-  font-size: 11px;
+  min-height: var(--control-h-sm);
+  padding: 0 var(--s-1);
+  border-color: transparent;
+  background: transparent;
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
-.doc-pane-status { min-width: 42px; opacity: 0.6; font-size: 10px; white-space: nowrap; }
+.pane-header select:hover {
+  border-color: var(--border-strong);
+}
 
-.pane-toolbar { display: flex; min-width: 0; margin-left: auto; gap: 3px; }
+.doc-pane-status {
+  min-width: 42px;
+  color: var(--fg-subtle);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+}
+
+.pane-toolbar { display: flex; min-width: 0; margin-left: auto; gap: var(--s-1); }
 
 .pane-toolbar button {
-  width: 28px;
-  height: 28px;
+  min-height: var(--control-h-xs);
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 5px;
+  border-color: transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
-  cursor: pointer;
-  font-size: 11px;
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
 }
 
-.pane-toolbar button:hover { border-color: rgb(31 36 48 / 25%); background: rgb(31 36 48 / 8%); }
+.pane-toolbar button:hover {
+  background: var(--bg-subtle);
+  border-color: transparent;
+  color: var(--fg);
+}
 
 .pane-body {
   flex: 1;
@@ -317,64 +608,98 @@ body {
 .pane-body .vditor-host { height: 100%; }
 .pane-body .vditor, .pane-body .vditor .vditor-content { min-height: 100%; }
 
+/* legacy docs-tree card surface (module class, still referenced) */
 .doc-tree {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  gap: var(--s-1);
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 
 .doc-tree-version {
-  margin: 0 0 4px;
-  font-size: 13px;
-  color: var(--muted);
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-body);
+  color: var(--fg-muted);
 }
 
 .doc-item {
-  padding: 6px 10px;
+  padding: var(--s-1) var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
 }
 
 .doc-item[aria-current="true"] {
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
+/* One line, always (#223): the revision shows a short prefix with the full
+   sha in its tooltip, so the row never wraps. */
 .doc-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--s-3);
   min-height: 34px;
-  margin-bottom: 10px;
+  margin-bottom: var(--s-2);
+}
+
+.doc-toolbar .discussion-controls { margin-left: auto; }
+
+.doc-save {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--s-3);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--fs-body);
+}
+
+.doc-save:hover {
+  background: var(--fg-muted);
+  border-color: var(--fg-muted);
 }
 
 .doc-revision {
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--muted);
-  max-width: 420px;
-  overflow-wrap: anywhere;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .doc-status {
   margin: 0;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
+/* small inline controls of the discussion navigation */
+.discussion-controls button {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-caption);
 }
 
 .vditor-host {
   min-height: 160px;
-  padding: 4px;
+  padding: var(--s-1);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.vditor-host .vditor {
+  font-size: var(--fs-base);
 }
 
 .doc-source,
@@ -382,12 +707,12 @@ body {
   display: block;
   width: 100%;
   min-height: 130px;
-  margin-top: 10px;
-  padding: 8px;
+  margin-top: var(--s-2);
+  padding: var(--s-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  font-family: ui-monospace, monospace;
-  font-size: 13px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
 }
 
 .doc-error {
@@ -395,45 +720,57 @@ body {
 }
 
 .doc-conflict {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: var(--s-3);
+  padding: var(--s-3);
   border: 1px solid var(--danger);
-  border-radius: 10px;
-  background: #fef2f2;
+  border-radius: var(--radius-lg);
+  background: var(--danger-bg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.conflict-message {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-body);
 }
 
 .conflict-revision {
   display: block;
-  margin: 8px 0;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
+  margin: var(--s-2) 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
-.panes {
-  margin-top: 18px;
+.conflict-overwrite {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
-
+.conflict-overwrite:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--accent-fg);
+}
 
 /* -- read-only discussion overlay (§1p) ------------------------------------- */
 
 .discussion-controls {
   display: flex;
-  gap: 8px;
+  gap: var(--s-2);
 }
 
 .discussion-overlay {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: var(--s-3);
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #ffffff;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
   min-height: 60px;
 }
 
 .discussion-list {
-  margin: 10px 0 0;
-  padding-left: 18px;
+  margin: var(--s-2) 0 0;
+  padding-left: var(--s-4);
 }
 
 /* -- run timeline (§1q) ----------------------------------------------------- */
@@ -441,16 +778,16 @@ body {
 .current-card {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
-  padding: 10px 14px;
+  gap: var(--s-4);
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #ffffff;
-  margin-bottom: 14px;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  margin-bottom: var(--s-4);
 }
 
 .current-card span {
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 .timeline {
@@ -460,73 +797,77 @@ body {
 .stage-track {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 0 0 14px;
+  gap: var(--s-1);
+  margin: 0 0 var(--s-4);
   padding-left: 0;
   list-style: none;
-  border-left: 2px solid var(--border);
+  border-left: 1px solid var(--border);
 }
 
 .stage-node {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  cursor: pointer;
+  gap: var(--s-3);
   min-height: 30px;
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: var(--fs-body);
 }
 
 .stage-node:hover {
-  background: rgb(31 36 48 / 6%);
+  background: var(--bg-subtle);
 }
 
 .stage-attempt {
-  padding: 1px 8px;
+  padding: 2px var(--s-2);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 11px;
-  color: var(--muted);
+  background: var(--bg-subtle);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
 .last-event {
   display: inline-block;
-  margin: 6px 0;
-  padding: 3px 10px;
+  margin: var(--s-1) 0;
+  padding: var(--s-1) var(--s-3);
   border: 1px solid var(--border);
   border-radius: 999px;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-  color: var(--muted);
+  background: var(--bg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
 }
 
 .ac-chain {
-  margin: 0 0 12px;
-  padding-left: 20px;
+  margin: 0 0 var(--s-3);
+  padding-left: var(--s-5);
 }
 
 .node-overlay {
-  margin-top: 14px;
-  padding: 12px;
+  margin-top: var(--s-4);
+  padding: var(--s-3);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #ffffff;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-overlay);
 }
 
 .overlay-title {
-  margin: 0 0 6px;
-  font-size: 14px;
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-title);
 }
 
 .overlay-doc-link {
   display: inline-block;
-  margin-top: 8px;
+  margin-top: var(--s-2);
 }
 
 /* -- login: dual-column auth shell (E-02); narrow viewports collapse -------- */
 
 .auth {
-  background: var(--surface);
+  background: var(--bg-subtle);
 }
 
 .auth-shell {
@@ -540,42 +881,67 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 48px;
+  gap: var(--s-3);
+  padding: var(--s-7);
   text-align: center;
 }
 
 .auth-hero-image {
-  width: 128px;
-  height: 128px;
+  width: 96px;
+  height: 96px;
 }
 
 .auth-slogan {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-headline);
+  letter-spacing: var(--tracking-tight);
 }
 
 .auth-credit {
   margin: 0;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--fg-subtle);
+  font-size: var(--fs-caption);
 }
 
 .auth-panel {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 12px;
-  padding: 48px;
-  background: #ffffff;
+  gap: var(--s-3);
+  padding: var(--s-7);
+  background: var(--bg);
   border-left: 1px solid var(--border);
+}
+
+.auth-title {
+  margin: 0;
+  font-size: var(--fs-headline);
 }
 
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--s-2);
   max-width: 320px;
+}
+
+.auth-form label {
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.auth-form button[type="submit"],
+.auth-form button[type="button"] {
+  margin-top: var(--s-2);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.auth-form button:hover {
+  background: var(--fg-muted);
+  border-color: var(--fg-muted);
 }
 
 /* the global hidden attribute must win over the flex layout (§1m: the name
@@ -589,6 +955,7 @@ body {
   min-height: 1.2em;
   margin: 0;
   color: var(--danger);
+  font-size: var(--fs-body);
 }
 
 @media (max-width: 760px) {

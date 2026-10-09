@@ -262,6 +262,67 @@ def _git(repo: Path, *args: str) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
+def _git_log_triples(repo: Path, rel_dir: str) -> list[tuple[str, str, str]] | None:
+    """(sha, commit date, author) of the commits touching one dir, newest
+    first — one subprocess instead of one log plus two shows per commit (#225)."""
+    log = _git(
+        repo, "log", f"-n{_GIT_LOG_LIMIT}",
+        "--format=%H%x1f%cI%x1f%an", "--", rel_dir,
+    )
+    if log is None:
+        return None
+    triples = []
+    for line in log.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 3:
+            triples.append((parts[0], parts[1], parts[2]))
+    return triples
+
+
+def _git_show_batch(repo: Path, specs: list[str]) -> dict[str, str | None]:
+    """Contents of many ``<sha>:<path>`` refs from ONE ``git cat-file --batch``.
+
+    #225: the per-ref ``git show`` N+1 (up to ~1000 subprocess spawns, ~4s per
+    document read) collapses into a single process. A missing ref degrades to
+    None exactly like the old per-ref ``_git`` call did.
+    """
+    if not specs:
+        return {}
+    proc = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=str(repo),
+        input=("\n".join(specs) + "\n").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return dict.fromkeys(specs)
+    out: dict[str, str | None] = {}
+    data = proc.stdout
+    pos = 0
+    for spec in specs:
+        nl = data.find(b"\n", pos)
+        if nl < 0:
+            out[spec] = None
+            continue
+        header = data[pos:nl].decode("utf-8", "replace").split(" ", 2)
+        pos = nl + 1
+        if len(header) < 3:
+            out[spec] = None
+            continue
+        try:
+            size = int(header[2])
+        except ValueError:
+            out[spec] = None
+            continue
+        body = data[pos : pos + size]
+        pos += size
+        if data[pos : pos + 1] == b"\n":
+            pos += 1
+        out[spec] = body.decode("utf-8", "replace")
+    return out
+
+
 def _relpath(path: Path, repo: Path) -> str | None:
     try:
         return path.relative_to(repo).as_posix()
@@ -307,39 +368,48 @@ def _revision_contents(repo: Path, vdir: Path, doc_file: Path) -> dict[str, str]
 
     The Runtime commits material revisions to the run's repo and approvals
     bind the trio digest, so each commit's digest is recomputed from the
-    committed story/spec/acceptance bodies.
+    committed story/spec/acceptance bodies. Two subprocesses total (#225):
+    the log triple scan plus one batched content read.
     """
     rel_dir = _relpath(vdir, repo)
     rel_doc = _relpath(doc_file, repo)
     if rel_dir is None or rel_doc is None:
         return {}
-    log = _git(repo, "log", f"-n{_GIT_LOG_LIMIT}", "--format=%H", "--", rel_dir)
-    if log is None:
+    triples = _git_log_triples(repo, rel_dir)
+    if triples is None:
         return {}
+    shas = [sha for sha, _, _ in triples]
+    digests = _commit_trio_digests(repo, shas, rel_dir)
+    doc_contents = _git_show_batch(repo, [f"{sha}:{rel_doc}" for sha in shas])
     contents: dict[str, str] = {}
-    for sha in log.split():
-        digest = _commit_trio_digest(repo, sha, rel_dir)
-        if digest is None or digest in contents:
-            continue
-        content = _git(repo, "show", f"{sha}:{rel_doc}")
-        if content is not None:
+    for sha in shas:
+        digest = digests.get(sha)
+        content = doc_contents.get(f"{sha}:{rel_doc}")
+        if digest and content is not None and digest not in contents:
             contents[digest] = content
     return contents
 
 
-def _commit_trio_digest(repo: Path, sha: str, rel_dir: str) -> str | None:
-    """Trio digest of one commit's story/spec/acceptance bodies.
+def _commit_trio_digests(
+    repo: Path, shas: list[str], rel_dir: str
+) -> dict[str, str | None]:
+    """Trio digest per commit sha, all commits resolved in one batch (#225).
 
     None when the commit does not carry all three members (the revision
     predates the version dir or the docs were introduced later).
     """
-    texts: list[str] = []
-    for name in _TRIO_FILES:
-        text = _git(repo, "show", f"{sha}:{rel_dir}/{name}")
-        if text is None:
-            return None
-        texts.append(text)
-    return _trio_digest(texts)
+    contents = _git_show_batch(
+        repo, [f"{sha}:{rel_dir}/{name}" for sha in shas for name in _TRIO_FILES]
+    )
+    digests: dict[str, str | None] = {}
+    for sha in shas:
+        texts = [contents.get(f"{sha}:{rel_dir}/{name}") for name in _TRIO_FILES]
+        digests[sha] = (
+            _trio_digest(texts)
+            if all(isinstance(text, str) for text in texts)
+            else None
+        )
+    return digests
 
 
 def _content_at(repo: Path, doc_file: Path, revision: str, current: str) -> str | None:
@@ -766,13 +836,13 @@ def _project_doc_history(
             add(revision, event["ts"], payload.get("actor"))
     rel_dir = _relpath(version_dir, repo)
     if rel_dir is not None:
-        log = _git(repo, "log", f"-n{_GIT_LOG_LIMIT}", "--format=%H", "--", rel_dir)
-        for sha in (log or "").split():
-            add(
-                _commit_trio_digest(repo, sha, rel_dir),
-                (_git(repo, "show", "-s", "--format=%cI", sha) or "").strip(),
-                (_git(repo, "show", "-s", "--format=%an", sha) or "").strip(),
+        triples = _git_log_triples(repo, rel_dir)
+        if triples is not None:
+            digests = _commit_trio_digests(
+                repo, [sha for sha, _, _ in triples], rel_dir
             )
+            for sha, date, author in triples:
+                add(digests.get(sha), date.strip(), author.strip())
     return entries
 
 
