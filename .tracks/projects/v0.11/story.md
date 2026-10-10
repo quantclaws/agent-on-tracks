@@ -85,19 +85,21 @@ sha:
 
 - **完成结果**：用户可解释当前进展、历史 attempt 与回拨关系，可继续处理门动作或跳转文档；不可查看或无数据的节点可读降级，不伪造数据；全程键盘可达。
 
-### 3.3. 创建 release / hotfix（含 backlog 转正）
+### 3.3. 统一入口创建 release / hotfix（Scribe 评估先于建分支）
 
-- **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。
-- **入口/触发**：用户经 Releases 窗口新建入口、编辑器新写，或从 backlog 折叠组选择条目转正；hotfix 经新建 hotfix 入口进入。
+- **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。本版将 Scribe 评估前移至 CREATE_BRANCH 之前（flow.md §3/§4 随本版规格同步修订）。
+- **入口/触发**：用户经 Releases 窗口统一新建入口输入一段话，三种来源：本身即故事/seed、GitHub issue id、backlog 条目；hotfix 经新建 hotfix 入口进入。
 
-1. 用户新建 release：编辑器写 raw seed（逐字入骨架）或粘贴完整 story（原样采纳，不包裹进 §1）；M-START 门在 UI 逐项执行——有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，未合并分支则单列出分支与后果经确认（继续/取消），通过后从 main 创建 `releases/v{N+1}`。
-2. 用户从 backlog 转正：以 backlog 条目为输入走同一新建 release 流程，转正成功后条目移除并记录去向。
-3. 用户新建 hotfix：选择 GitHub issue + 场景（post-release 从 main 基线 / dev 从活跃分支），看到 HOTFIX-TRIAGE 预检与既有 AC 锚定结果；锚定成立继续建 hotfix，锚定不成立则明示退出 hotfix、转 backlog/new feature。
+1. 用户提交一段输入后，runtime 派发 Scribe 做可行性/重复/冲突建议并将建议面板呈现给人；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1。
+2. 用户在建议面板四选一：①进入 backlog；②从 backlog 删除（仅当来源为 backlog 时可用）；③不进入开发，归档；④进入开发。只有选④才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支并进入后续阶段；①②③不开 run、不建分支。选①的条目进入 backlog 存储并在 sidebar 折叠组呈现；选③的归档与 backlog 在存储上区分；选②移除来源 backlog 条目；从 backlog 来源选④转正成功后移除原条目并记录去向。
+3. 用户选④后走 M-START 门 UI 化：有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，本地分支未全部并入 main 则单列出未合并分支与后果经确认（继续/取消），通过后从 main 创建 `releases/v{N+1}`。
+4. 用户新建 hotfix：选择 GitHub issue + 场景（post-release 从 main 基线 / dev 从活跃分支），看到 HOTFIX-TRIAGE 预检与既有 AC 锚定结果；锚定成立继续建 hotfix，锚定不成立则明示退出 hotfix、转 backlog/new feature。
 
-- **完成结果**：新建的 release 进入 M-STORY（TRIAGE 门见 3.4）或记入 backlog 可稍后转正；hotfix 进入 hotfix 流程或明确转 backlog；失败或拒绝均给出原因与合法继续位置，不建半截 run 或分支。
+- **完成结果**：选④的新 release 进入 M-STORY（TRIAGE 门见 3.4），选①记入 backlog 可稍后转正，选③归档可查但不进入开发；hotfix 进入 hotfix 流程或明确转 backlog；失败或拒绝均给出原因与合法继续位置，不建半截 run 或分支。
 
 
 > **Aaron:** §3.3 需按上方 2026-10-10 用户故事重构为统一入口路径：输入一段话（三种来源：本身即故事/seed、GitHub issue id、backlog 条目）→ runtime 派发 Scribe 做可行性/重复/冲突建议 → 建议面板呈现给人，提供四个动作：①进入 backlog；②从 backlog 删除（仅当来源为 backlog）；③不进入开发，归档；④进入开发。选④后才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支、进入后续阶段；①②③不开 run、不建分支。此重排意味着 Scribe 评估先于 CREATE_BRANCH（flow.md §3/§4 随本版规格同步修订）。BS-06/07/08 相应改写，归档（③）需与 backlog（①）在存储上区分。
+>> **Scribe:** 已按要求重构：§3.3 改为统一入口路径，三种来源→Scribe建议面板→四选一，仅④建分支/M-START，标题由Scribe定；BS-06/07/08相应改写并区分归档与backlog存储，变更基线注明评估先于CREATE_BRANCH。请确认后resolved。
 
 ### 3.4. 人工门 UI 化与自驱动推进
 
@@ -153,23 +155,23 @@ sha:
 - 来源: [3.2 / louke FR-1401]
 - 说明: 保护回拨的可逆性边界，不伪装撤销外部副作用。
 
-### BS-06 新建输入双形态
+### BS-06 统一入口与 Scribe 建议面板
 
-- EARS: `WHEN 用户新建 release, THE 系统 SHALL 支持两种输入：编辑器写 raw seed（逐字入骨架）或完整 story（原样采纳，不包裹进 §1）`
-- 来源: [3.3 / flow.md §3.2 / 操作者指令：三、1]
-- 说明: 锁定 flow.md 分类规则的 UI 化，防止完整 story 被改写包裹。
+- EARS: `WHEN 用户经统一入口提交一段输入, THE 系统 SHALL 接受三种来源（本身即故事/seed、GitHub issue id、backlog 条目），派发 Scribe 做可行性/重复/冲突建议并呈现建议面板，提供四个动作：进入 backlog、从 backlog 删除（仅来源为 backlog 时可用）、不进入开发归档、进入开发；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1`
+- 来源: [3.3 / flow.md §3.2 / 操作者补充输入 2026-10-10]
+- 说明: 锁定 Scribe 评估先于建分支的统一入口；防止完整 story 被改写包裹。
 
-### BS-07 M-START 门 UI 化
+### BS-07 进入开发才建分支与 M-START 门
 
-- EARS: `WHEN 用户走新建 release 的 M-START 门, THE 系统 SHALL 有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，本地分支未全部并入 main 则单列出未合并分支与后果并经确认（继续/取消），通过后从 main 创建 releases/v{N+1}`
-- 来源: [3.3 / flow.md §3 / 操作者指令：三、2]
-- 说明: 锁定 CLI 门行为在 UI 的完整复现，四项缺一不可。
+- EARS: `WHEN 用户在建议面板选择进入开发, THE 系统 SHALL 由 Scribe 确定标题（写入 frontmatter title）并走 M-START 门：有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，本地分支未全部并入 main 则单列出未合并分支与后果并经确认（继续/取消），通过后从 main 创建 releases/v{N+1}；WHEN 用户选择其余三项, THE 系统 SHALL 不开 run、不建分支`
+- 来源: [3.3 / flow.md §3 / 操作者指令：三、2 / 操作者补充输入 2026-10-10]
+- 说明: 锁定只有选④才建分支/M-START，①②③为非建分支出口。
 
-### BS-08 backlog 存储投影与转正
+### BS-08 backlog/归档区分与转正去向
 
-- EARS: `WHEN backlog.recorded 事件产生, THE 系统 SHALL 聚合存储并在 sidebar 折叠组呈现 backlog 投影；WHEN 用户从 backlog 转正, THE 系统 SHALL 以条目为输入走新建 release 流程，转正成功后移除条目并记录去向`
-- 来源: [3.3 / 操作者指令：三、3]
-- 说明: 补齐 backlog 缺失的存储与投影，并锁定转正闭环。
+- EARS: `WHEN backlog.recorded 事件产生或用户选择进入 backlog, THE 系统 SHALL 聚合存储并在 sidebar 折叠组呈现 backlog 投影；WHEN 用户选择归档, THE 系统 SHALL 与 backlog 在存储上区分归档；WHEN 用户从 backlog 删除或转正成功, THE 系统 SHALL 移除原条目并记录去向`
+- 来源: [3.3 / 操作者指令：三、3 / 操作者补充输入 2026-10-10]
+- 说明: 补齐 backlog 缺失的存储与投影，并锁定归档与 backlog 的存储区分与转正闭环。
 
 ### BS-09 hotfix 创建与锚定退出
 
