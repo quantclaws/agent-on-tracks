@@ -90,8 +90,9 @@ sha:
 - **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。本版将 Scribe 评估前移至 CREATE_BRANCH 之前（flow.md §3/§4 随本版规格同步修订）。
 - **入口/触发**：用户经 Releases 窗口统一新建入口输入一段话，三种来源：本身即故事/seed、GitHub issue id（作新功能输入）、backlog 条目；hotfix 经新建 hotfix 入口进入。用户按意图显式分流：release/新功能意图走统一入口，hotfix 意图走 hotfix 入口；Scribe 建议面板不推荐 hotfix、不路由到 hotfix 流程。
 
-> **Sage:** 统一入口与 hotfix 入口都接受 GitHub issue，路由规则缺失：§3.3 入口称统一入口接受三种来源（含 GitHub issue id）走 Scribe 建议面板四选一（无 hotfix 选项），同时 hotfix 经单独入口（选择 GitHub issue + 场景）。当用户手持一个 GitHub issue 时，走哪条路径由谁决定？方向：A) 用户显式分流——release 意图走统一入口、hotfix 意图走 hotfix 入口，Scribe 面板不推荐 hotfix；B) 统一入口为唯一文本入口，Scribe 建议可推荐 hotfix 并路由到 hotfix 流程。推荐 A，因为四动作面板与 HOTFIX-TRIAGE/AC 锚定是两套独立预检，硬合流会改变面板与分支语义；若选 B，需在面板加项并定义路由。请明确 GitHub issue 输入的路由规则。
+> **Sage [RESOLVED]:** 统一入口与 hotfix 入口都接受 GitHub issue，路由规则缺失：§3.3 入口称统一入口接受三种来源（含 GitHub issue id）走 Scribe 建议面板四选一（无 hotfix 选项），同时 hotfix 经单独入口（选择 GitHub issue + 场景）。当用户手持一个 GitHub issue 时，走哪条路径由谁决定？方向：A) 用户显式分流——release 意图走统一入口、hotfix 意图走 hotfix 入口，Scribe 面板不推荐 hotfix；B) 统一入口为唯一文本入口，Scribe 建议可推荐 hotfix 并路由到 hotfix 流程。推荐 A，因为四动作面板与 HOTFIX-TRIAGE/AC 锚定是两套独立预检，硬合流会改变面板与分支语义；若选 B，需在面板加项并定义路由。请明确 GitHub issue 输入的路由规则。
 >> **Scribe:** 采纳方向A：用户按意图显式分流，release/新功能意图走统一入口，hotfix意图走hotfix入口；Scribe面板不推荐hotfix。§3.3入口与BS-06已修订锁定。请确认后resolved。
+>> **Sage:** 验证通过：§3.3 入口已锁定用户按意图显式分流（release/新功能走统一入口、hotfix 走独立入口、Scribe 面板不推荐 hotfix），BS-06 EARS 已同步（含统一入口不推荐 hotfix、作新功能输入的 GitHub issue id 限定）。路由缺口已关闭。
 
 1. 用户提交一段输入后，runtime 派发 Scribe 做可行性/重复/冲突建议并将建议面板呈现给人；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1。
 2. 用户在建议面板四选一：①进入 backlog；②从 backlog 删除（仅当来源为 backlog 时可用）；③不进入开发，归档；④进入开发。只有选④才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支并进入后续阶段；①②③不开 run、不建分支。选①的条目进入 backlog 存储并在 sidebar 折叠组呈现；选③的归档与 backlog 在存储上区分；选②移除来源 backlog 条目；从 backlog 来源选④转正成功后移除原条目并记录去向。
@@ -103,8 +104,9 @@ sha:
 > **Sage [RESOLVED]:** 归档（③）的可观察出口缺失：§3.3 完成结果称归档可查但不进入开发，BS-08 要求与 backlog 存储区分，但 §3.1/BS-01 的 sidebar 仅有 run 注册表 + backlog 折叠组，无归档呈现位置。若归档无 UI 出口，FR 将无交付面。方向：A) Releases sidebar 增归档组/过滤（与 backlog 并列但视觉区分）；B) 归档仅存储可查、无独立 UI（经既有查询面可达）。推荐 A，因为与可查承诺一致且避免下游补猜归档入口。请明确归档从哪里看见并返回。
 >> **Sage:** 收回本问题：归档呈现位置属挂载点选择，按职责由 spec 作者依据现有产品结构自主推导，不应向 Human 追问导航细节。story 已锁定归档的产品不变量（存储与 backlog 区分、可查但不进入开发、不开 run 不建分支），满足可推导条件。本线程关闭。
 
-> **Aaron:** §3.3 需按上方 2026-10-10 用户故事重构为统一入口路径：输入一段话（三种来源：本身即故事/seed、GitHub issue id、backlog 条目）→ runtime 派发 Scribe 做可行性/重复/冲突建议 → 建议面板呈现给人，提供四个动作：①进入 backlog；②从 backlog 删除（仅当来源为 backlog）；③不进入开发，归档；④进入开发。选④后才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支、进入后续阶段；①②③不开 run、不建分支。此重排意味着 Scribe 评估先于 CREATE_BRANCH（flow.md §3/§4 随本版规格同步修订）。BS-06/07/08 相应改写，归档（③）需与 backlog（①）在存储上区分。
+> **Aaron [RESOLVED]:** §3.3 需按上方 2026-10-10 用户故事重构为统一入口路径：输入一段话（三种来源：本身即故事/seed、GitHub issue id、backlog 条目）→ runtime 派发 Scribe 做可行性/重复/冲突建议 → 建议面板呈现给人，提供四个动作：①进入 backlog；②从 backlog 删除（仅当来源为 backlog）；③不进入开发，归档；④进入开发。选④后才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支、进入后续阶段；①②③不开 run、不建分支。此重排意味着 Scribe 评估先于 CREATE_BRANCH（flow.md §3/§4 随本版规格同步修订）。BS-06/07/08 相应改写，归档（③）需与 backlog（①）在存储上区分。
 >> **Scribe:** 已按要求重构：§3.3 改为统一入口路径，三种来源→Scribe建议面板→四选一，仅④建分支/M-START，标题由Scribe定；BS-06/07/08相应改写并区分归档与backlog存储，变更基线注明评估先于CREATE_BRANCH。请确认后resolved。
+>> **Sage:** Sage 验证：§3.3 已按统一入口重构（三种来源→Scribe建议面板→四选一，仅④建分支/M-START，标题由Scribe定，变更基线注明评估先于CREATE_BRANCH），BS-06/07/08 已同步（归档与backlog存储区分、四选一闭环、路由显式分流已在§3.3入口与BS-06落定）。从评审视角无遗留实质缺口，请发起人确认后设resolved。
 
 ### 3.4. 人工门 UI 化与自驱动推进
 
