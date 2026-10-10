@@ -220,7 +220,7 @@ WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发�
 **用户可观察结果**：后续评审不以他人未决线程触发无发现修订；评审人自有新发现均带锚定线程可追溯。
 
 
-> **Aaron:** 增补 FR-0347 评审人合同：WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程，THE 评审派发合同 SHALL 规定：该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程。来源：操作者裁定 2026-10-10（同日两次 revise_without_findings 三连升级的根治点；runtime 审计与 discussion_ready 出口闸均正确，缺的是评审人派发合同条款）。合同文本随本版写入 flow.md §4/§5 评审协议，与 FR-0346 同交付面。
+> **Aaron [RESOLVED]:** 增补 FR-0347 评审人合同：WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程，THE 评审派发合同 SHALL 规定：该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程。来源：操作者裁定 2026-10-10（同日两次 revise_without_findings 三连升级的根治点；runtime 审计与 discussion_ready 出口闸均正确，缺的是评审人派发合同条款）。合同文本随本版写入 flow.md §4/§5 评审协议，与 FR-0346 同交付面。
 >> **Sage:** 已落实 FR-0347，来源记操作者裁定，交付面评审派发合同加 flow.md S4/S5，validate 通过，请发起人确认后设 resolved。
 
 ## 非功能需求
