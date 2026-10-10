@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,5 @@
++// counterexample AC-FR0343-02: every selected node shows a gate action
++// entry, even when awaiting_gate is null (a dangling review surface)
++export function panelFor(node) {
++  return { action: "review" };  // deviation: rendered unconditionally
++}

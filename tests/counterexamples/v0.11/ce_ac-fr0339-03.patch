@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-FR0339-03: the backlog/archive/remove actions also create
++# a run (the terminal-state discipline SM-01.7 broken)
++def decide_intake_deviation(intake, action):
++    if action in ("backlog", "archive", "remove_backlog"):
++        create_run(journey="feature")  # deviation
++    return decide(intake, action)

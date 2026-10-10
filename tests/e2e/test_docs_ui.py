@@ -11,6 +11,8 @@ serve + Chromium stack.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests._support.ui_browser import SERVE_PASSWORD  # noqa: F401  helpers + constants
@@ -35,7 +37,7 @@ def _login_and_open_docs(ui_serve, page):
     page.get_by_test_id("login-submit").click()
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()
-    page.get_by_test_id("tabbar-item-projects").wait_for()
+    page.get_by_test_id("tabbar-item-releases").wait_for()
     page.get_by_test_id("tabbar-item-docs").click()
     page.locator("[data-testid='view-docs']").wait_for()
 
@@ -51,6 +53,42 @@ def _seed_canary_event(ui_serve, run_id: str) -> None:
         {"command_id": "cmd-canary-1", "kind": "edit_material", "detail": _CANARY},
         run_id=run_id,
     )
+
+
+def _walk_to_review_round(repo, run_hint: str) -> str:
+    """Arrange a run at the stage-review round through the public CLI walker
+    (init → start → run → triage go → run, the fake backend carries both
+    dispatches); returns the run id. Fixture arrange only — the journey
+    itself stays browser-driven."""
+    import os
+    import re
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {k: v for k, v in os.environ.items() if k != "TRACKS_HOME"}
+    env["PYTHONPATH"] = str(repo_root)
+    env.setdefault("TRAC_AGENT_BACKEND", "fake")
+    env.setdefault("TRAC_INFRA_RETRY_LIMIT", "2")
+
+    def cli(*args, stdin=None):
+        return subprocess.run(
+            [sys.executable, "-m", "tracks.cli.main", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            input=stdin,
+        )
+
+    assert cli("init").returncode == 0
+    started = cli("start", "v1.0", stdin="评审轮写控上下文种子")
+    assert started.returncode == 0, started.stderr
+    run_id = re.search(r"run (\S+) started", started.stdout).group(1)
+    assert cli("run").returncode == 0
+    assert cli("triage", "go").returncode == 0
+    assert cli("run").returncode == 0
+    return run_id
 
 
 # AC-FR0322-01@v0.10 TRACKS-TRACE docs center Vditor ir same origin
@@ -411,20 +449,61 @@ def test_discussion_navigation_controls(ui_serve, page):
     )
 
 
-# AC-FR0325-02@v0.10 TRACKS-TRACE no discussion write controls
+# AC-FR0325-02@v0.10 TRACKS-TRACE discussion overlay read model discipline
+# AC-FR0344-01@v0.11 TRACKS-TRACE review round write controls in context only
 def test_no_discussion_write_controls(ui_serve, page):
-    """AC-FR0325-02: the UI exposes no resolve or reply write entry — the
-    discussion overlay is strictly read-only (write-back belongs to the
-    CLI)."""
+    """AC-FR0325-02 with the v0.11 FR-0344 revision: outside a review round
+    the discussion overlay stays strictly read-only (no resolve, no reply,
+    no write controls at all); inside a review-round run context
+    (awaiting review) the #18 anchor-line write control presents on the
+    review face — while the /discussions path itself still exposes no write
+    endpoint (the v0.10 §1p.3 boundary holds)."""
+    import json
+    import time
+
+    from tests._support.v09_web import http_post, login_session
+
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
     page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     page.get_by_test_id("discussion-toggle").click()
     page.get_by_test_id("discussion-overlay").wait_for()
+    # non-review-round context: strictly read-only
     assert page.get_by_test_id("discussion-resolve").count() == 0
     assert page.get_by_test_id("discussion-reply").count() == 0
     assert page.locator("text=RESOLVED").count() >= 0  # read-only status display
+
+    # the review-round context: a run at the stage review (CLI-walked arrange)
+    _walk_to_review_round(ui_serve.repo, "docs-ui-review")
+    deadline = time.time() + 5
+    found = False
+    while time.time() < deadline and not found:
+        page.reload(wait_until="domcontentloaded")
+        page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+        page.get_by_test_id("vditor-ir-host").wait_for()
+        found = page.get_by_test_id("discussion-anchor-comment").count() >= 1
+        if not found:
+            time.sleep(0.5)
+    # the review round presents the anchor-line comment write control
+    assert found, (
+        "the review-round context must present the #18 anchor-line write control"
+    )
+    # ...but the /discussions HTTP path stays write-free (boundary kept)
+    base = ui_serve.base_url
+    cookie, csrf = login_session(base)
+    status, body = http_post(
+        base,
+        "/api/discussions",
+        {"doc": "spec", "body": "boundary probe"},
+        cookies=cookie,
+        csrf=csrf,
+        idempotency_key="docs-ui-discussions-write-1",
+    )
+    assert status in (404, 405), (
+        f"the /discussions path must expose no write endpoint: {status} {body[:120]}"
+    )
+    assert json.loads(body)["error"]["reason"], body[:120]
 
 
 # AC-NFR0154-02@v0.10 TRACKS-TRACE UI writes carry csrf and idempotency

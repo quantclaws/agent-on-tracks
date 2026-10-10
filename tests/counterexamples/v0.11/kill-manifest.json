@@ -1,0 +1,291 @@
+{
+ "version": "v0.11",
+ "contract": "one counterexample per required AC (test-plan §8); each patch deviates minimally from the v0.11 contract at the seam the bound test reads, nothing else",
+ "verification": {
+  "write_head_session": "2026-10-11 M-TEST WRITE dispatch (retry after failure 1-shield-9, manifest_malformed: the reply lacked the envelope JSON): the implementation tree is pre-v0.11 (all bound tests are legal Red awaiting the M-IMPL delivery). Kill verification at this head is only meaningful for arrival-green nodes: ce_ac-nfr0158-02b.patch was applied, the guard test failed with the precise missing-ruling assertion, and the patch was reverted clean (killed; session verified in both prior WRITE rounds and re-verified this round). The remaining patches bind their AC for kill verification at the delivered tree (the red-window contract of the v0.10 precedent): each patch is applied against the delivered implementation, the bound test must then fail, and the workspace restored.",
+  "apply_check": "patches over delivered-at-WRITE surfaces (ce_ac-nfr0158-02.patch styles.css pinning, ce_ac-nfr0158-02b.patch architecture inheritance) pass git apply --check at the WRITE head; patches over the not-yet-delivered v0.11 surfaces carry the contract-declared symbol anchors and are context-refreshed at the delivered tree before their kill session (the reviewed v0.10 practice).",
+  "guard_kill_session": "ce_ac-nfr0158-02b.patch applied at the WRITE head -> tests/integration/test_flow_contracts.py::test_v010_rulings_anchored FAILED (AssertionError: ARCH-011 section 0.1 must explicitly inherit the v0.10 ruling: pinned-viewport) -> reverted clean -> guard passes again on the unpatched tree (arrival-green)."
+ },
+ "bindings": [
+  {
+   "ac": "AC-FR0333-01",
+   "if_ref": "IF-RELEASES-001, IF-BACKLOG-001",
+   "mutation": "the Releases sidebar renders one flat run list; the version-grouped registry and the backlog fold-over group are dropped",
+   "patch": "ce_ac-fr0333-01.patch",
+   "test": "tests/e2e/test_releases_ui.py::test_releases_sidebar_and_selection",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0333-02",
+   "if_ref": "IF-RELEASES-001, IF-BACKLOG-001",
+   "mutation": "archived entries fold into the backlog group; the distinct archive query group is removed",
+   "patch": "ce_ac-fr0333-02.patch",
+   "test": "tests/integration/test_releases_projection.py::test_archive_group_distinct_queryable",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0340-01",
+   "if_ref": "IF-BACKLOG-001",
+   "mutation": "dispositions are recorded in a second service-plane storage instead of the backlog.dispositioned event truth",
+   "patch": "ce_ac-fr0340-01.patch",
+   "test": "tests/integration/test_releases_projection.py::test_backlog_storage_and_archive_distinct",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0340-02",
+   "if_ref": "IF-BACKLOG-001, IF-INTAKE-001",
+   "mutation": "the disposition is accepted but disposed entries stay listed as open backlog rows with no queryable destination",
+   "patch": "ce_ac-fr0340-02.patch",
+   "test": "tests/integration/test_releases_projection.py::test_disposition_recorded_and_promote_flow",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0334-01",
+   "if_ref": "IF-RELEASES-001, IF-WORKBENCH-001",
+   "mutation": "PAGES and the tab bar keep the Review entry (the eight-name world survives)",
+   "patch": "ce_ac-fr0334-01.patch",
+   "test": "tests/integration/test_workbench_tabs.py::test_five_tab_closed_set",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0334-02",
+   "if_ref": "IF-AWAIT-001, IF-GATEUI-001",
+   "mutation": "the run-detail projection strips the awaiting_gate field group (no panel face for the stage review)",
+   "patch": "ce_ac-fr0334-02.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_awaiting_gate_mapping",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0335-01",
+   "if_ref": "IF-TIMELINE-002, IF-WEBUI-001",
+   "mutation": "retried attempts collapse into a single stage node",
+   "patch": "ce_ac-fr0335-01.patch",
+   "test": "tests/e2e/test_releases_ui.py::test_timeline_full_rendering",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0335-02",
+   "if_ref": "IF-TIMELINE-002, IF-QUERY-001",
+   "mutation": "the timeline renders a locally fabricated stage track instead of the timeline/ac-chain projection data",
+   "patch": "ce_ac-fr0335-02.patch",
+   "test": "tests/integration/test_timeline_full.py::test_timeline_data_parity_no_mock",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0336-01",
+   "if_ref": "IF-TIMELINE-002, IF-WEBUI-001",
+   "mutation": "node selection reopens the floating overlay instead of the fixed detail pane",
+   "patch": "ce_ac-fr0336-01.patch",
+   "test": "tests/e2e/test_releases_ui.py::test_node_detail_fixed_pane",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0336-02",
+   "if_ref": "IF-TIMELINE-002",
+   "mutation": "data-less nodes render invented timing/artifact facts instead of the readable degradation",
+   "patch": "ce_ac-fr0336-02.patch",
+   "test": "tests/integration/test_timeline_full.py::test_detail_degradation_no_floating",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0337-01",
+   "if_ref": "IF-RETURN-001, IF-TIMELINE-002",
+   "mutation": "the return pointer renders on every node, ignoring return_options legality",
+   "patch": "ce_ac-fr0337-01.patch",
+   "test": "tests/integration/test_timeline_full.py::test_return_options_gate_pointer",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0337-02",
+   "if_ref": "IF-RETURN-001",
+   "mutation": "the return fires without the explicit confirmation and hides the already-executed consequences",
+   "patch": "ce_ac-fr0337-02.patch",
+   "test": "tests/e2e/test_return_ui.py::test_return_confirm_face",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0338-01",
+   "if_ref": "IF-INTAKE-001",
+   "mutation": "the suggestion panel adds a hotfix routing recommendation and drops the archive action",
+   "patch": "ce_ac-fr0338-01.patch",
+   "test": "tests/integration/test_intake.py::test_intake_sources_and_actions",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0338-02",
+   "if_ref": "IF-INTAKE-001, IF-MSTART-001",
+   "mutation": "complete stories are re-wrapped into the skeleton instead of being adopted verbatim",
+   "patch": "ce_ac-fr0338-02.patch",
+   "test": "tests/integration/test_intake.py::test_raw_seed_verbatim_complete_story_adopted_no_hotfix_routing",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0339-01",
+   "if_ref": "IF-MSTART-001",
+   "mutation": "the version derivation reuses the max existing release minor without +1",
+   "patch": "ce_ac-fr0339-01.patch",
+   "test": "tests/integration/test_mstart_gate.py::test_develop_creates_branch_run_title",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0339-02",
+   "if_ref": "IF-MSTART-001, IF-BACKLOG-001",
+   "mutation": "the M-START gate skips the clean-workspace check (dirty trees proceed)",
+   "patch": "ce_ac-fr0339-02.patch",
+   "test": "tests/integration/test_mstart_gate.py::test_active_run_backlog_dirty_refusal_unmerged_confirm",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0339-03",
+   "if_ref": "IF-MSTART-001",
+   "mutation": "the terminal actions (backlog/archive/remove) also open a run",
+   "patch": "ce_ac-fr0339-03.patch",
+   "test": "tests/integration/test_mstart_gate.py::test_nondevelop_actions_no_run_branch",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0341-01",
+   "if_ref": "IF-HOTFIXUI-001, IF-HOTFIX-011",
+   "mutation": "the hotfix-preview projection omits the anchoring block",
+   "patch": "ce_ac-fr0341-01.patch",
+   "test": "tests/integration/test_hotfix_entry.py::test_hotfix_preview_and_anchor_display",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0341-02",
+   "if_ref": "IF-HOTFIXUI-001",
+   "mutation": "the unanchored hotfix entry creates the fix branch before rejecting (half-built branch survives)",
+   "patch": "ce_ac-fr0341-02.patch",
+   "test": "tests/integration/test_hotfix_entry.py::test_anchor_fail_exits_no_half_branch",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0342-01",
+   "if_ref": "IF-GATEUI-001, IF-CMDSVC-001",
+   "mutation": "record_triage accepts without the awaiting precondition (post-gate replays re-land events)",
+   "patch": "ce_ac-fr0342-01.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_triage_review_events_csrf_idempotency",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0342-02",
+   "if_ref": "IF-GATEUI-001, IF-WEBGATE-001",
+   "mutation": "the supervisor tick skips the gate-command claim (accepted approvals never execute)",
+   "patch": "ce_ac-fr0342-02.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_approve_release_executed_via_worker",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0343-01",
+   "if_ref": "IF-AWAIT-001, IF-WEBUI-001",
+   "mutation": "the action panel renders only the action button; reason and impact faces are dropped",
+   "patch": "ce_ac-fr0343-01.patch",
+   "test": "tests/e2e/test_awaiting_ui.py::test_awaiting_panel_reason_impact_action",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0343-02",
+   "if_ref": "IF-AWAIT-001",
+   "mutation": "every selected node shows a gate action entry even when awaiting_gate is null",
+   "patch": "ce_ac-fr0343-02.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_non_awaiting_no_gate_entry",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0344-01",
+   "if_ref": "IF-DOCSWRITE-001, IF-DOCSAVE-001",
+   "mutation": "anchor_line clarifications mutate the /discussions path directly (the no-write boundary broken)",
+   "patch": "ce_ac-fr0344-01.patch",
+   "test": "tests/integration/test_review_write_channel.py::test_review_round_edit_and_comments",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0344-02",
+   "if_ref": "IF-DOCSWRITE-001",
+   "mutation": "base_revision null is always rejected even when the trio digest is structurally unavailable",
+   "patch": "ce_ac-fr0344-02.patch",
+   "test": "tests/integration/test_review_write_channel.py::test_pre_approval_empty_baseline_not_blocked",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0345-01",
+   "if_ref": "IF-GATEUI-001, IF-DRIVE-001",
+   "mutation": "after a gate command executes the supervisor parks the run (no next-tick drive)",
+   "patch": "ce_ac-fr0345-01.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_gate_action_auto_advances",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0345-02",
+   "if_ref": "IF-GATEUI-001",
+   "mutation": "the scheduler refuses to re-drive a run after a human gate event unless a client dispatch arrives",
+   "patch": "ce_ac-fr0345-02.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_no_manual_dispatch_needed",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0346-01",
+   "if_ref": "IF-SPLIT-001, IF-INTAKE-001",
+   "mutation": "the intake report schema drops the conflict detection column",
+   "patch": "ce_ac-fr0346-01.patch",
+   "test": "tests/integration/test_intake.py::test_report_dup_conflict_columns",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0346-02",
+   "if_ref": "IF-SPLIT-001",
+   "mutation": "a flagged duplicate/conflict report auto-rejects the intake (runtime interception)",
+   "patch": "ce_ac-fr0346-02.patch",
+   "test": "tests/integration/test_flow_contracts.py::test_triage_contract_columns_no_runtime_interception",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0347-01",
+   "if_ref": "IF-REVIEW-002",
+   "mutation": "the flow clause flips back to any-pending-thread revises (non-self threads count again)",
+   "patch": "ce_ac-fr0347-01.patch",
+   "test": "tests/integration/test_flow_contracts.py::test_reviewer_contract_clause",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-FR0347-02",
+   "if_ref": "IF-REVIEW-002",
+   "mutation": "any unresolved non-Human thread flips a pass to revise again (the §1p.2 narrowing reverted)",
+   "patch": "ce_ac-fr0347-02.patch",
+   "test": "tests/integration/test_review_exit_rule.py::test_pass_without_self_findings_revise_anchored",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-NFR0157-01",
+   "if_ref": "IF-CMDSVC-001, IF-GATEUI-001",
+   "mutation": "the new gate endpoints accept writes without the CSRF/Idempotency-Key pipeline",
+   "patch": "ce_ac-nfr0157-01.patch",
+   "test": "tests/integration/test_gate_endpoints.py::test_all_new_writes_csrf_idempotency_single_path",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-NFR0158-01",
+   "if_ref": "IF-QUERY-001, IF-STREAM-001, IF-TIMELINE-002",
+   "mutation": "when the aggregation request fails the window renders a canned registry instead of the failure feedback",
+   "patch": "ce_ac-nfr0158-01.patch",
+   "test": "tests/integration/test_timeline_full.py::test_no_second_source_failure_visible",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-NFR0158-02",
+   "if_ref": "IF-WORKBENCH-001, IF-GREENGUARD-001",
+   "mutation": "the behavior half: the pinned-viewport ruling regresses (the shell scrolls again)",
+   "patch": "ce_ac-nfr0158-02.patch",
+   "test": "tests/e2e/test_workbench_ui.py::test_v010_rulings_regression",
+   "result": "pending-delivered-tree"
+  },
+  {
+   "ac": "AC-NFR0158-02",
+   "if_ref": "IF-WORKBENCH-001, IF-GREENGUARD-001",
+   "mutation": "the guard half: the pinned-viewport ruling disappears from both ARCH-011 inheritance declarations (arrival-green anchor must fail)",
+   "patch": "ce_ac-nfr0158-02b.patch",
+   "test": "tests/integration/test_flow_contracts.py::test_v010_rulings_anchored",
+   "result": "killed"
+  }
+ ]
+}

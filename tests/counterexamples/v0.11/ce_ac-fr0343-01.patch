@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,5 @@
++// counterexample AC-FR0343-01: the action panel renders only the action
++// button — the reason and impact faces are dropped
++export function renderPanel(gate) {
++  return { action: gate.primary_action };
++}

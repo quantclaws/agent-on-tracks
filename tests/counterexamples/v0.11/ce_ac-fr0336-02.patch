@@ -1,0 +1,12 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,9 @@
++// counterexample AC-FR0336-02: nodes without data render invented timing
++// and artifact facts instead of the readable degradation
++export function nodeDetail(node) {
++  return {
++    started: "1970-01-01T00:00:00Z",
++    artifact: "fabricated.zip",
++    ...(node.data ?? {}),
++  };
++}

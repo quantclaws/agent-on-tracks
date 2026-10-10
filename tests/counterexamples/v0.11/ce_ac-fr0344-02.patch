@@ -1,0 +1,9 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,6 @@
++
++# counterexample AC-FR0344-02: base_revision null is always rejected, even
++# when the trio digest is structurally unavailable (pre-approval blocked)
++def _edit_revision_kind_deviation(request, deny):
++    if request.get("base_revision") is None:
++        deny("stale_revision", "null base refused")  # deviation

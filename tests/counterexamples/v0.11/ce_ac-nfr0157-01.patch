@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/server/api_command.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-NFR0157-01: the new gate endpoints accept writes without
++# the CSRF/Idempotency-Key pipeline (a second, unguarded write path)
++async def record_triage_deviation(request):
++    params = await request.json()
++    return service.accept(kind="record_triage", params=params,
++                          surface="http", skip_guard=True)  # deviation

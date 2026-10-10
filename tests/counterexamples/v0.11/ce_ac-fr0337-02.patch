@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,5 @@
++// counterexample AC-FR0337-02: the return fires without the explicit
++// confirmation and hides the already-executed consequences
++export function submitReturn(runId, to) {
++  return apiPost(`/api/runs/${runId}/return`, { to });  // no confirm flag
++}

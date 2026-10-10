@@ -1,0 +1,15 @@
+diff --git a/tracks/server/static/styles.css b/tracks/server/static/styles.css
+index 8bf57fb..02d5bb0 100644
+--- a/tracks/server/static/styles.css
++++ b/tracks/server/static/styles.css
+@@ -183,9 +183,7 @@ textarea {
+   display: grid;
+   grid-template-columns: var(--tabbar-width) var(--sidebar-width) minmax(0, 1fr);
+   grid-template-rows: minmax(0, 1fr);
+-  height: 100vh;
+-  height: 100dvh;
+-  overflow: hidden;
++  height: auto;  /* counterexample AC-NFR0158-02: the pinned-viewport ruling regresses — the shell scrolls with the document */
+ }
+ 
+ .tabbar {

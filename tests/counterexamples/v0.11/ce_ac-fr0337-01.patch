@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,5 @@
++// counterexample AC-FR0337-01: the return pointer renders on every node,
++// ignoring return_options.allowed (illegal rollbacks gain an entry)
++export function renderReturnPointer(node, options) {
++  return true; // deviation: legality ignored
++}

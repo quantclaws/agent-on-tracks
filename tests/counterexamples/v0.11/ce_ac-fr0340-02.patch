@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/server/projections.py
+@@ -0,0 +1,5 @@
++
++# counterexample AC-FR0340-02: the backlog projection keeps disposed entries
++# listed as open rows (the removal + queryable destination never surfaces)
++def _keep_disposed_entries(entries, dispositions):
++    return entries  # deviation: dispositions ignored

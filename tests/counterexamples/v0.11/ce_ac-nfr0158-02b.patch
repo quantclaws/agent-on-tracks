@@ -1,0 +1,22 @@
+diff --git a/.tracks/projects/v0.11/architecture.md b/.tracks/projects/v0.11/architecture.md
+index e26a0a3..785aed4 100644
+--- a/.tracks/projects/v0.11/architecture.md
++++ b/.tracks/projects/v0.11/architecture.md
+@@ -24,7 +24,7 @@ sha:
+ - 服务命令封闭集（IF-009 §1b 十三种 kind）本版追加五个成员（§1.0.5/§1.0.9）；既有十三种 kind 的受理/校验/幂等/actor_class 语义逐字不变。
+ - 发布闭环五阶段、candidate 主身份、preview digest 绑定、escape barrier、publish 幂等/reconcile、Issue 闭环、reference host、三旅程合同、version gate bindings 全部继承；版本号设计期 bump 到 0.11.0（§2 已交付），pyproject bytes 变化引起六条 pyproject-backed config_digest 重锚（§4.2，先例 e5637a1）。
+ - 质量守卫八类与 canonical registry 机制不变；CI required checks 七名（lint/coverage/test/deliverables/trace/reach/ui-e2e）不变；`release-evidence` milestone 硬门禁不变。
+-- SSE 合并序/游标补读/轮询回退、CSRF + Idempotency-Key、redaction 全出口脱敏、本机单用户边界（RP-01）、supervisor 单活动 run 串行 + hotfix 换队语义全部不变；v0.10 工作台裁定（外壳钉视口、Vercel 极简设计令牌、registry 行紧凑化、pane bar 单控制面、自动保存模式）继续有效。
++- SSE 合并序/游标补读/轮询回退、CSRF + Idempotency-Key、redaction 全出口脱敏、本机单用户边界（RP-01）、supervisor 单活动 run 串行 + hotfix 换队语义全部不变；v0.10 工作台裁定（Vercel 极简设计令牌、registry 行紧凑化、pane bar 单控制面、自动保存模式）继续有效  // counterexample AC-NFR0158-02b: pinned-viewport ruling dropped (§0.1)。
+ - Vditor vendored 资产与 manifest 逐字节不变；`docs_revision`/trio 摘要双身份与 `tracks/baseline.py` 零触碰原则不变（本版仅将 docs_revision 的定义域补全为全域函数，§1.0.11）。
+ 
+ ### 0.2 v0.11 变更
+@@ -201,7 +201,7 @@ serve supervisor tick（既有 _supervisor_tick，v0.11 追加两步）
+ - **FR-0347** owner=tracks/effects/opencode_review.py+tracks/agents/Sage.md+Lex.md+Prism.md:AC-FR0347-02 surface=lex.verdict 计算出口+评审派发合同 composition=revise 分支收窄为自有未决线程（§1.0.13；agent 纪律待实现 Devon） wiring=内容验证通过、仅余非本人发起未决线程的一次评审→verdict=pass 且不触发无发现文档修订→评审人自有新发现的 revise 均带锚定线程（线程 initiator 可追溯） test=integration:tests/integration/test_review_exit_rule.py::test_pass_without_self_findings_revise_anchored evidence=`.venv/bin/python -m pytest -q tests/integration/test_review_exit_rule.py` 输出 passed 且非本人线程形态 verdict=pass、自有线程形态 revise 携锚定 IF-REVIEW-002
+ - **NFR-0157** owner=tracks/server/api_command.py+tracks/server/static/app/api.js:AC-NFR0157-01 surface=全部新写端点+UI 写请求头 composition=_mutate 共用管道（新端点全部经命令面，§1.0.9）；api.js 统一注入头 wiring=UI 发起的全部写操作经命令面事件提交（intakes/decisions/dispositions/triage/review 均有 command.accepted）→写请求携带 X-Trac-CSRF 与 Idempotency-Key→重复提交不产生重复副作用→CLI 不呈现为第二常规写路径 test=integration:tests/integration/test_gate_endpoints.py::test_all_new_writes_csrf_idempotency_single_path + e2e:tests/e2e/test_awaiting_ui.py::test_ui_writes_carry_headers evidence=`.venv/bin/python -m pytest -q tests/integration/test_gate_endpoints.py` 输出 passed 且新端点缺头被拒、幂等去重成立 IF-CMDSVC-001 IF-GATEUI-001
+ - **NFR-0158** owner=tracks/server/static/app/**+tracks/server/api_query.py:AC-NFR0158-01 surface=Releases/时间线/面板全部数据面 composition=只读投影+SSE 消费（零新数据源，§1.0.3） wiring=UI 全部状态来自服务端查询投影与事件流（releases/intakes/timeline/ac-chain/run detail）→无 mock 数据→API 失败呈现用户可观察失败反馈（不伪报成功）→SSE 断线/重复乱序不使 UI 倒退（游标补读继承） test=integration:tests/integration/test_timeline_full.py::test_no_second_source_failure_visible + e2e:tests/e2e/test_releases_ui.py::test_api_failure_feedback_new_surfaces evidence=`.venv/bin/python -m pytest -q tests/integration/test_timeline_full.py` 输出 passed 且新数据面无第二来源、失败注入样本反馈可见 IF-QUERY-001 IF-STREAM-001 IF-TIMELINE-002
+-- **NFR-0158** owner=pyproject.toml+tracks/server/pages.py+tracks/server/static/styles.css:AC-NFR0158-02 surface=仓库合同面+工作台 chrome composition=v0.10 裁定继承（§0.1）+五 tab 世界下的裁定回归 wiring=v0.10 工作台裁定（外壳钉视口/Vercel 极简设计令牌/registry 行紧凑化/pane bar 单控制面/自动保存）继续有效→现有行为无退化（v0.10 e2e 资产按五 tab 世界修订后回归） test=integration:tests/integration/test_flow_contracts.py::test_v010_rulings_anchored（守卫，§8.1） + e2e:tests/e2e/test_workbench_ui.py::test_v010_rulings_regression evidence=`.venv/bin/python -m pytest -q -m ui tests/e2e/test_workbench_ui.py` 输出 passed 且五项裁定断言全部成立 IF-WORKBENCH-001 IF-GREENGUARD-001
++- **NFR-0158** owner=pyproject.toml+tracks/server/pages.py+tracks/server/static/styles.css:AC-NFR0158-02 surface=仓库合同面+工作台 chrome composition=v0.10 裁定继承（§0.1）+五 tab 世界下的裁定回归 wiring=v0.10 工作台裁定（Vercel 极简设计令牌/registry 行紧凑化/pane bar 单控制面/自动保存）继续有效  // counterexample AC-NFR0158-02b: pinned-viewport ruling dropped (composition row)→现有行为无退化（v0.10 e2e 资产按五 tab 世界修订后回归） test=integration:tests/integration/test_flow_contracts.py::test_v010_rulings_anchored（守卫，§8.1） + e2e:tests/e2e/test_workbench_ui.py::test_v010_rulings_regression evidence=`.venv/bin/python -m pytest -q -m ui tests/e2e/test_workbench_ui.py` 输出 passed 且五项裁定断言全部成立 IF-WORKBENCH-001 IF-GREENGUARD-001
+ 
+ ## 2. Scaffold 宣言
+ 

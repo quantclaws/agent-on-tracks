@@ -1,0 +1,12 @@
+--- /dev/null
++++ b/tracks/server/static/app/releases.js
+@@ -0,0 +1,9 @@
++// counterexample AC-FR0333-02: archived entries render inside the backlog
++// fold-over group — the distinct archive query group is removed
++export function renderGroups(payload) {
++  return {
++    registry: payload.versions,
++    backlog: [...payload.backlog.entries, ...payload.archive],
++    archive: [],
++  };
++}

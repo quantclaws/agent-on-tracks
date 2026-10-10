@@ -1,0 +1,13 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,10 @@
++// counterexample AC-FR0335-01: retried attempts collapse into a single
++// stage node (the per-attempt independent node contract broken)
++export function foldAttempts(nodes) {
++  const seen = new Set();
++  return nodes.filter((node) => {
++    if (seen.has(node.stage)) return false;
++    seen.add(node.stage);
++    return true;
++  });
++}

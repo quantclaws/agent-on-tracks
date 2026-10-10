@@ -1,0 +1,10 @@
+--- a/tracks/effects/opencode_review.py
++++ b/tracks/effects/opencode_review.py
+@@
+-                    # v0.11 §1p.2: revise only for the reviewer's own pending
+-                    # findings threads; non-self threads are not a basis.
+-                    if pending:
++                    # counterexample AC-FR0347-02: any unresolved non-Human
++                    # thread flips the pass to revise again (pre-v0.11 form)
++                    if True:
+                         result["verdict"] = "revise"

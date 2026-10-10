@@ -33,6 +33,12 @@ _HUMAN_THREAD_SPEC = _valid_spec_text() + (
     "\n> **Lex:** 范围确认：§1n.4 六件套是否包含 test-plan？请 @Human 裁决。\n"
 )
 
+# The §1p.2 narrowed-form premise: the only pending thread belongs to another
+# reviewer (@Sage) — never a revise basis for the Lex review itself.
+_OTHER_THREAD_SPEC = _valid_spec_text() + (
+    "\n> **Sage:** 范围确认：§1n.4 的边界值请确认。\n"
+)
+
 
 class _RecordingBackend(_StubBackend):
     """Stub backend that also records the dispatch assignment."""
@@ -249,3 +255,42 @@ def test_findings_threads_reused_across_attempts(tmp_path: Path):
         )
     finally:
         store.close()
+
+
+# AC-FR0347-02@v0.11 TRACKS-TRACE non self pending thread never revises (park intact)
+def test_non_self_thread_never_revises(tmp_path: Path, monkeypatch):
+    """§1p.2 narrowed revise form (the §11 re-check of this file's revise
+    shape): a Lex review over a spec whose only unresolved thread was
+    initiated by another reviewer completes as ``pass`` through the real
+    backend seam — the old revise shape (any non-Human pending thread) is
+    gone, while the Human park branch above stays untouched."""
+    import os
+    import stat
+
+    from tests._support.opencode_backend_fixtures import STANDIN
+    from tests.integration.helpers import make_repo
+    from tracks.effects.opencode import OpencodeBackend
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "opencode"
+    exe.write_text(STANDIN, encoding="utf-8")
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    narrow_root = tmp_path / "narrow"
+    narrow_root.mkdir()
+    repo = make_repo(narrow_root)
+    vdir = repo / ".tracks" / "projects" / "v0.1"
+    vdir.mkdir(parents=True)
+    spec = vdir / "spec.md"
+    spec.write_text(_OTHER_THREAD_SPEC, encoding="utf-8")
+    out = OpencodeBackend(repo, "v0.1").act("lex", "LEX_REVIEW", "spec.md", spec)
+    assert out["status"] == "done", (
+        f"a non-self pending thread must not fail the review (§1p.2): "
+        f"{out.get('self_report')!r}"
+    )
+    assert out["verdict"] == "pass", (
+        f"a non-self pending thread must not flip the verdict to revise "
+        f"(§1p.2): {out!r}"
+    )

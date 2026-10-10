@@ -1,0 +1,14 @@
+--- /dev/null
++++ b/tracks/server/static/app/releases.js
+@@ -0,0 +1,11 @@
++// counterexample AC-FR0333-01: the sidebar renders one flat run list —
++// the version-grouped registry and the backlog fold-over group are dropped
++export function renderSidebar(payload) {
++  const rows = [];
++  for (const version of payload.versions) {
++    for (const run of version.runs) {
++      rows.push({ run_id: run.run_id, label: run.stage });
++    }
++  }
++  return rows;
++}

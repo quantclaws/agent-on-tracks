@@ -1,0 +1,11 @@
+--- /dev/null
++++ b/tracks/supervisor/intake.py
+@@ -0,0 +1,8 @@
++
++# counterexample AC-FR0346-02: a flagged duplicate/conflict report now
++# auto-rejects the intake (runtime interception — the report-columns-only
++# boundary broken)
++def evaluate_deviation(report):
++    if report["duplicates"]["found"] or report["conflicts"]["found"]:
++        return rejected("auto_no_go")  # deviation
++    return evaluated(report)

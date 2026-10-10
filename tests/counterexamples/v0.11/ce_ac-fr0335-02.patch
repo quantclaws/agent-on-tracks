@@ -1,0 +1,12 @@
+--- /dev/null
++++ b/tracks/server/static/app/timeline.js
+@@ -0,0 +1,9 @@
++// counterexample AC-FR0335-02: the timeline renders a locally fabricated
++// stage track instead of the timeline/ac-chain projection data
++const FABRICATED_TRACK = Array.from({ length: 13 }, (_, i) => ({
++  stage: `M-${i}`,
++  state: "done",
++}));
++export function renderTrack() {
++  return FABRICATED_TRACK;
++}

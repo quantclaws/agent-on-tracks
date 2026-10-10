@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/supervisor/scheduler.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-FR0345-02: the scheduler refuses to re-drive a run whose
++# last event was a human gate event unless a client dispatch arrives
++def _should_drive_deviation(self, state):
++    if state.last_gate_event:
++        return False  # deviation: manual dispatch required
++    return True

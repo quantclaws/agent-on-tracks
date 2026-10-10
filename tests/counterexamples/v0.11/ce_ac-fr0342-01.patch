@@ -1,0 +1,9 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,6 @@
++
++# counterexample AC-FR0342-01: record_triage accepts without the awaiting
++# match (replays after the gate has passed re-land human.triage events)
++def record_triage_deviation(run_id, decision):
++    return accept(kind="record_triage", params={"run_id": run_id, "decision": decision},
++                  skip_awaiting_precondition=True)  # deviation

@@ -29,7 +29,8 @@ def _login_via_ui(page, base_url: str, *, name: str = "UI Human") -> None:
     name_input = page.get_by_test_id("name-input")
     name_input.fill(name)
     page.get_by_test_id("name-submit").click()
-    page.get_by_test_id("tabbar-item-projects").wait_for()
+    # v0.11 five-tab world: the Releases window is the landing face
+    page.get_by_test_id("tabbar-item-releases").wait_for()
 
 
 def _mark_document(page) -> None:
@@ -63,7 +64,7 @@ def test_spa_shell_navigation_no_reload(ui_serve, page):
         "the main area sits right of the sidebar"
     )
 
-    for item in ("runs", "docs", "review", "todos"):
+    for item in ("releases", "docs", "todos"):
         page.get_by_test_id(f"tabbar-item-{item}").click()
         page.locator(f"[data-testid='view-{item}']").wait_for()
     assert _same_document(page), (
@@ -71,8 +72,8 @@ def test_spa_shell_navigation_no_reload(ui_serve, page):
     )
 
     # the workbench stays usable after the switches without a re-login
-    page.get_by_test_id("tabbar-item-projects").click()
-    page.locator("[data-testid='view-projects']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
     assert _same_document(page)
 
 
@@ -83,7 +84,7 @@ def test_tabbar_fixed_semantics(ui_serve, page):
     handle, and a reload keeps the same order."""
     _login_via_ui(page, ui_serve.base_url)
     items = page.locator("[data-testid^='tabbar-item-']")
-    assert items.count() == 7, "the closed set of seven function items"
+    assert items.count() == 5, "the closed set of five function items"
     order = []
     for index in range(items.count()):
         item = items.nth(index)
@@ -96,7 +97,7 @@ def test_tabbar_fixed_semantics(ui_serve, page):
         tooltip = item.get_attribute("title") or item.get_attribute("aria-label") or ""
         assert tooltip.strip(), f"{testid}: the icon must carry a hover tooltip"
     assert order == [
-        "projects", "runs", "docs", "review", "todos", "settings", "account",
+        "releases", "docs", "todos", "settings", "account",
     ], f"the function order is fixed: {order}"
     assert page.locator("[draggable='true']").count() == 0, (
         "no drag handle may reorder the tab bar"
@@ -104,7 +105,7 @@ def test_tabbar_fixed_semantics(ui_serve, page):
     page.reload(wait_until="domcontentloaded")
     assert _same_document(page) is False  # the reload itself is the contrast
     reloaded = page.locator("[data-testid^='tabbar-item-']")
-    assert reloaded.count() == 7
+    assert reloaded.count() == 5
 
 
 # AC-FR0318-01@v0.10 TRACKS-TRACE sidebar + main atomic window switch
@@ -120,11 +121,11 @@ def test_sidebar_tab_atomic_switch_and_coexistence(ui_serve, page):
     page.locator("[data-testid='view-docs']").wait_for()
     page.get_by_test_id("sidebar-tree").wait_for()
 
-    page.get_by_test_id("tabbar-item-runs").click()
-    page.locator("[data-testid='view-runs']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
     page.get_by_test_id("sidebar-tree").wait_for()
     assert _same_document(page)
-    assert page.get_by_test_id("tabbar-item-runs").get_attribute(
+    assert page.get_by_test_id("tabbar-item-releases").get_attribute(
         "aria-current"
     ) == "page", "the active tab-bar icon must be highlighted"
     assert page.get_by_test_id("tabbar-item-docs").get_attribute(
@@ -132,8 +133,8 @@ def test_sidebar_tab_atomic_switch_and_coexistence(ui_serve, page):
     ) is None, "only the active icon carries the highlight"
 
     # a repeated click keeps the area's single window; no strip ever renders
-    page.get_by_test_id("tabbar-item-runs").click()
-    assert page.locator("[data-testid='view-runs']").count() == 1, (
+    page.get_by_test_id("tabbar-item-releases").click()
+    assert page.locator("[data-testid='view-releases']").count() == 1, (
         "the repeated click must reuse the area's single window"
     )
     assert page.locator("[data-testid^='tab-']").count() == 0, (
@@ -141,7 +142,7 @@ def test_sidebar_tab_atomic_switch_and_coexistence(ui_serve, page):
     )
     page.get_by_test_id("tabbar-item-docs").click()
     assert page.locator("[data-testid='view-docs']").count() == 1
-    assert page.locator("[data-testid='view-runs']").count() == 0, (
+    assert page.locator("[data-testid='view-releases']").count() == 0, (
         "switching away replaces the window — exactly one main window exists"
     )
 
@@ -159,8 +160,8 @@ def test_tabs_not_persisted_and_content_titles(ui_serve, page):
     restart = restart_browser(page.context.browser, page.context)
     page = restart.new_page()
     page.goto(ui_serve.base_url + "/", wait_until="domcontentloaded")
-    page.get_by_test_id("tabbar-item-projects").wait_for()
-    page.locator("[data-testid='view-runs']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").wait_for()
+    page.locator("[data-testid='view-releases']").wait_for()
     assert page.locator("[data-testid^='tab-']").count() == 0, (
         "no open-tab strip exists, persisted or otherwise"
     )
@@ -179,10 +180,10 @@ def test_tabs_not_persisted_and_content_titles(ui_serve, page):
 
 # AC-FR0318-03@v0.10 TRACKS-TRACE function set, settings/account, logout
 def test_function_set_settings_account(ui_serve, page):
-    """AC-FR0318-03: the seven-item closed function set (no independent
-    release entry), the gear item opens a Settings tab without changing the
-    sidebar, the Account menu carries only logout, and logout leaves no
-    credential behind (a fresh login is required)."""
+    """AC-FR0318-03: the five-item closed function set in the v0.11 converged
+    shell (no Review entry), the gear item opens a Settings tab without
+    changing the sidebar, the Account menu carries only logout, and logout
+    leaves no credential behind (a fresh login is required)."""
     _login_via_ui(page, ui_serve.base_url)
     items = page.locator("[data-testid^='tabbar-item-']")
     names = {
@@ -192,12 +193,12 @@ def test_function_set_settings_account(ui_serve, page):
         for index in range(items.count())
     }
     assert names == {
-        "projects", "runs", "docs", "review", "todos", "settings", "account",
+        "releases", "docs", "todos", "settings", "account",
     }
-    assert "release" not in names, "no independent top-level release item"
+    assert "review" not in names, "no Review entry survives the convergence"
 
-    page.get_by_test_id("tabbar-item-projects").click()
-    page.locator("[data-testid='view-projects']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
     before = page.get_by_test_id("sidebar-tree").inner_text()
     page.get_by_test_id("tabbar-item-settings").click()
     page.locator("[data-testid='view-settings']").wait_for()
@@ -235,8 +236,8 @@ def test_unknown_values_degrade_visibly(ui_serve, page):
     assert not [status for status in responses if status >= 500], (
         f"degradation must not produce a 5xx: {responses}"
     )
-    page.get_by_test_id("tabbar-item-projects").click()
-    page.locator("[data-testid='view-projects']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
     assert _same_document(page)
 
 
@@ -277,12 +278,12 @@ def test_login_dual_pane_and_persistent_session(ui_serve, page):
     page.get_by_test_id("name-input").wait_for()
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()
-    page.get_by_test_id("tabbar-item-projects").wait_for()
+    page.get_by_test_id("tabbar-item-releases").wait_for()
 
     restart = restart_browser(page.context.browser, page.context)
     reopened = restart.new_page()
     reopened.goto(ui_serve.base_url + "/", wait_until="domcontentloaded")
-    reopened.get_by_test_id("tabbar-item-projects").wait_for()
+    reopened.get_by_test_id("tabbar-item-releases").wait_for()
     assert reopened.get_by_test_id("login-password").count() == 0, (
         "the persistent session cookie must keep the browser signed in"
     )
@@ -298,12 +299,12 @@ def test_first_login_name_collection(ui_serve, page):
     page.get_by_test_id("login-submit").click()
     page.get_by_test_id("name-input").wait_for()
     # the data face stays closed until the name is submitted
-    assert page.get_by_test_id("tabbar-item-projects").count() == 0, (
+    assert page.get_by_test_id("tabbar-item-releases").count() == 0, (
         "the workbench data face must not open before the name is collected"
     )
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()
-    page.get_by_test_id("tabbar-item-projects").wait_for()
+    page.get_by_test_id("tabbar-item-releases").wait_for()
     page.get_by_test_id("tabbar-item-account").click()
     assert "UI Human" in page.get_by_test_id("account-menu").inner_text(), (
         "the bound display name must surface in the account area"
@@ -314,17 +315,18 @@ def test_first_login_name_collection(ui_serve, page):
 def test_real_data_rendered(ui_serve, page):
     """AC-NFR0153-01: the audited data face renders the event-sourced
     projection values — the seeded project and run appear with their real
-    identity, and no fabricated extra rows are shown."""
+    identity in the Releases window registry (the v0.11 projects/overview
+    fold), and no fabricated extra rows are shown."""
     ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
-    page.get_by_test_id("tabbar-item-projects").click()
-    project_row = page.locator("[data-testid='overview-project-proj-ui-1']")
-    project_row.wait_for()
-    assert "v1.0" in project_row.inner_text()
-    run_row = page.locator("[data-testid='overview-run-run-ui-1']")
-    assert run_row.count() == 1, "the seeded run renders exactly once"
-    assert "v1.0" in run_row.inner_text()
+    page.locator("[data-testid='view-releases']").wait_for()
+    registry_row = page.get_by_test_id("registry-run-run-ui-1")
+    registry_row.wait_for()
+    assert "v1.0" in registry_row.inner_text()
+    assert page.locator("[data-testid='registry-run-run-ui-1']").count() == 1, (
+        "the seeded run renders exactly once in the registry group"
+    )
 
 
 # AC-NFR0153-02@v0.10 TRACKS-TRACE API failure visible feedback
@@ -336,17 +338,17 @@ def test_api_failure_visible_feedback(ui_serve, page):
     ui_serve.seed_run("run-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
 
-    # browser-level fault injection on the overview projection
-    page.route("**/api/projects/*/overview", lambda route: route.abort())
-    page.get_by_test_id("tabbar-item-projects").click()
+    # browser-level fault injection on the Releases aggregation projection
+    page.route("**/api/projects/*/releases", lambda route: route.abort())
+    page.get_by_test_id("tabbar-item-releases").click()
     failure = page.locator("[data-testid='api-failure']")
     failure.wait_for()
     assert failure.count() >= 1, "the failed projection must be visibly reported"
 
     # after the fault clears the face recovers without a reload
-    page.unroute("**/api/projects/*/overview")
-    page.get_by_test_id("tabbar-item-runs").click()
-    page.locator("[data-testid='view-runs']").wait_for()
+    page.unroute("**/api/projects/*/releases")
+    page.get_by_test_id("tabbar-item-docs").click()
+    page.locator("[data-testid='view-docs']").wait_for()
     assert _same_document(page)
 
 
@@ -358,7 +360,7 @@ def test_sse_reconnect_backfill_monotonic(ui_serve, page):
     ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
-    page.get_by_test_id("tabbar-item-runs").click()
+    page.get_by_test_id("registry-run-run-ui-1").click()
 
     frames = [
         "id: 1\nevent: stage.entered\ndata: {\"stage\": \"M-START\"}\n\n",
@@ -411,8 +413,8 @@ def test_first_demo_milestone_journey(ui_serve, page):
     page.get_by_test_id("name-input").wait_for()
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()
-    page.get_by_test_id("tabbar-item-projects").wait_for()
-    page.locator("[data-testid='overview-project-proj-ui-1']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").wait_for()
+    page.locator("[data-testid='registry-run-run-ui-1']").wait_for()
     _mark_document(page)
 
     page.get_by_test_id("tabbar-item-docs").click()
@@ -468,8 +470,8 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
     ), "the newest run leads the sidebar"
     expect(page.locator("[data-testid='timeline']")).to_be_visible()
 
-    page.get_by_test_id("tabbar-item-projects").click()
-    page.locator("[data-testid='overview-run-run-ui-multi-7']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for()
 
     page.get_by_test_id("tabbar-item-docs").click()
     page.locator("[data-testid='doc-tree-item-v1.0-spec']").wait_for(timeout=10000)
@@ -514,8 +516,76 @@ def test_runs_registry_human_titles(ui_serve, page):
         "the timeline face's run heading stays complete"
     )
 
-    page.get_by_test_id("tabbar-item-projects").click()
-    overview = page.get_by_test_id("overview-run-run-ui-title-1")
-    assert (overview.inner_text() or "") == "v1.0 · Web 工作台完善（UI）...", (
-        "the overview run row truncates the same way"
+    page.get_by_test_id("tabbar-item-releases").click()
+    registry = page.get_by_test_id("registry-run-run-ui-title-1")
+    assert (registry.inner_text() or "") == "v1.0 · Web 工作台完善（UI）...", (
+        "the Releases registry row truncates the same way"
     )
+
+
+# AC-NFR0158-02@v0.11 TRACKS-TRACE v010 rulings regression in five tab world
+def test_v010_rulings_regression(ui_serve, page):
+    """AC-NFR0158-02 (behavior half): the five v0.10 workbench rulings keep
+    holding in the v0.11 five-tab world — the shell is pinned to the viewport
+    (钉视口), the minimal design tokens drive the chrome (极简设计令牌), the
+    registry rows stay compact at 20 characters (紧凑行), the document pane
+    bar stays a single control surface (pane bar 单控制面), and the editor
+    autosave returns the control to the saved state (自动保存)."""
+    import re
+    from pathlib import Path
+
+    _login_via_ui(page, ui_serve.base_url)
+
+    # 钉视口: the three-part chrome stays inside the viewport
+    page.set_viewport_size({"width": 1280, "height": 800})
+    tabbar = page.get_by_test_id("tabbar").bounding_box()
+    sidebar = page.get_by_test_id("sidebar").bounding_box()
+    main = page.get_by_test_id("main-area").bounding_box()
+    assert tabbar and sidebar and main, "the three-part chrome is laid out"
+    for box in (tabbar, sidebar, main):
+        assert box["x"] >= 0 and box["y"] >= 0, "the chrome stays pinned"
+        assert box["y"] + box["height"] <= 800 + 1, (
+            f"the chrome must not overflow the pinned viewport: {box!r}"
+        )
+
+    # 极简设计令牌: the token palette stays declared in the stylesheet
+    # (the contract file fact behind the rendered chrome)
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    styles_text = (_REPO_ROOT / "tracks/server/static/styles.css").read_text(
+        encoding="utf-8"
+    )
+    for token in ("--bg", "--fg", "--accent"):
+        assert token in styles_text, (
+            f"the minimal token palette must stay declared: {token}"
+        )
+    assert re.search(r"--accent\s*:", styles_text), "token block stays canonical"
+
+    # 紧凑行: the Releases registry row truncates at 20 characters
+    ui_serve.seed_version_docs("v1.0", story_title="紧凑行裁定回归用超长标题需要截断处理")
+    ui_serve.seed_run("run-ui-rulings-1", "v1.0")
+    page.reload(wait_until="domcontentloaded")
+    row = page.get_by_test_id("registry-run-run-ui-rulings-1")
+    row.wait_for()
+    label = (row.inner_text() or "").strip()
+    assert "…" in label and len(label.replace("v1.0 · ", "")) <= 21, (
+        f"the registry row stays compact (truncate at 20 + ellipsis): {label!r}"
+    )
+
+    # pane bar 单控制面 + 自动保存: the docs editor's pane bar carries exactly
+    # one save control and the autosave returns it to the saved state
+    page.get_by_test_id("tabbar-item-docs").click()
+    page.locator("[data-testid='view-docs']").wait_for()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+    save_controls = page.locator("[data-testid='doc-save']")
+    assert save_controls.count() == 1, (
+        "the pane bar stays a single control surface (one save control)"
+    )
+    assert save_controls.first.is_disabled(), (
+        "a freshly opened document shows the saved state"
+    )
+    with page.expect_response(lambda response: "/edits" in response.url):
+        page.get_by_test_id("doc-editor-content").fill("rulings autosave edit\n")
+    assert page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"doc-save\"]').disabled === true"
+    ), "the autosave must return the control to the saved state"

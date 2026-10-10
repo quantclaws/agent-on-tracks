@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/server/api_query.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-FR0341-01: the hotfix-preview projection omits the
++# anchoring block (the precheck is shown but the AC anchor result is hidden)
++def hotfix_preview_deviation(issue, scenario):
++    report = precheck_hotfix_report(issue, scenario)
++    report.pop("anchoring", None)  # deviation
++    return report

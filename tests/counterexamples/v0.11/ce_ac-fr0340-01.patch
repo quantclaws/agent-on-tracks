@@ -1,0 +1,9 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,6 @@
++
++# counterexample AC-FR0340-01: dispose_backlog records the disposition in a
++# service-plane side table instead of landing the backlog.dispositioned event
++# (a second storage — the event-sequence derivation contract §1h.1 broken)
++def _record_disposition_deviation(store, entry_id, disposition, to):
++    store.write_side_table("backlog_dispositions", entry_id, disposition, to)

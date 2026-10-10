@@ -1,0 +1,10 @@
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@
+     detail = {{
+         "run_id": run_id,
+         # counterexample AC-FR0334-02: the awaiting_gate field group is
+         # stripped from the projection (the stage review has no panel face)
+-        "awaiting_gate": awaiting_gate,
+-        "return_options": return_options,
+     }}

@@ -1,0 +1,11 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,8 @@
++
++# counterexample AC-FR0341-02: the unanchored hotfix entry creates the fix
++# branch before the anchoring check rejects (a half-built branch survives)
++def hotfix_create_deviation(issue, scenario):
++    create_fix_branch(issue)
++    if not anchoring_ok(issue, scenario):
++        return rejected("unanchored")  # deviation: branch already built
++    return accepted()

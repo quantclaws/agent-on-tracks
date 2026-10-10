@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/supervisor/serve_cmd.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-FR0342-02: the supervisor tick skips the gate-command
++# claim (accepted approvals never execute; no human.approval ever lands)
++def tick_deviation(self):
++    self._drive_accepted()
++    # gate-command claim removed — deviation
++    return

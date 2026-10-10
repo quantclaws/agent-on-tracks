@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/supervisor/service.py
+@@ -0,0 +1,5 @@
++
++# counterexample AC-FR0339-02: the M-START gate skips the clean-workspace
++# check (a dirty tree proceeds into branch creation)
++def check_workspace(deviation=True):
++    return "clean"  # deviation: the porcelain probe is bypassed

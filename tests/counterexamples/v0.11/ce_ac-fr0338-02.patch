@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/tracks/templating.py
+@@ -0,0 +1,7 @@
++
++# counterexample AC-FR0338-02: complete stories are wrapped into the §1
++# skeleton instead of being adopted verbatim
++def adopt_story(content, form):
++    if form == "complete":
++        return render_skeleton(content)  # deviation: re-wrapped
++    return render_skeleton(content)

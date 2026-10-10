@@ -1,0 +1,14 @@
+--- /dev/null
++++ b/tracks/supervisor/intake.py
+@@ -0,0 +1,11 @@
++
++# counterexample AC-FR0346-01: the intake report schema drops the conflict
++# detection column (the fixed TRIAGE columns are incomplete)
++REPORT_SCHEMA = {
++    "feasibility": {},
++    "duplicates": {},
++    # conflicts column removed — deviation
++    "title": str,
++    "input_form": str,
++    "summary": str,
++}

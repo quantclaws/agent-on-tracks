@@ -1,0 +1,7 @@
+--- /dev/null
++++ b/tracks/server/static/app/intake.js
+@@ -0,0 +1,4 @@
++// counterexample AC-FR0338-01: the suggestion panel adds a hotfix routing
++// recommendation (the unified entry must never recommend hotfix) and drops
++// the archive action
++export const ACTIONS = ["backlog", "remove", "develop", "hotfix"];

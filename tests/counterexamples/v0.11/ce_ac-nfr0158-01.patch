@@ -1,0 +1,13 @@
+--- /dev/null
++++ b/tracks/server/static/app/releases.js
+@@ -0,0 +1,10 @@
++// counterexample AC-NFR0158-01: when the aggregation request fails the
++// window renders a canned registry instead of the failure feedback
++export async function loadReleases(projectId) {
++  try {
++    return await apiGet(`/api/projects/${projectId}/releases`);
++  } catch (error) {
++    return { summary: {}, versions: [{ version: "v0.0", runs: [] }],
++             backlog: { count: 0, entries: [] }, archive: [] };  // deviation
++  }
++}

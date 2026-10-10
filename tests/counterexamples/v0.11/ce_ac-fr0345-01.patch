@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/tracks/supervisor/serve_cmd.py
+@@ -0,0 +1,5 @@
++
++# counterexample AC-FR0345-01: after a gate command executes the supervisor
++# parks the run (the next tick no longer drives to the next boundary)
++def post_gate_drive_deviation(self, run_id):
++    return  # deviation: self-drive loop broken
