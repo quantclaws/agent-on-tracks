@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 spec_id: SPEC-011
 created: 2026-10-10
 status: draft
-sha:
+sha: 008593c4ad23376689ccddf6ae4243459ae4a576d2703b80346456e45e328c89
 ---
 
 # 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化 — 需求规格
