@@ -63,6 +63,8 @@ sha:
 > - 所有 UI 动作经既有命令面事件（单写路径），CLI 保留为管理后门。
 > - v0.10 工作台裁定继续有效：外壳钉视口（#228）、Vercel 极简设计令牌（#226）、registry 行紧凑化（#227）、pane bar 单控制面、自动保存模式。
 
+> **Scribe:** TRIAGE verdict: GO（raw seed，可进入 DRAFT 展开）。证据：(1)五节均有明确操作者指令与变更基线可查——窗口整顿指认 v0.10 FR-0318 与 Review 占位核实，时间线指认 louke v0.14-004 FR-1201/1301/1401 与既有数据源（v0.9 起），M-START/ backlog/hotfix 指认 flow.md §3.2/§16，人工门指认既有 CSRF+幂等端点与 supervisor；(2)交付面明确为 UI 工作台（Releases/Docs/Todos/Settings/Account），约束明确单写路径经命令面事件；(3)单版 FR≤30 的范围约束已有操作者裁定，无需分期判断。DRAFT 将按模板展开 4 条核心路径（窗口整顿/时间线/创建 release-hotfix/人工门）与 BS，不追问普通默认。
+
 ## 2. 用户意图
 
 - {用户想完成什么}
