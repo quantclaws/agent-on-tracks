@@ -31,21 +31,37 @@ sha:
 
 ## 1. 原始输入
 
-> v0.11 主题：run 详情时间线（project run 图 + 节点详情）。
+> v0.11 主题：自驱动工作台——run 时间线详情 + release/hotfix 创建 + 人工门 UI 化（Releases 窗口整顿）。单版交付，FR 不超过 30 条（操作者裁定 2026-10-10：不分期，一个发布做完）。
 >
-> 原始需求（操作者指令 2026-10-09）：当从 sidebar 选中一个 release(run) 时，main area 显示它的详细状态。分上下两部分：上面是一个时间线图；选中任意一个节点时，下面加载该节点的详细信息。
+> 一、窗口结构整顿（操作者指令 2026-10-10）
+> 1. Projects 与 Runs 两窗口合并为一个 Releases 窗口：sidebar 为版本分组的 run 注册表 + backlog 折叠组；注册项目/版本信息降为窗口内摘要行。这是兑现 v0.10 spec FR-0318 已写入的"overview 与 projects 合并为 Projects/Runs 总览语义"（当时未执行完）。
+> 2. Review 窗口移除：它是 v0.10 封闭集中的占位项，无任何 FR 定义其功能（操作者核实 2026-10-10：从未设计过）；阶段评审职责由时间线 awaiting 节点的动作面板（见四）承接。tab 集合收敛为 Releases / Docs / Todos / Settings / Account 五项。
 >
-> 背景与规格来源：
-> - tracks v0.10 已交付弱化版（interfaces §1q / IF-TIMELINE-001）：timeline 响应 stage_order（13 阶段显示序，服务端 kernel 事实表组合，客户端不硬编码）、当前节点卡片、attempt 分组、节点点击浮层占位（timeline.js）。数据源（GET /api/runs/{run_id}/timeline、/ac-chain、/api/runs/{run_id}）v0.9 起具备。v0.10 story 输入第 5 条明确"run 详情 13 阶段时间线为可选项：spec 容量不够则整包延后 v0.11"——本版兑现该延后项。
-> - 完整绘制规格在 louke v0.14-004（workspace-onboarding-workflow-status）：spec.md FR-1201（13 阶段 canonical 线性时间线：已完成/活跃/待处理/需处理/失效五态区分，状态不得只用颜色；每次 attempt 独立节点不折叠，方向连接表达推进，回拨以可辨认回边表达来源→目标；初始视图聚焦活跃节点并保留邻近上下文，全部历史可达）、FR-1301（选中节点详情：起止时间/状态/责任方/关联 artifact/revision/关键 evidence/错误/状态转移原因/回拨合法性；明确区分"选中查看"与"当前活跃"；owning surface 稳定入口与上下文返回）、FR-1401（仅 Runtime 允许的回拨展示指针，确认后才执行）；interfaces.md §5（ProjectStatus/ActiveNode/TimelineNode/ReturnEdge 数据模型、fresh_until/5s 刷新与 stale 处理）。素材目录：~/workspace/louke/.louke/project/specs/v0.14-004-workspace-onboarding-workflow-status/。
-> - 与 louke 的差异（操作者指令，不可协商项）：节点详情不做浮层，做 main area 下方固定详情栏——上下分栏布局，上=时间线图，下=选中节点详情（选中即加载）。
-> - v0.10 工作台裁定继续有效：外壳钉视口、区域内部滚动（#228）；Vercel 极简设计令牌（#226）；registry 行紧凑化（#227，run-heading 已在 timeline 面）；pane bar 单控制面模式。
+> 二、run 详情时间线（操作者指令 2026-10-09）
+> 当从 sidebar 选中一个 release(run) 时，main area 显示它的详细状态，分上下两部分：上面是时间线图；选中任意节点时，下面加载该节点详情。与 louke 的差异为不可协商项：节点详情不做浮层，做 main area 下方固定详情栏，选中即加载。
+> 完整绘制规格在 louke v0.14-004（workspace-onboarding-workflow-status）：spec.md FR-1201（13 阶段 canonical 线性时间线：已完成/活跃/待处理/需处理/失效五态区分，状态不得只用颜色；每次 attempt 独立节点不折叠，方向连接表达推进，回拨以可辨认回边表达来源→目标；初始视图聚焦活跃节点并保留邻近上下文，全部历史可达）、FR-1301（选中节点详情：起止时间/状态/责任方/关联 artifact/revision/关键 evidence/错误/状态转移原因/回拨合法性；区分"选中查看"与"当前活跃"；owning surface 稳定入口与上下文返回）、FR-1401（仅 Runtime 允许的回拨展示指针，确认后才执行）；interfaces.md §5（ProjectStatus/ActiveNode/TimelineNode/ReturnEdge 数据模型、fresh_until/5s 刷新与 stale 处理）。素材目录：~/workspace/louke/.louke/project/specs/v0.14-004-workspace-onboarding-workflow-status/。
+> tracks v0.10 已交付弱化版（interfaces §1q / IF-TIMELINE-001：stage_order、当前节点卡片、attempt 分组、节点点击浮层占位）；数据源（GET /api/runs/{run_id}/timeline、/ac-chain、/api/runs/{run_id}）v0.9 起具备。
+> 验收要点：时间线消费 stage_order + timeline/ac-chain 投影，不合成第二数据源；attempt 不折叠、回边可辨认、五态可区分且不只靠颜色；节点详情为真实投影数据（无 mock），不可查看/无数据可读降级；键盘可达。
 >
-> 验收要点（story 阶段细化）：
-> - sidebar 每个 run 节点可选中，main area 上下分栏渲染该 run 详情。
-> - 时间线图消费 stage_order + timeline/ac-chain 投影，不合成第二数据源；attempt 不折叠、回边可辨认、五态可区分（状态不得只用颜色）。
-> - 选中节点 → 下栏加载该节点详情（真实投影数据，无 mock；不可查看/无数据显示可读降级）。
-> - 键盘可达（节点选择与详情导航）；时间线为只读面（如引入写动作需走既有 CSRF/幂等合同）。
+> 三、创建 release / hotfix（flow.md §3 M-START 与 §16 hotfix 的 UI 化，操作者指令 2026-10-10）
+> 1. 新建 release 的输入形态两种（flow.md §3.2 分类规则）：编辑器写 raw seed（逐字入骨架）或完整 story（原样采纳，不包裹进 §1）。
+> 2. M-START 门全部 UI 化：有活跃 run → 提示并记入 backlog（不开新 run、不建分支）；工作区不干净 → 拒绝并示原因；本地分支未全部并入 main → 确认单列出未合并分支与后果，确认继续、取消退出；从 main 创建 releases/v{N+1}。
+> 3. backlog（操作者指令 2026-10-10；现状：仅有 backlog.recorded 事件，无存储无投影）：本版补 backlog 投影与存储（聚合各 run 的 backlog.recorded）、sidebar 折叠组呈现；创建入口除编辑器新写外，还包括从 backlog 转正（promote）：以 backlog 条目为输入走新建 release 流程，转正成功后条目移除并记录去向。
+> 4. 新建 hotfix：选择 GitHub issue + 场景（post-release=从 main 基线 / dev=从活跃分支）+ HOTFIX-TRIAGE 预检与既有 AC 锚定结果展示；锚定不成立 → 明示退出 hotfix 转 backlog/new feature。
+>
+> 四、人工门 UI 化与自驱动（操作者意图：从 v0.11 起 UI+runtime 自主驱动新功能开发）
+> 1. triage（go/no-go/park）与文档阶段 review（comment/no-comment）补 HTTP 命令端点（human.triage / human.review 事件，走既有 CSRF+幂等合同）；M-REQ-APPROVAL approve 与 M-RELEASE release-decision 已有端点，本版接进 UI。
+> 2. 时间线 awaiting 节点的下栏详情即该门的动作面板：显示原因/影响/唯一主要动作入口（louke FR-1201 attention 模式）。
+> 3. 门间推进由 serve 常驻 supervisor 承担（已存在）；本版端到端验证：UI 发起 → 自动推进 → 下一道门在 UI 呈现。
+>
+> 五、Scribe 分流建议（TRIAGE 报告固定栏目，操作者指令 2026-10-10）
+> 1. 重复检测：story 所述功能已存在时，Scribe 以跨版本引用指认既有 FR/AC，建议 NO-GO 或改写为增强。
+> 2. 冲突检测：与既有功能抵触或破坏性的需求不阻塞 GO，但面板列出冲突对（新需求 vs 既有 FR），GO 需显式确认已知晓冲突。
+> 3. 两项检测写入 Scribe 的 M-STORY TRIAGE 派发合同与 flow.md §4 规格（作为本版 spec 交付的一部分）。
+>
+> 约束：
+> - 所有 UI 动作经既有命令面事件（单写路径），CLI 保留为管理后门。
+> - v0.10 工作台裁定继续有效：外壳钉视口（#228）、Vercel 极简设计令牌（#226）、registry 行紧凑化（#227）、pane bar 单控制面、自动保存模式。
 
 ## 2. 用户意图
 
