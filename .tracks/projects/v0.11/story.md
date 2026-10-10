@@ -1,33 +1,13 @@
 ---
 envelope: tracks-envelope:v2
 story_id: S-001
-title: {一句话标题}
+title: 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化
 created: 2026-10-10
 status: draft
 sha:
 ---
 
-# S-001: {一句话标题}
-
-<!-- 模板指引（生成文档时阅读；填写完成后删除本注释，交付的文档只留内容）：
-  - §1 逐字记录 Human 原始输入，不修改、不转述。
-  - §3 每条操作路径复制 3.1 的小节结构（3.2、3.3……）。修改类路径的「变更基线」必须写清
-    当前行为与本次变更——下游（Sage/Archer/Shield/Devon）基于此描述变更，而非从零设计；
-    新增路径写“无（新增路径）”。
-  - §4 只提取需要下游继续展开的用户结果和重要边界，不枚举普通微交互；按路径顺序统一编号
-    BS-01、BS-02……（不按路径分组）。
-  - BS 编号文法（FR-0130）：`### BS-XX`（两位补零，按核心操作路径顺序统一编号，不按路径分组）。
-    ID 一经分配不可变、不可复用；删除的 BS 留 tombstone。
-  - 跨版本引用（FR-0130）：本版本内引用保持短格式；跨版本引用且存在歧义时附加版本限定
-    `AC-FRXXXX-YY@<version>`（如 `AC-FR0010-01@v0.1`）。限定语法 opt-in，parser 不强制。
-  - §5 各项没有时写“无”；Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项。
-  - §6 每个问题一个段落，粗体一句话开头（格式见正文占位）；不编号、机器不校验。只写无法
-    可靠推导、且不同答案会显著改变价值/范围/权限/数据安全/合规或产生不可逆后果的产品问题；
-    技术选择不写。没有则整节写“无”。
-  - §7 重要风险只写会改变范围或使 story 不成立的。
-
-  不得使用超过3行以上的表格；可改用列表。
--->
+# S-001: 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化
 
 ## 1. 原始输入
 
@@ -63,47 +43,176 @@ sha:
 > - 所有 UI 动作经既有命令面事件（单写路径），CLI 保留为管理后门。
 > - v0.10 工作台裁定继续有效：外壳钉视口（#228）、Vercel 极简设计令牌（#226）、registry 行紧凑化（#227）、pane bar 单控制面、自动保存模式。
 
-> **Scribe:** TRIAGE verdict: GO（raw seed，可进入 DRAFT 展开）。证据：(1)五节均有明确操作者指令与变更基线可查——窗口整顿指认 v0.10 FR-0318 与 Review 占位核实，时间线指认 louke v0.14-004 FR-1201/1301/1401 与既有数据源（v0.9 起），M-START/ backlog/hotfix 指认 flow.md §3.2/§16，人工门指认既有 CSRF+幂等端点与 supervisor；(2)交付面明确为 UI 工作台（Releases/Docs/Todos/Settings/Account），约束明确单写路径经命令面事件；(3)单版 FR≤30 的范围约束已有操作者裁定，无需分期判断。DRAFT 将按模板展开 4 条核心路径（窗口整顿/时间线/创建 release-hotfix/人工门）与 BS，不追问普通默认。
+> **Scribe [RESOLVED]:** TRIAGE verdict: GO（raw seed，可进入 DRAFT 展开）。证据：(1)五节均有明确操作者指令与变更基线可查——窗口整顿指认 v0.10 FR-0318 与 Review 占位核实，时间线指认 louke v0.14-004 FR-1201/1301/1401 与既有数据源（v0.9 起），M-START/ backlog/hotfix 指认 flow.md §3.2/§16，人工门指认既有 CSRF+幂等端点与 supervisor；(2)交付面明确为 UI 工作台（Releases/Docs/Todos/Settings/Account），约束明确单写路径经命令面事件；(3)单版 FR≤30 的范围约束已有操作者裁定，无需分期判断。DRAFT 将按模板展开 4 条核心路径（窗口整顿/时间线/创建 release-hotfix/人工门）与 BS，不追问普通默认。
+>> **Scribe:** DRAFT 已展开：§2 意图提炼完成；§3 落为 5 条路径（3.1 Releases 整顿 / 3.2 时间线固定下栏 / 3.3 创建 release-hotfix-转正 / 3.4 人工门自驱动 / 3.5 分流合同）；§4 共 BS-01..BS-13 按路径顺序编号；§5 锁定单写路径与 FR≤30；§6 无（交付面/UI 面/范围均有操作者裁定可推导）；§7 记录 Review 移除与浮层替换两项已知晓冲突与两项重要风险。
 
 ## 2. 用户意图
 
-- {用户想完成什么}
-- {当前哪里受阻}
-- {完成后能看到什么结果}
+- **用户想完成什么**：把工作台变成自驱动开发入口——在 Releases 窗口内浏览版本注册表与 backlog、审查 run 时间线、创建 release/hotfix、处理各阶段人工门，不再靠 CLI 逐门推进；从 v0.11 起 UI + runtime 自主驱动新功能开发。
+- **当前哪里受阻**：Projects 与 Runs 分窗口、Review 为无功能占位；run 时间线只有弱化版（attempt 分组 + 浮层占位）；M-START 门、backlog、hotfix、triage/review 只能走 CLI，且 backlog 仅有 `backlog.recorded` 事件、无存储无投影。
+- **完成后能看到什么结果**：五 tab 工作台（Releases / Docs / Todos / Settings / Account）；选中 release 后上看时间线、下看节点详情或门的动作面板；可新建 release/hotfix、可从 backlog 转正、可处理人工门并由 supervisor 自动推进到下一道门；单版一次交付（FR 不超过 30 条）。
 
 ## 3. 核心操作路径
 
-### 3.1. {路径名}
+### 3.1. Releases 窗口整顿
 
-- **变更基线**：[新增 / 替换 / 修改 / 重命名] — {此路径在当前版本的行为与实现；新增路径写“无（新增路径）”}
-- **入口/触发**：{用户从现有哪个任务、对象或公开入口，如何进入本能力}
+- **变更基线**：修改 — v0.10 为 Projects / Runs 分窗口 + Review 占位（FR-0318 收敛七项：Projects/Runs/Docs/Review/Todos/Settings/Account；overview 与 projects 合并为总览语义当时未执行完）。本次合并为一个 Releases 窗口并移除 Review。
+- **入口/触发**：用户点击 tab 条 Releases 项，进入版本注册表。
 
-1. {改变用户任务状态的关键步骤 1}
-2. {关键步骤 ...}
-3. {用户在何处看到可验证的完成结果}
+1. 用户看到 sidebar 为按版本分组的 run 注册表 + backlog 折叠组，注册项目/版本信息仅为窗口内摘要行。
+2. 用户在 sidebar 选中一个 release(run)，main area 进入该 run 详情（见 3.2）；选中 backlog 条目则看到转正入口（见 3.3）。
+3. 用户在 tab 条只看到 Releases / Docs / Todos / Settings / Account 五项，无 Review 入口；阶段评审在时间线 awaiting 节点的动作面板完成。
 
-- **完成结果**：{可观察的完成状态；完成、取消或可恢复失败后，用户接下来能做什么}
+- **完成结果**：用户在 Releases 窗口内完成版本浏览 → run 审查 → 创建/转正的闭环，可返回注册表或进入 Docs/Todos 继续；Review 的阶段评审职责由动作面板承接，不出现无处评审的悬空门。
+
+### 3.2. run 详情时间线与固定详情栏
+
+- **变更基线**：修改 — v0.10 弱化版（interfaces §1q / IF-TIMELINE-001：stage_order、当前节点卡片、attempt 分组、节点点击浮层占位）。本次按 louke v0.14-004 FR-1201/1301/1401 绘制完整时间线，并把节点详情从浮层改为 main area 下方固定详情栏（与 louke 的差异为不可协商项）。
+- **入口/触发**：用户从 Releases sidebar 选中一个 release(run)，main area 上半为时间线图。
+
+1. 用户浏览 13 阶段 canonical 线性时间线（stage_order + timeline/ac-chain 投影组合），初始视图聚焦活跃节点并保留邻近上下文，全部历史可导航到达。
+2. 用户选中任意节点（鼠标或键盘），main area 下方固定详情栏加载该节点详情；awaiting 节点下栏即该门的动作面板（见 3.4）。
+3. 用户经详情栏的 owning surface 稳定入口跳到对应文档或操作面，返回时回到同一 run 与可识别的节点上下文。
+
+- **完成结果**：用户可解释当前进展、历史 attempt 与回拨关系，可继续处理门动作或跳转文档；不可查看或无数据的节点可读降级，不伪造数据；全程键盘可达。
+
+### 3.3. 创建 release / hotfix（含 backlog 转正）
+
+- **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。
+- **入口/触发**：用户经 Releases 窗口新建入口、编辑器新写，或从 backlog 折叠组选择条目转正；hotfix 经新建 hotfix 入口进入。
+
+1. 用户新建 release：编辑器写 raw seed（逐字入骨架）或粘贴完整 story（原样采纳，不包裹进 §1）；M-START 门在 UI 逐项执行——有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，未合并分支则单列出分支与后果经确认（继续/取消），通过后从 main 创建 `releases/v{N+1}`。
+2. 用户从 backlog 转正：以 backlog 条目为输入走同一新建 release 流程，转正成功后条目移除并记录去向。
+3. 用户新建 hotfix：选择 GitHub issue + 场景（post-release 从 main 基线 / dev 从活跃分支），看到 HOTFIX-TRIAGE 预检与既有 AC 锚定结果；锚定成立继续建 hotfix，锚定不成立则明示退出 hotfix、转 backlog/new feature。
+
+- **完成结果**：新建的 release 进入 M-STORY（TRIAGE 门见 3.4）或记入 backlog 可稍后转正；hotfix 进入 hotfix 流程或明确转 backlog；失败或拒绝均给出原因与合法继续位置，不建半截 run 或分支。
+
+### 3.4. 人工门 UI 化与自驱动推进
+
+- **变更基线**：修改 — M-REQ-APPROVAL approve 与 M-RELEASE release-decision 已有命令端点（`api_command.py`），triage（go/no-go/park）与文档阶段 review（comment/no-comment）只有 CLI/内核事件（`human.triage`/`human.review`），无 HTTP 命令端点；门间推进由 serve 常驻 supervisor 承担（已存在）。本次补端点并全部接进 UI，做端到端验证。
+- **入口/触发**：用户在时间线遇到 awaiting 节点，下栏详情即该门的动作面板。
+
+1. 用户在动作面板看到门的原因、影响与唯一主要动作入口，在 UI 完成 triage、review、approve、release-decision（全部经命令面事件，走既有 CSRF + 幂等合同）。
+2. 门间推进由 supervisor 自动承担，用户无需手工触发下一步。
+3. 用户在 UI 看到下一道门在时间线上呈现（活跃指针前移），形成"UI 发起 → 自动推进 → 下一道门在 UI 呈现"的端到端闭环。
+
+- **完成结果**：用户可沿时间线连续处理多道门直到 run 进入下一阶段或完成；CLI 保留为管理后门，不作为常规路径。
+
+### 3.5. Scribe 分流检测合同
+
+- **变更基线**：新增 — Scribe 的 M-STORY TRIAGE 派发合同与 flow.md §4 规格新增固定栏目；本版 spec 交付的一部分，不做运行时功能。
+- **入口/触发**：Scribe 撰写任一新 story 的 TRIAGE 报告时。
+
+1. Scribe 执行重复检测：story 所述功能已存在时，以跨版本引用指认既有 FR/AC，建议 NO-GO 或改写为增强。
+2. Scribe 执行冲突检测：与既有功能抵触或破坏性的需求不阻塞 GO，但在报告面板列出冲突对（新需求 vs 既有 FR），GO 需显式确认已知晓冲突。
+3. 两项检测的报告格式与触发规则写入 TRIAGE 派发合同与 flow.md §4，后续 story 直接套用。
+
+- **完成结果**：后续 story 的 TRIAGE 报告自带重复/冲突栏目，Human 可据此裁定 NO-GO、改写或已知晓冲突后 GO。
 
 ## 4. 行为种子
 
-### BS-01 {行为种子标题}
+### BS-01 Releases 注册表与 backlog 组
 
-- EARS: `WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {用户可观察行为}`
-- 来源: [{路径编号} / 约束 / 非常规要求 / 重要推导]
-- 说明: {这项行为保护什么用户结果}
+- EARS: `WHEN 用户打开 Releases 窗口, THE 系统 SHALL 在 sidebar 以版本分组呈现 run 注册表与 backlog 折叠组，注册项目与版本信息仅为窗口内摘要行`
+- 来源: [3.1 / 操作者指令：一、1]
+- 说明: 锁定合并后的窗口结构，兑现 FR-0318 总览语义。
+
+### BS-02 五 tab 收敛与 Review 承接
+
+- EARS: `WHEN 用户查看 tab 条, THE 系统 SHALL 仅呈现 Releases / Docs / Todos / Settings / Account 五项且无 Review 入口；WHEN 阶段评审到达, THE 系统 SHALL 在时间线 awaiting 节点的动作面板承接评审职责`
+- 来源: [3.1 / 操作者指令：一、2]
+- 说明: 保护 Review 移除后评审不断链（与 BS-11 联动，冲突见 §7）。
+
+### BS-03 时间线完整绘制
+
+- EARS: `WHEN 用户查看 run 时间线, THE 系统 SHALL 呈现 13 阶段 canonical 线性时间线：每次 attempt 为独立节点不折叠、方向连接表达推进、回拨以可辨认回边表达来源至目标，已完成/活跃/待处理/需处理/失效五态可区分且不只靠颜色；初始视图聚焦活跃节点并保留邻近上下文，全部历史可导航到达；时间线只消费 stage_order 与 timeline/ac-chain 投影，不合成第二数据源`
+- 来源: [3.2 / louke FR-1201 / 验收要点]
+- 说明: 锁定时间线的完整绘制规格与单数据源不变量。
+
+### BS-04 节点详情固定下栏
+
+- EARS: `WHEN 用户选中时间线任意节点, THE 系统 SHALL 在 main area 下方固定详情栏加载该节点详情（起止时间/状态/责任方/关联 artifact/revision/关键 evidence/错误/状态转移原因/回拨合法性），明确区分选中查看与当前活跃，提供 owning surface 稳定入口与上下文返回；详情为真实投影数据，不可查看或无数据时可读降级；全程键盘可达`
+- 来源: [3.2 / louke FR-1301 / 不可协商项 / 验收要点]
+- 说明: 锁定与 louke 的不可协商差异（固定下栏不做浮层）与真数据要求。
+
+### BS-05 回拨安全执行
+
+- EARS: `WHEN 用户查看回拨, THE 系统 SHALL 仅为 Runtime 明确允许的先前 attempt 展示回拨指针；WHEN 用户发起回拨, THE 系统 SHALL 先说明目标与后果并经明确确认与 Runtime 复验后才执行`
+- 来源: [3.2 / louke FR-1401]
+- 说明: 保护回拨的可逆性边界，不伪装撤销外部副作用。
+
+### BS-06 新建输入双形态
+
+- EARS: `WHEN 用户新建 release, THE 系统 SHALL 支持两种输入：编辑器写 raw seed（逐字入骨架）或完整 story（原样采纳，不包裹进 §1）`
+- 来源: [3.3 / flow.md §3.2 / 操作者指令：三、1]
+- 说明: 锁定 flow.md 分类规则的 UI 化，防止完整 story 被改写包裹。
+
+### BS-07 M-START 门 UI 化
+
+- EARS: `WHEN 用户走新建 release 的 M-START 门, THE 系统 SHALL 有活跃 run 则提示并记入 backlog（不开新 run、不建分支），工作区不干净则拒绝并示原因，本地分支未全部并入 main 则单列出未合并分支与后果并经确认（继续/取消），通过后从 main 创建 releases/v{N+1}`
+- 来源: [3.3 / flow.md §3 / 操作者指令：三、2]
+- 说明: 锁定 CLI 门行为在 UI 的完整复现，四项缺一不可。
+
+### BS-08 backlog 存储投影与转正
+
+- EARS: `WHEN backlog.recorded 事件产生, THE 系统 SHALL 聚合存储并在 sidebar 折叠组呈现 backlog 投影；WHEN 用户从 backlog 转正, THE 系统 SHALL 以条目为输入走新建 release 流程，转正成功后移除条目并记录去向`
+- 来源: [3.3 / 操作者指令：三、3]
+- 说明: 补齐 backlog 缺失的存储与投影，并锁定转正闭环。
+
+### BS-09 hotfix 创建与锚定退出
+
+- EARS: `WHEN 用户新建 hotfix, THE 系统 SHALL 要求选择 GitHub issue 与场景（post-release 从 main 基线 / dev 从活跃分支），并展示 HOTFIX-TRIAGE 预检与既有 AC 锚定结果；IF 锚定不成立, THE 系统 SHALL 明示退出 hotfix 并指引转 backlog/new feature`
+- 来源: [3.3 / flow.md §16 / 操作者指令：三、4]
+- 说明: 锁定 hotfix 的场景分支与锚定不成立的合法出口。
+
+### BS-10 人工门命令端点与 UI 接入
+
+- EARS: `WHEN 用户在 UI 处理 triage（go/no-go/park）或文档阶段 review（comment/no-comment）, THE 系统 SHALL 经 HTTP 命令端点触发 human.triage / human.review 事件并走既有 CSRF 与幂等合同；M-REQ-APPROVAL approve 与 M-RELEASE release-decision 沿已有端点接进 UI`
+- 来源: [3.4 / 操作者指令：四、1 / 约束：单写路径]
+- 说明: 锁定新增端点的合同归属（既有 CSRF + 幂等），UI 只经命令面单写路径。
+
+### BS-11 awaiting 动作面板
+
+- EARS: `WHEN 时间线节点处于 awaiting, THE 系统 SHALL 在其下栏详情呈现该门的动作面板：原因、影响与唯一主要动作入口`
+- 来源: [3.4 / louke FR-1201 attention 模式 / 操作者指令：四、2]
+- 说明: 锁定下栏详情与动作面板同一 surface，Review 移除后的评审承接点。
+
+### BS-12 自驱动端到端
+
+- EARS: `WHEN 用户在 UI 发起门动作后, THE 系统 SHALL 由 serve 常驻 supervisor 自动推进，并在下一道门到达时于时间线 UI 呈现；本版验证 UI 发起至下一道门呈现的端到端闭环`
+- 来源: [3.4 / 操作者意图：四、3]
+- 说明: 锁定自驱动的端到端可验证结果，门间无手工推进。
+
+### BS-13 分流检测栏目与合同
+
+- EARS: `WHEN Scribe 撰写 TRIAGE 报告, THE 系统 SHALL 要求报告含重复检测（跨版本引用指认既有 FR/AC，建议 NO-GO 或改写为增强）与冲突检测（列出新需求 vs 既有 FR 的冲突对，GO 需显式确认已知晓冲突）两栏目；两项检测的报告格式与触发规则 SHALL 写入 M-STORY TRIAGE 派发合同与 flow.md §4，作为本版 spec 交付的一部分`
+- 来源: [3.5 / 操作者指令：五]
+- 说明: 锁定分流建议从一次性指令变为后续 story 可复用的固定合同。
 
 ## 5. 范围、约束与例外
 
-- **必须保持的产品约束**：{用户明确要求或既有合同中不能改变的约束；无则写“无”}
-- **非常规要求**：{有意偏离宿主项目惯例、安全或可用性默认的要求及理由；无则写“无”}
-- **Out-of-Scope**：{明确排除的事项；无则写“无”}
+- **必须保持的产品约束**：
+  - 所有 UI 动作经既有命令面事件（单写路径），CLI 保留为管理后门，不扩展为第二常规路径。
+  - v0.10 工作台裁定继续有效：外壳钉视口（#228）、Vercel 极简设计令牌（#226）、registry 行紧凑化（#227）、pane bar 单控制面、自动保存模式。
+  - 节点详情不做浮层、做 main area 下方固定详情栏（与 louke 的差异为不可协商项）。
+  - 时间线只消费 stage_order + timeline/ac-chain 投影，不合成第二数据源；五态区分不只靠颜色；无 mock 数据；键盘可达。
+  - 单版交付，FR 不超过 30 条（操作者裁定 2026-10-10：不分期）。
+- **非常规要求**：无。
+- **Out-of-Scope**：
+  - Docs / Todos / Settings / Account 现有行为不变，本版只做 Releases 窗口与时间线/创建/门动作的新增与修改。
+  - 时间线数据源不新增（沿用 v0.9 起的 timeline / ac-chain / run detail）。
+  - Scribe 分流检测只落报告格式与派发合同，不做运行时拦截或自动 NO-GO。
 
 ## 6. 开放产品决定
 
-**{问题一句话}** — {不同答案会改变什么产品结果}。方向：A) {…} B) {…}。推荐 {A}，因为 {理由}。
+无
 
 ## 7. 必要性与风险
 
-- **既有能力**：{可复用或相关的现有功能/合同；无则写“未发现直接覆盖”}
-- **冲突**：{与既有产品方向的实质冲突；无则写“无”}
-- **重要风险**：{只写会改变范围或使 story 不成立的风险；无则写“无阻塞风险”}
+- **既有能力**：v0.10 SPA 工作台 chrome（FR-0318 七项、tab 共存、Settings/Account 语义）；timeline/ac-chain/run detail 数据源（v0.9 起）与 IF-TIMELINE-001 弱化版（stage_order、当前节点卡片、attempt 分组、浮层占位）；命令面 CSRF + Idempotency-Key 合同与 approve/release-decision 端点；`backlog.recorded` 事件；serve 常驻 supervisor 单活动 run 串行；louke v0.14-004 绘制规格素材（FR-1201/1301/1401、数据模型与刷新/stale 处理）。
+- **冲突**：
+  - Review 移除 vs v0.10 FR-0318 七项收敛（含 Review）：破坏性变更，GO 已由操作者指令（一、2）显式确认已知晓，阶段评审由 awaiting 动作面板承接。
+  - 节点详情固定下栏 vs v0.10 IF-TIMELINE-001 浮层占位：展示形态变更，GO 已由不可协商项显式确认，浮层占位被固定下栏替换。
+- **重要风险**：
+  - 容量风险：五节（窗口/时间线/创建三类/四门端点/分流合同）须压进 FR≤30，时间线完整规格（BS-03/04/05）与三类创建（BS-06/07/08/09）占主要预算；若逐项展开微交互会挤占预算。
+  - 移植偏差风险：louke 规格（13 阶段 canonical 序、五态、回边、attention 模式）移植到 tracks 时若与 stage_order / timeline-ac-chain 投影语义错位，时间线与详情将失真；spec 须逐项锚定 louke 条款与 tracks 数据源。
