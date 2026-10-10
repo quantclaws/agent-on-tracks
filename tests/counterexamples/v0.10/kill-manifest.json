@@ -473,7 +473,7 @@
   {
    "ac": "AC-FR0325-01",
    "if_ref": "IF-DISCUSS-001",
-   "mutation": "a discussions endpoint exists but serves an empty thread list",
+   "mutation": "the overlay controls omit the next/unresolved navigation (client face; integration binding guards the read model the overlay consumes)",
    "patch": "ce_ac-fr0325-01.patch",
    "result": "killed",
    "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state"
@@ -481,7 +481,7 @@
   {
    "ac": "AC-FR0325-02",
    "if_ref": "IF-DISCUSS-001",
-   "mutation": "a discussion resolve write-back endpoint exists and answers 200",
+   "mutation": "the overlay controls carry resolve/reply write entries (client face; integration binding guards the no-mutation-endpoint invariant)",
    "patch": "ce_ac-fr0325-02.patch",
    "result": "killed",
    "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint"
@@ -603,7 +603,7 @@
    "if_ref": "IF-WEBUI-001",
    "mutation": "tab items render without tooltips and with sub-32px hit areas (surface: workbench shell)",
    "patch": "ce_ac-fr0317-01.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_workbench_ui.py::test_tabbar_fixed_semantics"
   },
   {
@@ -707,15 +707,15 @@
    "if_ref": "IF-DOCSAVE-001",
    "mutation": "the save control stays enabled while clean (surface: docs view)",
    "patch": "ce_ac-fr0323-01.patch",
-   "result": "authored-awaiting-producer",
-   "test": "tests/e2e/test_docs_ui.py::test_save_button_dirty_gating"
+   "result": "killed",
+   "test": "tests/e2e/test_docs_ui.py::test_save_control_autosaves_and_gates_on_saved"
   },
   {
    "ac": "AC-FR0323-02",
    "if_ref": "IF-DOCSAVE-001",
    "mutation": "a 409 silently overwrites without the two-option dialog (surface: docs view)",
    "patch": "ce_ac-fr0323-02.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_docs_ui.py::test_conflict_dialog_two_options"
   },
   {
@@ -739,7 +739,7 @@
    "if_ref": "IF-DISCUSS-001",
    "mutation": "the discussion overlay lacks the next/unresolved navigation (surface: docs view)",
    "patch": "ce_ac-fr0325-01.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_docs_ui.py::test_discussion_navigation_controls"
   },
   {
@@ -747,7 +747,7 @@
    "if_ref": "IF-DISCUSS-001",
    "mutation": "the overlay exposes resolve/reply write entries (surface: docs view)",
    "patch": "ce_ac-fr0325-02.patch",
-   "result": "authored-awaiting-producer",
+   "result": "killed",
    "test": "tests/e2e/test_docs_ui.py::test_no_discussion_write_controls"
   },
   {

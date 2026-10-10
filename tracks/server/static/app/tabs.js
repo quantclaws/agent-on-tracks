@@ -55,6 +55,21 @@ function highlightTabbarItem(shell, area) {
 export async function activateTab(area) {
   const window = windows.has(area) ? windows.get(area) : null;
   if (!window) return null;
+  if (active && active !== window) {
+    // Before any chrome moves, the outgoing view may refuse the unmount
+    // (Prism round-2): a view holding a pending human decision — the docs
+    // conflict dialog, an unsaveable draft — keeps its visible face and the
+    // switch is abandoned with the chrome untouched.
+    const host =
+      (document.querySelector("#workbench") || document).querySelector(
+        '[data-testid="main-body"]'
+      ) || null;
+    const currentView = host && host.firstElementChild;
+    if (currentView && currentView.__beforeUnmount) {
+      const ok = await currentView.__beforeUnmount();
+      if (ok === false) return active;
+    }
+  }
   active = window;
   const shell = document.querySelector("#workbench") || document;
   const mainArea = shell.querySelector('[data-testid="main-area"]');

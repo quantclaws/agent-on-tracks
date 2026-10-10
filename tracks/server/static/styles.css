@@ -73,6 +73,25 @@
   box-sizing: border-box;
 }
 
+/* 2026-10-09 operator directive: hairline scrollbars (~1/3 of the platform
+   default) — every scrolling region reads as an edge, not a gutter. The
+   standard ``scrollbar-width`` property is deliberately NOT set: Chromium
+   121+ lets it override these pseudo-element rules and falls back to
+   overlay scrollbars. */
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 body {
   margin: 0;
   color: var(--ink);
@@ -221,16 +240,9 @@ textarea {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: var(--s-6) var(--s-7);
-}
-
-.main-header {
-  flex: none;
-}
-
-.main-title {
-  margin: 0 0 var(--s-5);
-  font-size: var(--fs-headline);
+  /* 2026-10-09 operator directive: no header strip above the content and
+     no vertical padding — the face starts at the window's top edge */
+  padding: 0 var(--s-7);
 }
 
 /* the global hidden attribute wins over every author display rule (the name
@@ -595,6 +607,30 @@ textarea {
   color: var(--fg);
 }
 
+/* a disabled tool button reads as inert (the save control's disabled state
+   IS the "saved" indicator — operator directive 2026-10-09) */
+.pane-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pane-toolbar button:disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+/* the document's save control mounts inside the pane bar (merge directive
+   2026-10-09): the slot itself must not affect the flex row */
+.pane-editor-tools {
+  display: contents;
+}
+
+/* dirty (enabled) save: ink instead of the muted tools */
+.pane-toolbar .doc-save:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-subtle);
+}
+
 .pane-body {
   flex: 1;
   min-height: 0;
@@ -639,66 +675,29 @@ textarea {
   color: var(--accent-fg);
 }
 
-/* One line, always (#223): the revision shows a short prefix with the full
-   sha in its tooltip, so the row never wraps. */
-.doc-toolbar {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: var(--s-3);
-  min-height: 34px;
-  margin-bottom: var(--s-2);
-}
+/* The editor carries no toolbar row of its own (merge directive 2026-10-09):
+   its save icon lives in the pane bar, the revision face is hidden, and the
+   discussion navigation sits in the pane bar / the overlay only. */
 
-.doc-toolbar .discussion-controls { margin-left: auto; }
-
-.doc-save {
-  min-height: var(--control-h-sm);
-  padding: 0 var(--s-3);
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-  font-size: var(--fs-body);
-}
-
-.doc-save:hover {
-  background: var(--fg-muted);
-  border-color: var(--fg-muted);
-}
-
-.doc-revision {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--fs-caption);
-  color: var(--fg-subtle);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.doc-status {
-  margin: 0;
-  font-size: var(--fs-caption);
-  color: var(--fg-muted);
-}
-
-/* small inline controls of the discussion navigation */
+/* small inline controls of the discussion overlay */
 .discussion-controls button {
   min-height: var(--control-h-sm);
   padding: 0 var(--s-2);
   font-size: var(--fs-caption);
 }
 
+/* The editor face is borderless (operator directive 2026-10-09): the
+   document reads directly on the pane's surface, not inside a boxed
+   widget — both our wrapper frame and Vditor's own frame are gone. */
 .vditor-host {
   min-height: 160px;
   padding: var(--s-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   background: var(--bg);
 }
 
 .vditor-host .vditor {
+  border: 0;
+  border-radius: 0;
   font-size: var(--fs-base);
 }
 
@@ -774,6 +773,12 @@ textarea {
 }
 
 /* -- run timeline (§1q) ----------------------------------------------------- */
+
+/* the run's identity opens the timeline face (no main header strip) */
+.run-heading {
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-title);
+}
 
 .current-card {
   display: flex;

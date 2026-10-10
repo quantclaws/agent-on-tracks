@@ -1,14 +1,33 @@
+diff --git a/tracks/server/static/app/editor.js b/tracks/server/static/app/editor.js
+index ea069d3..0a6d0ad 100644
 --- a/tracks/server/static/app/editor.js
 +++ b/tracks/server/static/app/editor.js
-@@ -148,8 +148,9 @@
-       return result;
-     } catch (error) {
-       if (error && error.status === 409) {
--        conflict.show(conflictRevision(error));
--        return null;
-+        // counterexample AC-FR0323-02: a 409 is retried once with the
-+        // original base — the conflict dialog never opens
-+        return submit();
-       }
-       // Write failure: the local draft stays in place and is retryable.
-       status.textContent = "Save failed";
+@@ -220,7 +220,27 @@ export function createEditor({ url, revision, content, reload } = {}) {
+         return result;
+       } catch (error) {
+         if (error && error.status === 409) {
+-          conflict.show(conflictRevision(error));
++          // counterexample AC-FR0323-02: the 409 is silently rebased on the
++          // server's current_revision and overwritten once — the two-option
++          // conflict dialog never opens
++          const payload = error.payload || {};
++          const live =
++            payload.current_revision ||
++            (payload.error && payload.error.current_revision);
++          if (live) {
++            const retried = await postJson(url, {
++              base_revision: live,
++              content: draft.head + draft.content,
++            }).catch(() => null);
++            if (retried) {
++              draft.baseRevision = retried.new_revision || live;
++              setRevision(draft.baseRevision);
++              draft.saved = draft.content;
++              draft.dirty = false;
++              refreshSaveFace();
++              return retried;
++            }
++          }
+           return null;
+         }
+         // Write failure: the local draft stays in place and is retryable.

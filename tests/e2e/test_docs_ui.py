@@ -2,9 +2,11 @@
 IF-SECRECY-001, IF-CMDSVC-001).
 
 The ``ui`` marker layer for the document workspace: the Vditor ir host with
-same-origin assets, the textarea fallback, the explicit-save dirty gate and
-conflict recovery, the pane model, and the read-only discussion overlay — all
-through data-testid controls on the real serve + Chromium stack.
+same-origin assets, the textarea fallback, the pane-bar autosave control with
+conflict recovery (2026-10-09 operator directive: one control surface per
+pane, hidden revision face, hidden front-matter), the pane model, and the
+read-only discussion overlay — all through data-testid controls on the real
+serve + Chromium stack.
 """
 
 from __future__ import annotations
@@ -90,42 +92,202 @@ def test_vditor_failure_textarea_fallback(ui_serve, page):
     assert "fallback edit" in (fallback.input_value() or "")
 
 
-# AC-FR0323-01@v0.10 TRACKS-TRACE save button dirty gating
-def test_save_button_dirty_gating(ui_serve, page):
-    """AC-FR0323-01: the save control is disabled while the editor is clean
-    and becomes enabled once edited; the explicit save produces the new
-    revision and the editor baseline switches to it."""
+# AC-FR0323-01@v0.10 TRACKS-TRACE autosave icon save control (2026-10-09 rework)
+def test_save_control_autosaves_and_gates_on_saved(ui_serve, page):
+    """AC-FR0323-01 (2026-10-09 operator directive): the save control is an
+    icon in the pane bar that is disabled while the editor is clean (saved),
+    and a user edit saves itself — no submit gesture — after which the
+    control disables again and the baseline moves to the new revision. The
+    revision face stays hidden (internal bookkeeping only; the full sha
+    rides in the tooltip)."""
     ui_serve.seed_version_docs("v1.0")
+    # a registered project + non-terminal run resolve the version's
+    # editable_run_id — the autosave must be a REAL accepted write (the
+    # pre-rework test posted to the "unassigned" run and its weak asserts
+    # masked the rejection)
+    ui_serve.seed_project("proj-ui-1", "v1.0")
+    ui_serve.seed_run("run-ui-1", "v1.0")
     _login_and_open_docs(ui_serve, page)
     page.get_by_test_id("doc-tree-item-v1.0-spec").click()
     page.get_by_test_id("vditor-ir-host").wait_for()
     save = page.get_by_test_id("doc-save")
-    assert save.is_disabled(), "a clean editor must not offer the save"
-    page.get_by_test_id("doc-editor-content").fill("edited through the ui\n")
-    assert not save.is_disabled(), "a dirty editor must enable the save"
-    save.click()
-    page.get_by_test_id("doc-revision").wait_for()
-    revision = page.get_by_test_id("doc-revision").inner_text()
-    assert revision and revision != "rev-clean", (
-        "the save must move the editor to the new revision baseline"
+    assert save.is_disabled(), "a clean editor must show the saved state (disabled)"
+    # the save control is an icon control inside the pane bar — the editor
+    # toolbar row is gone (merge directive)
+    assert page.get_by_test_id("pane-toolbar").get_by_test_id("doc-save").count() == 1, (
+        "the save control lives in the pane bar, not in a second toolbar row"
     )
-    # #223: the visible revision is a short prefix; the full sha rides in the
-    # title tooltip so the toolbar stays on one line
-    assert len(revision) <= 12, (
-        f"the visible revision must be the short prefix, got {revision!r}"
+    revision = page.get_by_test_id("doc-revision")
+    assert not revision.is_visible(), (
+        "the revision is internal bookkeeping and must stay hidden"
     )
-    tooltip = page.get_by_test_id("doc-revision").get_attribute("title") or ""
-    assert len(tooltip) > len(revision), (
-        f"the tooltip must carry the full revision: {tooltip!r}"
+    baseline = revision.get_attribute("title") or ""
+    # the edit saves itself: the autosave POST lands without any click
+    with page.expect_response(lambda response: "/edits" in response.url) as posted:
+        page.get_by_test_id("doc-editor-content").fill("edited through the ui\n")
+    assert posted.value.ok, "the autosave must succeed"
+    assert page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"doc-save\"]').disabled === true"
+    ), "the completed autosave must return the control to the saved state"
+    assert (revision.get_attribute("title") or "") != baseline, (
+        "the autosave must move the editor to the new revision baseline"
     )
+    assert (revision.get_attribute("title") or "") == posted.value.json()["new_revision"], (
+        "the hidden revision face must track the live baseline (tooltip)"
+    )
+
+
+# Prism B1 lock (2026-10-09 review): typing that races an airborne autosave
+# is never marked saved — the landing response only vouches for the posted
+# snapshot, and the raced edit saves itself in a second request.
+def test_typing_during_autosave_flight_is_never_marked_saved(ui_serve, page):
+    """A slow save channel holds the first autosave in flight while the user
+    keeps typing: the flight must land as "A saved", the raced edit must stay
+    dirty (control enabled), re-arm, and post itself — ending disabled with
+    both bodies actually sent, in order."""
+    import time
+
+    ui_serve.seed_version_docs("v1.0")
+    ui_serve.seed_project("proj-ui-1", "v1.0")
+    ui_serve.seed_run("run-ui-1", "v1.0")
+    _login_and_open_docs(ui_serve, page)
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+
+    posted: list[str] = []
+
+    def slow(route):
+        posted.append(route.request.post_data_json.get("content", ""))
+        time.sleep(0.6)  # hold the response so the flight is airborne
+        route.continue_()
+
+    page.route("**/api/runs/*/docs/*/edits", slow)
+    # the first edit's autosave request is out; its response is 600ms away
+    with page.expect_request(lambda request: "/edits" in request.url):
+        page.get_by_test_id("doc-editor-content").fill("first edit\n")
+    # the racing edit lands while the first save is still airborne
+    page.get_by_test_id("doc-editor-content").fill("first edit + raced edit\n")
+    assert page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"doc-save\"]').disabled === true",
+        timeout=15000,
+    ), "the raced edit must save itself and return the control to saved"
+    bodies = [body for body in posted if body]
+    assert bodies == [
+        "---\nenvelope: tracks-envelope:v2\n---\nfirst edit\n",
+        "---\nenvelope: tracks-envelope:v2\n---\nfirst edit + raced edit\n",
+    ], f"both edits must be sent in order, head intact: {bodies!r}"
+
+
+# Prism B2 lock (2026-10-09 review): an unresolved conflict blocks the
+# document switch — its decision panel never opens in torn-down DOM.
+def test_unresolved_conflict_blocks_document_switch(ui_serve, page):
+    """With the autosave 409 dialog open, selecting another document from the
+    sidebar is refused: the pane keeps the conflicted document, the dialog
+    stays visible and mounted. Resolving (reload-discard) unblocks the
+    switch."""
+    ui_serve.seed_version_docs("v1.0")
+    _login_and_open_docs(ui_serve, page)
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+
+    def conflict(route):
+        route.fulfill(
+            status=409,
+            headers={"Content-Type": "application/json"},
+            body='{"error": {"reason": "stale_revision", "current_revision": "rev-x"}}',
+        )
+
+    page.route("**/api/runs/*/docs/*/edits", conflict)
+    page.get_by_test_id("doc-editor-content").fill("pending decision\n")
+    dialog = page.get_by_test_id("conflict-dialog")
+    dialog.wait_for()
+
+    # the switch to another document is refused while the conflict is open
+    page.get_by_test_id("doc-tree-item-v1.0-story").click()
+    page.wait_for_timeout(600)
+    assert page.get_by_test_id("pane-selector").input_value() == "spec", (
+        "the pane must keep the conflicted document — the switch is blocked"
+    )
+    assert dialog.is_visible(), "the conflict dialog stays visible and mounted"
+    assert "冲突" in (page.get_by_test_id("pane-status").inner_text() or ""), (
+        "the pane states why the switch was refused"
+    )
+
+    # resolving the conflict (drop the local edit, take the server's) unblocks
+    page.get_by_test_id("conflict-reload").click()
+    page.wait_for_timeout(400)
+    assert not dialog.is_visible(), "reload-discard closes the dialog"
+    page.get_by_test_id("doc-tree-item-v1.0-story").click()
+    assert page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"pane-selector\"]').value === 'story'"
+    ), "after resolution the switch proceeds"
+
+
+# Prism round-2 gap locks (2026-10-09 review): the two remaining teardown
+# paths — closing a pane and switching the window away from docs — keep the
+# conflict's decision face mounted: both are refused while the dialog is
+# open (chrome untouched) and proceed once the decision is made.
+def test_conflict_blocks_pane_close_and_window_switch(ui_serve, page):
+    ui_serve.seed_version_docs("v1.0")
+    _login_and_open_docs(ui_serve, page)
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("vditor-ir-host").wait_for()
+
+    def conflict(route):
+        route.fulfill(
+            status=409,
+            headers={"Content-Type": "application/json"},
+            body='{"error": {"reason": "stale_revision", "current_revision": "rev-x"}}',
+        )
+
+    page.route("**/api/runs/*/docs/*/edits", conflict)
+    page.get_by_test_id("doc-editor-content").fill("pending decision\n")
+    # scope to pane 0's dialog — every pane's editor carries one (hidden)
+    dialog = page.get_by_test_id("doc-pane-0").get_by_test_id("conflict-dialog")
+    dialog.wait_for()
+
+    # a second pane makes closing pane 0 a normally-legal operation
+    page.get_by_test_id("doc-pane-0").get_by_test_id("pane-split").click()
+    page.locator("[data-testid='doc-pane-1']").wait_for()
+    page.get_by_test_id("doc-pane-0").get_by_test_id("pane-close").click()
+    page.wait_for_timeout(500)
+    assert page.locator("[data-testid^='doc-pane-']").count() == 2, (
+        "the pane close is refused while the conflict is open"
+    )
+    assert dialog.is_visible(), "the conflict dialog keeps its mounted face"
+
+    # the window switch is refused too — the chrome never moves
+    page.get_by_test_id("tabbar-item-runs").click()
+    page.wait_for_timeout(600)
+    assert page.locator("[data-testid='view-docs']").count() == 1, (
+        "the docs view must stay mounted while its decision is pending"
+    )
+    assert dialog.is_visible(), "the conflict dialog stays visible through the refused switch"
+    assert page.get_by_test_id("tabbar-item-docs").get_attribute("aria-current") == "page", (
+        "the tab-bar chrome stays on docs — the switch aborted before any move"
+    )
+
+    # resolving the conflict unblocks both paths
+    page.get_by_test_id("doc-pane-0").get_by_test_id("conflict-reload").click()
+    page.wait_for_timeout(400)
+    assert not dialog.is_visible(), "reload-discard closes the dialog"
+    page.get_by_test_id("doc-pane-0").get_by_test_id("pane-close").click()
+    page.wait_for_timeout(400)
+    assert page.locator("[data-testid^='doc-pane-']").count() == 1, (
+        "the pane close proceeds after the decision"
+    )
+    page.get_by_test_id("tabbar-item-runs").click()
+    page.locator("[data-testid='view-runs']").wait_for()
 
 
 # AC-FR0323-02@v0.10 TRACKS-TRACE conflict dialog two options
 def test_conflict_dialog_two_options(ui_serve, page):
-    """AC-FR0323-02: a 409 from the save channel opens the conflict dialog
+    """AC-FR0323-02: a 409 from the autosave channel opens the conflict dialog
     with the two options — reload-discard (drops the local change, rebases on
     current_revision) and force-overwrite (keeps the local edit, resubmits
-    with current_revision as the new base); nothing is silently overwritten."""
+    with current_revision as the new base); nothing is silently overwritten.
+    The submitted content keeps the sealed front-matter head the editor hides
+    from its editable face."""
     ui_serve.seed_version_docs("v1.0")
     _login_and_open_docs(ui_serve, page)
     page.get_by_test_id("doc-tree-item-v1.0-spec").click()
@@ -145,8 +307,8 @@ def test_conflict_dialog_two_options(ui_serve, page):
         )
 
     page.route("**/api/runs/*/docs/*/edits", conflict)
+    # the edit's autosave is the write that meets the 409 — no submit gesture
     page.get_by_test_id("doc-editor-content").fill("conflicting local edit\n")
-    page.get_by_test_id("doc-save").click()
     dialog = page.get_by_test_id("conflict-dialog")
     dialog.wait_for()
     assert "rev-server-current" in (dialog.inner_text() or ""), (
@@ -163,8 +325,11 @@ def test_conflict_dialog_two_options(ui_serve, page):
     assert submissions and submissions[-1].get("base_revision") == "rev-server-current", (
         f"the force-overwrite must resubmit with current_revision: {submissions!r}"
     )
-    assert submissions[-1].get("content") == "conflicting local edit\n", (
-        "the force-overwrite must keep the local edit"
+    assert submissions[-1].get("content") == (
+        "---\nenvelope: tracks-envelope:v2\n---\nconflicting local edit\n"
+    ), (
+        "the force-overwrite must keep the local edit and reattach the "
+        f"hidden front-matter head verbatim: {submissions[-1]!r}"
     )
 
 
@@ -268,6 +433,10 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
     Idempotency-Key headers, and the redaction projection shows no plaintext
     secret on any surface (the canary never reaches the DOM)."""
     ui_serve.seed_version_docs("v1.0")
+    # a registered project resolves the version's editable_run_id — the
+    # autosave must be a REAL accepted write (the unmount guard refuses a
+    # window switch while a draft cannot reach the server)
+    ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
     _seed_canary_event(ui_serve, "run-ui-1")
     _login_and_open_docs(ui_serve, page)
@@ -282,8 +451,8 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
         route.continue_()
 
     page.route("**/api/**", capture)
-    page.get_by_test_id("doc-editor-content").fill("csrf probe edit\n")
-    page.get_by_test_id("doc-save").click()
+    with page.expect_response(lambda response: "/edits" in response.url):
+        page.get_by_test_id("doc-editor-content").fill("csrf probe edit\n")
     posted = [w for w in writes if w["method"] == "POST"]
     assert posted, "the save must issue a write request"
     for write in posted:

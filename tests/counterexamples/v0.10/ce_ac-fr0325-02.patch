@@ -1,6 +1,8 @@
+diff --git a/tracks/server/static/app/discussions.js b/tracks/server/static/app/discussions.js
+index 52784fe..aec7a40 100644
 --- a/tracks/server/static/app/discussions.js
 +++ b/tracks/server/static/app/discussions.js
-@@ -38,10 +38,26 @@
+@@ -35,9 +35,25 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
      "data-testid": "discussion-filter-unresolved",
      text: "Unresolved only",
    });
@@ -19,11 +21,10 @@
 +  // counterexample AC-FR0325-02: the overlay carries resolve/reply write
 +  // entries — read-only navigation is no longer the closed surface
    const controls = element("div", { class: "discussion-controls" }, [
-     toggleButton,
      nextButton,
      unresolvedButton,
 +    resolveButton,
 +    replyButton,
    ]);
  
-   toggleButton.addEventListener("click", () => toggle());
+   nextButton.addEventListener("click", () => nextThread());

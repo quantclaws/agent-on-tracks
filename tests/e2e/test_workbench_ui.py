@@ -169,10 +169,12 @@ def test_tabs_not_persisted_and_content_titles(ui_serve, page):
     )
 
     page.get_by_test_id("tabbar-item-docs").click()
-    title = page.get_by_test_id("main-title")
-    assert "Docs" not in (title.inner_text() or ""), (
-        "the main title must show the content title, not the tab-bar category"
+    # 2026-10-09 operator directive: the main header strip is gone — the
+    # content face starts directly (no category title anywhere)
+    assert page.get_by_test_id("main-title").count() == 0, (
+        "the main header strip must not exist — the face starts at the top"
     )
+    page.locator("[data-testid='view-docs']").wait_for()
 
 
 # AC-FR0318-03@v0.10 TRACKS-TRACE function set, settings/account, logout
@@ -393,9 +395,9 @@ def test_first_demo_milestone_journey(ui_serve, page):
     """AC-NFR0155-01: the first demonstrable milestone journey — browser
     login (one wrong password, inline error, then the correct one), name
     collection, real project data, reload-free tab switches, the docs center
-    rendering the current spec, an explicit save producing a new revision,
-    and the logout returning to the login face — every step through
-    data-testid controls, no API substitution."""
+    rendering the current spec, an edit autosaving itself into a new
+    revision (2026-10-09 rework), and the logout returning to the login face
+    — every step through data-testid controls, no API substitution."""
     ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_version_docs("v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
@@ -419,9 +421,14 @@ def test_first_demo_milestone_journey(ui_serve, page):
     page.get_by_test_id("vditor-ir-host").wait_for()
     assert _same_document(page), "the journey continues in the same document"
 
-    page.get_by_test_id("doc-save").wait_for()
-    page.get_by_test_id("doc-save").click()
-    page.get_by_test_id("doc-revision").wait_for()
+    save = page.get_by_test_id("doc-save")
+    save.wait_for()
+    assert save.is_disabled(), "a freshly opened document shows the saved state"
+    with page.expect_response(lambda response: "/edits" in response.url):
+        page.get_by_test_id("doc-editor-content").fill("journey autosave edit\n")
+    assert page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"doc-save\"]').disabled === true"
+    ), "the autosaved edit must return the control to the saved state"
 
     page.get_by_test_id("tabbar-item-account").click()
     page.get_by_test_id("account-logout").click()
@@ -500,10 +507,11 @@ def test_runs_registry_human_titles(ui_serve, page):
         "a run without a story title shows the bare version, not the ULID"
     )
 
-    # the main area keeps the untruncated title
-    main_title = page.locator("[data-testid='main-title']")
-    assert "Web 工作台完善（UI）+ 发布卫生" in (main_title.inner_text() or ""), (
-        "the main area title stays complete"
+    # the main area keeps the untruncated title — on the timeline face's
+    # run heading now that the main header strip is gone (2026-10-09)
+    heading = page.locator("[data-testid='run-heading']")
+    assert "Web 工作台完善（UI）+ 发布卫生" in (heading.inner_text() or ""), (
+        "the timeline face's run heading stays complete"
     )
 
     page.get_by_test_id("tabbar-item-projects").click()

@@ -175,12 +175,10 @@ def _workbench_body(name: str, context: dict) -> str:
             "</nav>",
             '<aside class="sidebar" data-testid="sidebar" aria-label="Context navigation"></aside>',
             '<main class="main" data-testid="main-area">',
-            '<header class="main-header">',
-            '<h1 class="main-title" data-testid="main-title"></h1>',
-            "</header>",
-            # 2026-10-05 operator directive: icon-switched windows, no
-            # open-tab strip — the strip container is gone; the tab-bar
-            # icons are the only switcher.
+            # 2026-10-09 operator directive: the main header strip is gone —
+            # the content face starts at the window's top edge; the
+            # 2026-10-05 directive (icon-switched windows, no open-tab
+            # strip) stands: the tab-bar icons are the only switcher.
             '<section class="main-body" data-testid="main-body"></section>',
             "</main>",
             "</div>",

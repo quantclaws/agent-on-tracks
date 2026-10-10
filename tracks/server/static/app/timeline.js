@@ -65,6 +65,22 @@ export function renderTimelineView(body, context = {}) {
     const detail = await requestJson(`/api/runs/${encoded}`).catch(() => null);
     const acChain = await requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []);
 
+    // The run's identity opens the face (the main header strip is gone —
+    // 2026-10-09 operator directive): the caller passes the full
+    // version · title; a deep link resolves the same label from the
+    // overview projection so both entries to this face read identically.
+    body.append(
+      element("h2", {
+        class: "run-heading",
+        "data-testid": "run-heading",
+        text:
+          context.runTitle ||
+          (await overviewRunTitle(runId)) ||
+          (detail && detail.version) ||
+          runId,
+      })
+    );
+
     const state = { last: events.length ? events[events.length - 1] : null };
     // Only the rendered face holds a stream — coexisting run tabs stay
     // unrendered in the background, so switching away releases them. A
@@ -114,6 +130,28 @@ function lastEventText(event) {
   const type = event.type || "unknown";
   const summary = event.summary && event.summary !== type ? ` (${event.summary})` : "";
   return `${type}${summary}`;
+}
+
+/**
+ * The run registry's label rule (#224/#227) for one run: `version · title`,
+ * the bare version when the projection's title fell back to the raw run id
+ * (the hotfix case — no ULID noise on the face).
+ */
+async function overviewRunTitle(runId) {
+  try {
+    const projects = await requestJson("/api/projects");
+    const rows = Array.isArray(projects) ? projects : projects.projects || [];
+    if (!rows.length) return null;
+    const overview = await requestJson(
+      `/api/projects/${encodeURIComponent(rows[0].project_id)}/overview`
+    );
+    const run = (overview.runs || []).find((entry) => entry.run_id === runId);
+    if (!run) return null;
+    const version = run.version || "unknown";
+    return run.title && run.title !== run.run_id ? `${version} · ${run.title}` : version;
+  } catch (error) {
+    return null; // the snapshot's version remains the fallback
+  }
 }
 
 function currentCard(detail, events, state) {

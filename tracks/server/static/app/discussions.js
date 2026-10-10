@@ -3,9 +3,10 @@
  *
  * The server parses the tracks discussion protocol into a thread read model
  * (``entry_line`` is the navigation anchor); the client only offers the three
- * navigation capabilities — show/hide toggle, next discussion, unresolved-only
- * filter. There is no resolve/reply write entry: write-back stays with the CLI
- * and no discussion mutation request is ever issued from the browser.
+ * navigation capabilities — show/hide toggle (the pane bar's ☰ control drives
+ * it), next discussion, unresolved-only filter. There is no resolve/reply
+ * write entry: write-back stays with the CLI and no discussion mutation
+ * request is ever issued from the browser.
  */
 
 import { element } from "./dom.js";
@@ -20,12 +21,8 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
     class: "discussion-list",
     "data-testid": "discussion-list",
   });
-  const toggleButton = element("button", {
-    type: "button",
-    class: "discussion-toggle",
-    "data-testid": "discussion-toggle",
-    text: "Discussions",
-  });
+  // The overlay's own in-list navigation (the toggle lives in the pane bar —
+  // merge directive 2026-10-09: no second toolbar row under the pane header).
   const nextButton = element("button", {
     type: "button",
     class: "discussion-next",
@@ -39,12 +36,10 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
     text: "Unresolved only",
   });
   const controls = element("div", { class: "discussion-controls" }, [
-    toggleButton,
     nextButton,
     unresolvedButton,
   ]);
 
-  toggleButton.addEventListener("click", () => toggle());
   nextButton.addEventListener("click", () => nextThread());
   unresolvedButton.addEventListener("click", () => renderList(unresolvedOnly()));
 
@@ -118,5 +113,5 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
   }
 
   renderList(items);
-  return { controls, toggle, nextThread, unresolvedOnly, setThreads };
+  return { toggle, nextThread, unresolvedOnly, setThreads };
 }

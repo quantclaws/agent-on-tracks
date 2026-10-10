@@ -209,6 +209,71 @@ def test_editor_handles_409_with_top_level_current_revision():
     assert "draft" in editor, "a failed write keeps the local draft retryable (§1o.2)"
 
 
+# Operator directive 2026-10-09: one control surface per pane, autosave icon,
+# hidden revision face, hidden front-matter. Weak source contracts — the
+# behavioural locks live in the ui e2e journeys.
+def test_pane_bar_is_the_single_control_surface_with_autosave():
+    editor = _module("editor.js")
+    panes = _module("panes.js")
+    docs = _module("docs.js")
+    css = (_APP.parent / "styles.css").read_text(encoding="utf-8")
+    assert "doc-toolbar" not in editor, (
+        "the editor renders no toolbar row of its own — its save control "
+        "joins the pane bar (merge directive 2026-10-09)"
+    )
+    assert re.search(r"AUTOSAVE_DELAY_MS", editor), (
+        "a user edit schedules its own save (autosave, 2026-10-09)"
+    )
+    assert re.search(r"hidden:\s*true", editor) and "doc-revision" in editor, (
+        "the revision stays internal: present for bookkeeping, never visible"
+    )
+    assert "splitFrontmatter" in editor and re.search(
+        r"draft\.head \+ sentBody", editor
+    ), (
+        "the sealed front-matter head is hidden from the editable face and "
+        "reattached verbatim on the send-time snapshot (2026-10-09)"
+    )
+    assert "pane-editor-tools" in panes and "discussion-toggle" in panes, (
+        "the pane bar hosts the document's save control and the discussion "
+        "overlay toggle (merge directive 2026-10-09)"
+    )
+    assert "pane.editorSlot" in docs and "saveControl" in docs, (
+        "the loaded document mounts its save control into the pane bar slot"
+    )
+    assert ".doc-toolbar" not in css and ".pane-toolbar button:disabled" in css, (
+        "the second toolbar row is gone from the stylesheet and the disabled "
+        "tool state is the saved indicator"
+    )
+    assert re.search(r"\.vditor-host \.vditor\s*\{\s*border:\s*0", css), (
+        "the editor face is borderless — no boxed widget inside the pane "
+        "(operator directive 2026-10-09)"
+    )
+    pages = (_APP.parents[1] / "pages.py").read_text(encoding="utf-8")
+    assert "main-header" not in pages and "main-title" not in pages, (
+        "the main header strip is gone from the shell (2026-10-09)"
+    )
+    assert re.search(r"padding:\s*0\s+var\(--s-7\)", css), (
+        "the main window carries no vertical padding — the face starts at "
+        "the top edge (2026-10-09)"
+    )
+    assert re.search(r"::-webkit-scrollbar\s*\{\s*width:\s*5px", css), (
+        "the scrollbars are hairline (~1/3 of the platform default, 2026-10-09)"
+    )
+    assert "run-heading" in _module("timeline.js"), (
+        "the run's identity rides the timeline face — no main header strip"
+    )
+    docs = _module("docs.js")
+    tabs = _module("tabs.js")
+    panes = _module("panes.js")
+    assert "prepareUnmount" in docs and "__beforeUnmount" in tabs, (
+        "the docs face guards its own unmount — a pending decision never "
+        "loses its visible face (Prism round-2, 2026-10-09)"
+    )
+    assert "onClose" in panes, (
+        "the pane close path runs the same release guard (Prism round-2)"
+    )
+
+
 # AC-FR0324-01@v0.10 TRACKS-TRACE IF-DOCCENTER-001 panes independent selector+toolbar
 def test_panes_are_independent_with_own_selector_and_toolbar():
     panes = _module("panes.js")

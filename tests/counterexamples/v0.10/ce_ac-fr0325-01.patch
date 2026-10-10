@@ -1,15 +1,18 @@
+diff --git a/tracks/server/static/app/discussions.js b/tracks/server/static/app/discussions.js
+index 52784fe..45d8c22 100644
 --- a/tracks/server/static/app/discussions.js
 +++ b/tracks/server/static/app/discussions.js
-@@ -38,10 +38,10 @@
+@@ -35,10 +35,9 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
      "data-testid": "discussion-filter-unresolved",
      text: "Unresolved only",
    });
-+  // counterexample AC-FR0325-01: the overlay carries only the toggle —
-+  // the next/unresolved navigation capabilities were never built
-   const controls = element("div", { class: "discussion-controls" }, [
-     toggleButton,
+-  const controls = element("div", { class: "discussion-controls" }, [
 -    nextButton,
 -    unresolvedButton,
-   ]);
+-  ]);
++  // counterexample AC-FR0325-01: the overlay carries no navigation —
++  // the next/unresolved capabilities were never built
++  const controls = element("div", { class: "discussion-controls" }, []);
  
-   toggleButton.addEventListener("click", () => toggle());
+   nextButton.addEventListener("click", () => nextThread());
+   unresolvedButton.addEventListener("click", () => renderList(unresolvedOnly()));

@@ -55,8 +55,6 @@ export function renderView(route, mainArea, context = {}) {
     "data-testid": `view-${view || "unknown"}`,
   });
   host.append(body);
-  const title = mainArea.querySelector('[data-testid="main-title"]');
-  if (title) title.textContent = context.title || "unknown";
   const renderer = VIEW_RENDERERS[view];
   let done = Promise.resolve();
   if (!renderer) {
@@ -232,18 +230,21 @@ function renderRuns(body, context = {}) {
     }
 
     // The main face opens on the focused run's stage track — the sidebar
-    // selection or the deep link decides which, newest by default.
+    // selection or the deep link decides which, newest by default. The run's
+    // identity rides the timeline face itself (the main header strip is
+    // gone, 2026-10-09 operator directive), under the registry label rule
+    // (#224/#227): version · title, bare version when the title is the raw
+    // run id.
     const focus =
       newestFirst.find((run) => run.run_id === context.runId) || newestFirst[0];
-    const title = body
-      .closest('[data-testid="main-area"]')
-      ?.querySelector('[data-testid="main-title"]');
-    if (title) {
-      title.textContent = `${focus.version || "unknown"} · ${
-        focus.title || focus.run_id || "unknown"
-      }`;
-    }
-    await renderTimelineView(body, { runId: focus.run_id });
+    const focusVersion = focus.version || "unknown";
+    await renderTimelineView(body, {
+      runId: focus.run_id,
+      runTitle:
+        focus.title && focus.title !== focus.run_id
+          ? `${focusVersion} · ${focus.title}`
+          : focusVersion,
+    });
   });
 }
 

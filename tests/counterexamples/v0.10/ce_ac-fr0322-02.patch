@@ -1,10 +1,12 @@
+diff --git a/tracks/server/static/app/docs.js b/tracks/server/static/app/docs.js
+index 635cf51..9de73a5 100644
 --- a/tracks/server/static/app/docs.js
 +++ b/tracks/server/static/app/docs.js
-@@ -277,10 +277,8 @@
-         }
-       },
+@@ -305,10 +305,8 @@ function createDocsWorkbench(projectId, versions) {
+     mountDocEditor(editor.irHost, editor.draft.content, {
+       input: (value) => editor.hostDraft(value),
      }).catch(() => {
--      const area = mountTextarea(editor.irHost, payload.content);
+-      const area = mountTextarea(editor.irHost, editor.draft.content);
 -      area.addEventListener("input", () => {
 -        editor.hostDraft(area.value);
 -      });

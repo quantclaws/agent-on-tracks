@@ -126,11 +126,8 @@ export function renderDocsView(body, context = {}) {
       body.append(degradedMessage("No documents"));
       return;
     }
-    // The docs window shows documents, not a category banner.
-    const title = body
-      .closest('[data-testid="main-area"]')
-      ?.querySelector('[data-testid="main-title"]');
-    if (title) title.textContent = "";
+    // The docs window shows documents, not a category banner (the main
+    // header strip is gone entirely — 2026-10-09 operator directive).
     const workbench = createDocsWorkbench(projectId, versions);
     // The sidebar is the whole version tree (louke Dev Docs model, #221): one
     // collapsible group per version directory, newest first; a group node
@@ -164,6 +161,9 @@ export function renderDocsView(body, context = {}) {
       }
     }
     body.append(workbench.root);
+    // tabs.js asks this hook before unmounting the docs window: a pending
+    // decision or unsaveable draft on any pane keeps the whole view mounted.
+    body.__beforeUnmount = workbench.prepareUnmount;
     // Within the session the window reopens on the last document (any
     // version); a fresh session starts blank until the sidebar selects one.
     const last = lastOpenDoc.get(projectId);
@@ -192,6 +192,8 @@ function createDocsWorkbench(projectId, versions) {
   // The panes.js contract is onLoad/onActivate/onSplit — the historical
   // load:/activate: keys never matched the destructured parameter names, so
   // the selector-change and pane-activation callbacks silently never fired.
+  // onClose guards the close path with the same release rules as a doc
+  // switch (Prism round-2: no teardown path may drop a decision face).
   const panes = createPaneContainer({
     version: "",
     docs: [],
@@ -207,6 +209,7 @@ function createDocsWorkbench(projectId, versions) {
         loadDocIntoPane(pane, activeDocName(), activePane.currentVersion);
       }
     },
+    onClose: (pane) => releasePane(pane),
   });
   const root = element("div", {
     class: "docs-workbench",
@@ -232,9 +235,37 @@ function createDocsWorkbench(projectId, versions) {
     if (pane && pane.status) pane.status.textContent = text;
   }
 
+  /**
+   * The single release guard behind every teardown path (doc switch inside
+   * a pane, pane close, window switch away from docs): an unresolved
+   * conflict or an unsaveable draft keeps its visible decision face — the
+   * editor stays mounted and the caller is told to stand down. A released
+   * pane's pending autosave flushes now, so an edit never rides on a timer
+   * that is about to lose its surface.
+   */
+  async function releasePane(pane) {
+    const editor = pane && pane.editor;
+    if (!editor) return true;
+    if (editor.conflictOpen && editor.conflictOpen()) {
+      setPaneStatus(pane, "有未处理的冲突——请先在文档内二选一");
+      return false;
+    }
+    const flush = editor.destroy ? await editor.destroy() : { flushed: false };
+    if (!flush) {
+      setPaneStatus(pane, "保存未完成——请重试或处理后再操作");
+      return false;
+    }
+    return true;
+  }
+
   async function loadDocIntoPane(pane, docName, version) {
     const model = docsByVersion.get(version);
     if (!pane || !docName || !model) return;
+    // The outgoing document must be safely on the server before this pane
+    // switches away — an unresolved conflict (its panel is alive on the
+    // mounted editor) or a failed flush blocks the switch so the decision
+    // face is never torn down behind the user's back.
+    if (pane.editor && !(await releasePane(pane))) return;
     activePane = pane;
     pane.currentVersion = version;
     setPaneOptions(pane, version);
@@ -246,6 +277,12 @@ function createDocsWorkbench(projectId, versions) {
     try {
       payload = await requestJson(docUrl(projectId, version, docName));
     } catch (error) {
+      // the pane's control face belongs to no document now — the outgoing
+      // editor's save control must not survive a failed load, and the old
+      // document's body must not read as the requested one (Prism R2-A4)
+      pane.editor = null;
+      if (pane.editorSlot) pane.editorSlot.replaceChildren();
+      clear(pane.body);
       setPaneStatus(pane, "加载失败");
       pane.body.append(
         error && error.status === 404
@@ -271,14 +308,18 @@ function createDocsWorkbench(projectId, versions) {
       reload: async () =>
         requestJson(docUrl(projectId, version, docName)).catch(() => null),
     });
+    pane.editor = editor;
+    // The save control joins the pane bar (merge directive 2026-10-09): the
+    // editor renders no toolbar row of its own.
+    if (pane.editorSlot) pane.editorSlot.replaceChildren(editor.saveControl);
     pane.body.append(editor.root);
     discussions = createDiscussionNav({ threads: [] });
-    editor
-      .root.querySelector('[data-testid="doc-toolbar"]')
-      .append(discussions.controls);
     loadThreads(projectId, version, docName, discussions);
-    // The pane-bar discussion navigation (louke): ↯ walks threads, ! jumps
-    // unresolved-only.
+    // The pane-bar discussion navigation (louke): ☰ opens the thread list,
+    // ↯ walks threads, ! jumps unresolved-only.
+    pane.root.querySelector('[data-testid="discussion-toggle"]').onclick = () => {
+      discussions.toggle();
+    };
     pane.root.querySelector('[data-testid="pane-next-discussion"]').onclick = () => {
       discussions.toggle();
       discussions.nextThread();
@@ -292,21 +333,13 @@ function createDocsWorkbench(projectId, versions) {
         if (!thread || thread.status !== "resolved") break;
       }
     };
-    // The ir host renders live: its markdown serialization is the editable
-    // document (the mount-time adoption is what makes a freshly opened,
-    // normalised document savable). Any asset/init failure falls back to the
-    // editable textarea without losing content (§1n.3).
-    mountDocEditor(editor.irHost, payload.content, {
+    // The ir host renders the body live: its markdown serialization is the
+    // editable document. Any asset/init failure falls back to the editable
+    // textarea without losing content (§1n.3).
+    mountDocEditor(editor.irHost, editor.draft.content, {
       input: (value) => editor.hostDraft(value),
-      after: (instance) => {
-        try {
-          editor.adoptHostValue(instance.getValue());
-        } catch (error) {
-          /* the host keeps whatever draft it already holds */
-        }
-      },
     }).catch(() => {
-      const area = mountTextarea(editor.irHost, payload.content);
+      const area = mountTextarea(editor.irHost, editor.draft.content);
       area.addEventListener("input", () => {
         editor.hostDraft(area.value);
       });
@@ -323,7 +356,20 @@ function createDocsWorkbench(projectId, versions) {
     loadDocIntoPane(activePane || panes.panes[0], docName, version);
   }
 
-  return { root, openDoc, panes };
+  /**
+   * Window-switch guard (tabs.js asks before unmounting this view): every
+   * pane releases first; a pending decision or unsaveable draft on ANY pane
+   * refuses the unmount so its face stays visible.
+   */
+  async function prepareUnmount() {
+    let ok = true;
+    for (const pane of panes.panes) {
+      if (!(await releasePane(pane))) ok = false;
+    }
+    return ok;
+  }
+
+  return { root, openDoc, panes, prepareUnmount };
 }
 
 function markSidebarCurrent(version, docName) {

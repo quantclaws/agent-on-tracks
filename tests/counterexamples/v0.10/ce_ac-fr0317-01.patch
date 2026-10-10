@@ -1,6 +1,8 @@
+diff --git a/tracks/server/pages.py b/tracks/server/pages.py
+index 94a96cc..88607f0 100644
 --- a/tracks/server/pages.py
 +++ b/tracks/server/pages.py
-@@ -207,9 +207,11 @@
+@@ -203,9 +203,11 @@ def _tabbar_item(feature: str, href: str | None) -> str:
              f'<a class="tabbar-item" data-testid="tabbar-item-{feature}"'
              f' href="{href}" title="{label}" aria-label="{label}">{icon}</a>'
          )
@@ -14,19 +16,18 @@
      )
  
  
+diff --git a/tracks/server/static/styles.css b/tracks/server/static/styles.css
+index 39bb208..a58f7f9 100644
 --- a/tracks/server/static/styles.css
 +++ b/tracks/server/static/styles.css
-@@ -41,6 +41,13 @@
-   background: var(--surface);
+@@ -185,6 +185,10 @@ textarea {
  }
  
-+/* counterexample AC-FR0317-01: cramped sub-32px hit area */
-+.tabbar-item {
+ .tabbar-item {
++  /* counterexample AC-FR0317-01: cramped sub-32px hit area */
 +  width: 16px;
 +  height: 16px;
 +  overflow: hidden;
-+}
-+
- .tabbar-item {
    display: flex;
    align-items: center;
+   justify-content: center;

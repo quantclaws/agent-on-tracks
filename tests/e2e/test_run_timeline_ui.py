@@ -59,6 +59,14 @@ def test_run_timeline_view(ui_serve, page):
 
     card = page.get_by_test_id("current-node-card")
     card.wait_for()
+    # the run's identity opens the face (no main header strip): a deep link
+    # resolves the registry label from the overview projection (bare version
+    # for a title-less run, the #227 rule)
+    heading = page.get_by_test_id("run-heading")
+    heading.wait_for()
+    assert (heading.inner_text() or "").strip() == "v1.0", (
+        "the deep-linked run detail carries the run's identity (run-heading)"
+    )
     for field in ("card-owner", "card-attempt", "card-duration", "card-action"):
         assert page.get_by_test_id(field).count() == 1, (
             f"the current-node card must show {field}"

@@ -13,14 +13,15 @@ import { element } from "./dom.js";
 
 export const MAX_PANES = 4;
 
-export function createPaneContainer({ version = "", docs = [], onLoad, onActivate, onSplit } = {}) {
+export function createPaneContainer({ version = "", docs = [], onLoad, onActivate, onSplit, onClose } = {}) {
   const panes = [];
   let ordinal = 0;
   // The add control is NOT rendered here: each pane's own split control (and
   // any caller surface) drives addPane — panes only exist beside an open
   // document. ``onSplit`` receives each newly added pane so the caller can
   // load the active document into it (#222 moved the split entry point to
-  // the pane bar).
+  // the pane bar). ``onClose`` may veto a close (Prism round-2: a pane
+  // holding an unresolvable draft or an open conflict must keep its face).
   const root = element("div", { class: "panes", "data-testid": "doc-panes" });
 
   function addPane() {
@@ -43,10 +44,17 @@ export function createPaneContainer({ version = "", docs = [], onLoad, onActivat
     return pane;
   }
 
-  function closePane(pane) {
+  async function closePane(pane) {
     // louke semantics: at least one pane stays open
     if (panes.length <= 1 || !panes.includes(pane)) return null;
-    panes.splice(panes.indexOf(pane), 1);
+    if (onClose) {
+      const allowed = await onClose(pane);
+      if (allowed === false) return null;
+    }
+    // re-resolve after the (async) guard: a racing close may have removed it
+    const index = panes.indexOf(pane);
+    if (panes.length <= 1 || index === -1) return null;
+    panes.splice(index, 1);
     pane.root.remove();
     refreshLayout();
     return pane;
@@ -91,6 +99,15 @@ function createPane(reference, docs, controls) {
     const pressed = editButton.getAttribute("aria-pressed") === "true";
     editButton.setAttribute("aria-pressed", pressed ? "false" : "true");
   });
+  // The pane bar is the one control surface (merge directive 2026-10-09):
+  // the discussion overlay toggle lives here beside its quick-nav siblings.
+  const discussionsToggle = element("button", {
+    type: "button",
+    class: "pane-tool",
+    "data-testid": "discussion-toggle",
+    title: "讨论",
+    text: "☰",
+  });
   const nextDiscussion = element("button", {
     type: "button",
     class: "pane-tool",
@@ -104,6 +121,12 @@ function createPane(reference, docs, controls) {
     "data-testid": "pane-next-unresolved",
     title: "Next unresolved discussion",
     text: "!",
+  });
+  // The loaded document mounts its save control here — the editor toolbar
+  // row is gone and the pane header carries the whole control surface.
+  const editorSlot = element("span", {
+    class: "pane-editor-tools",
+    "data-testid": "pane-editor-tools",
   });
   const splitButton = element("button", {
     type: "button",
@@ -122,8 +145,10 @@ function createPane(reference, docs, controls) {
   });
   closeButton.addEventListener("click", () => controls.close && controls.close());
   const toolbar = element("div", { class: "pane-toolbar", "data-testid": "pane-toolbar" }, [
+    discussionsToggle,
     nextDiscussion,
     nextUnresolved,
+    editorSlot,
     editButton,
     splitButton,
     closeButton,
@@ -147,6 +172,6 @@ function createPane(reference, docs, controls) {
     controls.activate && controls.activate(pane);
     controls.load && controls.load(pane, select.value, body);
   });
-  const pane = { root, select, toolbar, editButton, body, status, reference };
+  const pane = { root, select, toolbar, editorSlot, editButton, body, status, reference };
   return pane;
 }
