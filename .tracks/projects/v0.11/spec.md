@@ -8,7 +8,7 @@ sha:
 
 # 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化 — 需求规格
 
-> 本 spec 将 v0.11 story（S-001）落为可验证需求：在 v0.10 SPA 工作台 chrome 与既有查询/命令/SSE 契约之上，合并 Projects/Runs 为 Releases 窗口并移除 Review 占位，按 louke v0.14-004 FR-1201/1301/1401 绘制完整 run 时间线（固定下栏详情），将 flow.md §3 M-START 与 §16 hotfix UI 化（含 backlog 存储与投影补齐、统一入口 Scribe 评估先于建分支），将 triage/review 人工门补 HTTP 命令端点并接进时间线 awaiting 动作面板做自驱动端到端验证，并将 Scribe 重复/冲突检测落为 TRIAGE 派发合同与 flow.md §4。容量：14 有效 FR（FR-0333..FR-0346，承接项目全局序号，<30 单版交付无需拆分；2 NFR 不计）。继承边界：v0.10 工作台 chrome（FR-0316..FR-0326 交互壳/tab/登录/文档中心/时间线弱化版）、v0.9 查询/命令/SSE 与 supervisor 单活动 run 串行 + hotfix 换队、批准绑定（FR-0308）、preview 绑定（FR-0309）、受控重试（FR-0311）、timeline/ac-chain/run detail 数据源（v0.9 起）全部继承，本版不重写；本版新增的仅是 Releases 窗口结构、时间线完整绘制与固定下栏、统一创建入口与 backlog 存储投影、hotfix UI 化、triage/review 命令端点与动作面板、评审轮写入通道与分流合同。
+> 本 spec 将 v0.11 story（S-001）落为可验证需求：在 v0.10 SPA 工作台 chrome 与既有查询/命令/SSE 契约之上，合并 Projects/Runs 为 Releases 窗口并移除 Review 占位，按 louke v0.14-004 FR-1201/1301/1401 绘制完整 run 时间线（固定下栏详情），将 flow.md §3 M-START 与 §16 hotfix UI 化（含 backlog 存储与投影补齐、统一入口 Scribe 评估先于建分支），将 triage/review 人工门补 HTTP 命令端点并接进时间线 awaiting 动作面板做自驱动端到端验证，并将 Scribe 重复/冲突检测落为 TRIAGE 派发合同与 flow.md §4。容量：15 有效 FR（FR-0333..FR-0347，承接项目全局序号，<30 单版交付无需拆分；2 NFR 不计）。继承边界：v0.10 工作台 chrome（FR-0316..FR-0326 交互壳/tab/登录/文档中心/时间线弱化版）、v0.9 查询/命令/SSE 与 supervisor 单活动 run 串行 + hotfix 换队、批准绑定（FR-0308）、preview 绑定（FR-0309）、受控重试（FR-0311）、timeline/ac-chain/run detail 数据源（v0.9 起）全部继承，本版不重写；本版新增的仅是 Releases 窗口结构、时间线完整绘制与固定下栏、统一创建入口与 backlog 存储投影、hotfix UI 化、triage/review 命令端点与动作面板、评审轮写入通道与分流合同。
 
 ## 界面与入口
 
@@ -210,8 +210,18 @@ WHEN Scribe 撰写 TRIAGE 报告，THE 系统 SHALL 要求报告含重复检测�
 
 **用户可观察结果**：后续 story 的 TRIAGE 报告自带重复/冲突栏目；统一入口建议面板的重复/冲突内容与同一规则一致。
 
+### FR-0347 评审人复核合同：非本人发起线程不构成 revise 依据
+
+- **来源**：`操作者裁定 2026-10-10`
+- **交付入口**：评审派发合同 + flow.md §4/§5（与 FR-0346 同交付面，无独立 UI 入口）
+
+WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程，THE 评审派发合同 SHALL 规定：该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程。合同文本随本版写入 flow.md §4/§5 评审协议。
+
+**用户可观察结果**：后续评审不以他人未决线程触发无发现修订；评审人自有新发现均带锚定线程可追溯。
+
 
 > **Aaron:** 增补 FR-0347 评审人合同：WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程，THE 评审派发合同 SHALL 规定：该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程。来源：操作者裁定 2026-10-10（同日两次 revise_without_findings 三连升级的根治点；runtime 审计与 discussion_ready 出口闸均正确，缺的是评审人派发合同条款）。合同文本随本版写入 flow.md §4/§5 评审协议，与 FR-0346 同交付面。
+>> **Sage:** 已落实 FR-0347，来源记操作者裁定，交付面评审派发合同加 flow.md S4/S5，validate 通过，请发起人确认后设 resolved。
 
 ## 非功能需求
 
