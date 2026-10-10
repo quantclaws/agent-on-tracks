@@ -289,21 +289,21 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | AC-FR0317-01 | e2e | tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBUI-001 |
 | AC-FR0318-01 | e2e | tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBUI-001 |
 | AC-FR0318-02 | e2e | tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBUI-001 |
-| AC-FR0318-03 | integration + e2e | tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie + tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBAUTH-001 |
+| AC-FR0318-03 | integration + e2e | tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie | IF-WORKBENCH-001, IF-WEBAUTH-001 |
 | AC-FR0319-01 | e2e | tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBUI-001 |
 | AC-FR0320-01 | e2e | tests/e2e/test_workbench_ui.py | IF-AUTHNAME-001, IF-WEBAUTH-001, IF-WEBUI-001 |
 | AC-FR0320-02 | integration | tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears | IF-WEBAUTH-001 |
-| AC-FR0321-01 | integration + e2e | tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion + tests/e2e/test_workbench_ui.py | IF-AUTHNAME-001 |
+| AC-FR0321-01 | integration + e2e | tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion | IF-AUTHNAME-001 |
 | AC-FR0321-02 | integration | tests/integration/test_auth_name.py::test_no_registration_surface_single_identity | IF-AUTHNAME-001, IF-WEBAUTH-001 |
-| AC-FR0322-01 | integration + e2e | tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read + tests/e2e/test_docs_ui.py | IF-DOCCENTER-001, IF-QUERY-001 |
+| AC-FR0322-01 | integration + e2e | tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read | IF-DOCCENTER-001, IF-QUERY-001 |
 | AC-FR0322-02 | e2e | tests/e2e/test_docs_ui.py | IF-DOCCENTER-001, IF-WEBUI-001 |
-| AC-FR0323-01 | integration + e2e | tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected + tests/e2e/test_docs_ui.py | IF-DOCSAVE-001, IF-DOCREV-001, IF-WEBGATE-001 |
-| AC-FR0323-02 | integration + e2e | tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained + tests/e2e/test_docs_ui.py | IF-DOCSAVE-001 |
+| AC-FR0323-01 | integration + e2e | tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected | IF-DOCSAVE-001, IF-DOCREV-001, IF-WEBGATE-001 |
+| AC-FR0323-02 | integration + e2e | tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained | IF-DOCSAVE-001 |
 | AC-FR0324-01 | e2e | tests/e2e/test_docs_ui.py | IF-DOCCENTER-001, IF-WEBUI-001 |
 | AC-FR0324-02 | e2e | tests/e2e/test_docs_ui.py | IF-DOCCENTER-001, IF-WEBUI-001 |
-| AC-FR0325-01 | integration + e2e | tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state + tests/e2e/test_docs_ui.py | IF-DISCUSS-001, IF-WEBAUTH-001 |
-| AC-FR0325-02 | integration + e2e | tests/integration/test_docs_center.py（守卫，§8.1） + tests/e2e/test_docs_ui.py | IF-DISCUSS-001, IF-GREENGUARD-001 |
-| AC-FR0326-01 | integration + e2e | tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency + tests/e2e/test_run_timeline_ui.py | IF-TIMELINE-001, IF-QUERY-001 |
+| AC-FR0325-01 | integration + e2e | tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state | IF-DISCUSS-001, IF-WEBAUTH-001 |
+| AC-FR0325-02 | integration + e2e | tests/integration/test_docs_center.py（守卫，§8.1） | IF-DISCUSS-001, IF-GREENGUARD-001 |
+| AC-FR0326-01 | integration + e2e | tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency | IF-TIMELINE-001, IF-QUERY-001 |
 | AC-FR0326-02 | integration | tests/integration/test_run_timeline_api.py::test_timeline_entry_present | IF-TIMELINE-001 |
 | AC-FR0327-01 | integration | tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion | IF-MILESTONE-002 |
 | AC-FR0328-01 | integration | tests/integration/test_version_gate.py::test_version_bindings_enforced | IF-VERSION-001 |
@@ -316,12 +316,12 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | AC-FR0331-02 | integration | tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next | IF-TRACKER-001 |
 | AC-FR0332-01 | integration | tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists | IF-REVIEW-001 |
 | AC-FR0332-02 | integration | tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts | IF-REVIEW-001 |
-| AC-NFR0153-01 | integration + e2e | tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections + tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-QUERY-001 |
+| AC-NFR0153-01 | integration + e2e | tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections | IF-WORKBENCH-001, IF-QUERY-001 |
 | AC-NFR0153-02 | e2e | tests/e2e/test_workbench_ui.py | IF-WORKBENCH-001, IF-WEBUI-001 |
-| AC-NFR0154-01 | integration + e2e | tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression + tests/e2e/test_workbench_ui.py | IF-STREAM-001, IF-WORKBENCH-001 |
-| AC-NFR0154-02 | integration + e2e | tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf + tests/e2e/test_docs_ui.py | IF-CMDSVC-001, IF-SECRECY-001, IF-WORKBENCH-001 |
-| AC-NFR0155-01 | integration + e2e | tests/integration/test_workbench_shell.py（守卫，§8.1） + tests/e2e/test_workbench_ui.py | IF-WEBUI-001, IF-GREENGUARD-001 |
-| AC-NFR0155-02 | integration | tests/integration/test_workbench_shell.py（守卫，§8.1） | IF-WEBUI-001, IF-GREENGUARD-001 |
+| AC-NFR0154-01 | integration + e2e | tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression | IF-STREAM-001, IF-WORKBENCH-001 |
+| AC-NFR0154-02 | integration + e2e | tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf | IF-CMDSVC-001, IF-SECRECY-001, IF-WORKBENCH-001 |
+| AC-NFR0155-01 | integration + e2e | tests/integration/test_workbench_shell.py | IF-WEBUI-001, IF-GREENGUARD-001 |
+| AC-NFR0155-02 | integration | tests/integration/test_workbench_shell.py | IF-WEBUI-001, IF-GREENGUARD-001 |
 | AC-NFR0156-01 | integration | tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm | IF-WORKBENCH-001 |
 
 ### 8.1 Arrival-green guard nodes（到达即绿守卫清单）
