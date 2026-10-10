@@ -4,7 +4,7 @@ story_id: S-001
 title: 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化
 created: 2026-10-10
 status: draft
-sha:
+sha: 48cf7e8de839292cf18af68cc5e3c97994e8893444c0f487a7bdf1aff2410201
 ---
 
 # S-001: 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化
