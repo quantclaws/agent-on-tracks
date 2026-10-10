@@ -102,11 +102,12 @@ def _detail(base: str, cookie: str, run_id: str) -> dict:
 
 # AC-FR0335-02@v0.11 TRACKS-TRACE timeline data parity no second source
 def test_timeline_data_parity_no_mock(tmp_path: Path):
-    """AC-FR0335-02 (projection half): the timeline and ac-chain responses read
-    the run's single event stream — the timeline's event seq set equals the
-    store's, the ac-chain agrees with the same events, and every entered
-    attempt stays an independent row; nothing is synthesized from a second
-    source."""
+    """AC-FR0335-02 (projection half): the timeline, ac-chain, and run detail
+    faces read the run's single event stream — the timeline's event seq set
+    equals the store's, the ac-chain agrees with the same events, every
+    entered attempt stays an independent row, and the detail face's
+    contracted v0.11 field groups (§2b/§1k.1/§1m.1) are present and derived
+    from that stream; nothing is synthesized from a second source."""
     proc, home, repo = _start_timeline_serve(tmp_path)
     try:
         base = parse_base_url(wait_for_port_line(proc))
@@ -142,13 +143,34 @@ def test_timeline_data_parity_no_mock(tmp_path: Path):
             f"each attempt keeps its own row (four entries seeded): {len(entered)}"
         )
         # the ac-chain is a projection of the same run's stream: it resolves
-        # for this run and never references another run's rows
+        # for this run (§1l.3 names it a co-equal source of the draw)
         assert isinstance(chain, list), "the ac-chain stays a list projection"
-        assert all(
-            row.get("run_id") == run_id for row in chain if isinstance(row, dict)
-        ), (
-            "every ac-chain row belongs to this run (one source, §1l.3)"
+
+        # the run detail is the third face of the same single source
+        # (IF-TIMELINE-002: timeline/ac-chain/run detail, zero new sources):
+        # the v0.11 field groups are contracted additions (§2b), so they must
+        # be present and derived from this run's stream — a mid-progress run
+        # whose events carry no awaiting boundary projects no gate (§1k.1),
+        # and the rollback face carries the contracted shape (§1m.1) instead
+        # of being silently absent or fabricated
+        detail = _detail(base, cookie, run_id)
+        assert "awaiting_gate" in detail, (
+            "run detail must carry the awaiting_gate field group (§2b/§1k.1); "
+            f"got keys {sorted(detail)!r}"
         )
+        assert detail["awaiting_gate"] is None, (
+            "a run whose stream holds no awaiting boundary must project "
+            f"awaiting_gate null, not a fabricated gate: "
+            f"{detail['awaiting_gate']!r}"
+        )
+        options = detail.get("return_options")
+        assert isinstance(options, dict), (
+            "run detail must carry the return_options field group "
+            f"(§2b/§1m.1): {options!r}"
+        )
+        assert isinstance(options.get("allowed"), bool) and isinstance(
+            options.get("targets"), list
+        ), f"the rollback face carries the contracted shape (§1m.1): {options!r}"
     finally:
         stop_serve(proc)
 
@@ -158,8 +180,10 @@ def test_detail_degradation_no_floating(tmp_path: Path):
     """AC-FR0336-02 (projection half): a run whose event stream carries no
     node detail still projects readably — the timeline returns the canonical
     stage order with zero synthesized events, and the run detail invents no
-    node facts (the UI half renders the degradation, never a floating
-    fabrication)."""
+    node facts: the contracted v0.11 field groups are present (§2b) and
+    answer the closed degradation forms — ``awaiting_gate`` null for a run
+    at no boundary (§1k.1) and the no-entry ``return_options`` form for a
+    run with nothing executed (§1m.1) — never a floating fabrication."""
     proc, home, repo = _start_timeline_serve(tmp_path)
     try:
         base = parse_base_url(wait_for_port_line(proc))
@@ -185,14 +209,23 @@ def test_detail_degradation_no_floating(tmp_path: Path):
         )
 
         detail = _detail(base, cookie, run_id)
-        assert detail.get("awaiting_gate") is None, (
-            f"a run at no boundary must not invent a gate: {detail.get('awaiting_gate')!r}"
+        assert "awaiting_gate" in detail, (
+            "run detail must carry the awaiting_gate field group (§2b/§1k.1); "
+            f"got keys {sorted(detail)!r}"
+        )
+        assert detail["awaiting_gate"] is None, (
+            "a run at no boundary must project awaiting_gate null (§1k.1, "
+            f"mapping外无入口), not a fabricated gate: {detail['awaiting_gate']!r}"
         )
         options = detail.get("return_options")
-        if isinstance(options, dict):
-            assert options.get("allowed") is False and options.get("targets") == [], (
-                f"a fresh run has no legal return target (§1m.1): {options!r}"
-            )
+        assert isinstance(options, dict), (
+            "run detail must carry the return_options field group "
+            f"(§2b/§1m.1): {options!r}"
+        )
+        assert options.get("allowed") is False and options.get("targets") == [], (
+            "a run with nothing executed has no legal return target — the "
+            f"degraded face answers the closed no-entry form (§1m.1): {options!r}"
+        )
     finally:
         stop_serve(proc)
 

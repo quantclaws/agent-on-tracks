@@ -1,12 +1,12 @@
 --- /dev/null
-+++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,9 @@
-+// counterexample AC-FR0335-02: the timeline renders a locally fabricated
-+// stage track instead of the timeline/ac-chain projection data
-+const FABRICATED_TRACK = Array.from({ length: 13 }, (_, i) => ({
-+  stage: `M-${i}`,
-+  state: "done",
-+}));
-+export function renderTrack() {
-+  return FABRICATED_TRACK;
-+}
++++ b/tracks/server/projections.py
+@@ -0,0 +1,8 @@
++# counterexample AC-FR0335-02 (projection-face deviation): the run detail
++# projection synthesizes a second source — it fabricates an awaiting gate
++# and a rollback entry for a run whose event stream holds no awaiting
++# boundary and no executed ops, instead of projecting awaiting_gate=null
++# (§1k.1) and the contracted return_options shape (§1m.1)
++def _fabricate_field_groups(detail, run_events):
++    detail["awaiting_gate"] = {"type": "triage"}  # deviation: not derived
++    detail["return_options"] = {"allowed": True, "targets": "M-STORY"}
++    return detail

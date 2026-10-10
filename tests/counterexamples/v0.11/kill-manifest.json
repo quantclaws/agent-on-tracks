@@ -66,7 +66,7 @@
   {
    "ac": "AC-FR0335-02",
    "if_ref": "IF-TIMELINE-002, IF-QUERY-001",
-   "mutation": "the timeline renders a locally fabricated stage track instead of the timeline/ac-chain projection data",
+   "mutation": "the run detail projection fabricates the v0.11 field groups for a boundary-less run (a non-null awaiting_gate and a permissive return_options) instead of deriving them from the single event stream (awaiting_gate null per 1k.1, contracted 1m.1 shape)",
    "patch": "ce_ac-fr0335-02.patch",
    "test": "tests/integration/test_timeline_full.py::test_timeline_data_parity_no_mock",
    "result": "pending-delivered-tree"
@@ -82,7 +82,7 @@
   {
    "ac": "AC-FR0336-02",
    "if_ref": "IF-TIMELINE-002",
-   "mutation": "data-less nodes render invented timing/artifact facts instead of the readable degradation",
+   "mutation": "the run detail projection invents node facts for a data-less run - a fabricated gate and a rollback entry for a run with nothing executed - instead of the closed degradation forms (awaiting_gate null per 1k.1, allowed=false/targets=[] per 1m.1)",
    "patch": "ce_ac-fr0336-02.patch",
    "test": "tests/integration/test_timeline_full.py::test_detail_degradation_no_floating",
    "result": "pending-delivered-tree"

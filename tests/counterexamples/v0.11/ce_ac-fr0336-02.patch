@@ -1,12 +1,15 @@
 --- /dev/null
-+++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,9 @@
-+// counterexample AC-FR0336-02: nodes without data render invented timing
-+// and artifact facts instead of the readable degradation
-+export function nodeDetail(node) {
-+  return {
-+    started: "1970-01-01T00:00:00Z",
-+    artifact: "fabricated.zip",
-+    ...(node.data ?? {}),
-+  };
-+}
++++ b/tracks/server/projections.py
+@@ -0,0 +1,8 @@
++# counterexample AC-FR0336-02 (projection-face deviation): the run detail
++# projection invents node facts for a data-less run — a non-null gate for a
++# run at no boundary and a rollback entry for a run with nothing executed,
++# instead of the closed degradation forms (awaiting_gate null §1k.1,
++# allowed=false/targets=[] §1m.1)
++def _fabricate_degradation(detail, run_events):
++    detail["awaiting_gate"] = {"type": "review", "reason": "invented"}
++    detail["return_options"] = {
++        "allowed": True,
++        "targets": [{"stage": "M-STORY", "already_executed": []}],
++    }
++    return detail
