@@ -46,6 +46,15 @@ sha:
 > **Scribe [RESOLVED]:** TRIAGE verdict: GO（raw seed，可进入 DRAFT 展开）。证据：(1)五节均有明确操作者指令与变更基线可查——窗口整顿指认 v0.10 FR-0318 与 Review 占位核实，时间线指认 louke v0.14-004 FR-1201/1301/1401 与既有数据源（v0.9 起），M-START/ backlog/hotfix 指认 flow.md §3.2/§16，人工门指认既有 CSRF+幂等端点与 supervisor；(2)交付面明确为 UI 工作台（Releases/Docs/Todos/Settings/Account），约束明确单写路径经命令面事件；(3)单版 FR≤30 的范围约束已有操作者裁定，无需分期判断。DRAFT 将按模板展开 4 条核心路径（窗口整顿/时间线/创建 release-hotfix/人工门）与 BS，不追问普通默认。
 >> **Scribe:** DRAFT 已展开：§2 意图提炼完成；§3 落为 5 条路径（3.1 Releases 整顿 / 3.2 时间线固定下栏 / 3.3 创建 release-hotfix-转正 / 3.4 人工门自驱动 / 3.5 分流合同）；§4 共 BS-01..BS-13 按路径顺序编号；§5 锁定单写路径与 FR≤30；§6 无（交付面/UI 面/范围均有操作者裁定可推导）；§7 记录 Review 移除与浮层替换两项已知晓冲突与两项重要风险。
 
+> 
+> （操作者补充输入 2026-10-10，用户故事——§3.3 的规范形态）
+> 用户在 UI 上输入一段话——故事的起点。这段话可能本身就是一个故事，也可能是一个 github issue id，也可能是在 backlog 当中。runtime 应该把它派发给 scribe，让 scribe 去做可行性、重复、冲突等建议——这些建议需要展现给人看，并且提供按钮供人类选择：
+> 1. 进入 backlog
+> 2. 从 backlog 中删除（如果本身来自于 backlog）
+> 3. 不进入开发，归档
+> 4. 进入开发
+> 然后就要创建新的 release（确定标题——scribe 来定），创建分支……等等。
+
 ## 2. 用户意图
 
 - **用户想完成什么**：把工作台变成自驱动开发入口——在 Releases 窗口内浏览版本注册表与 backlog、审查 run 时间线、创建 release/hotfix、处理各阶段人工门，不再靠 CLI 逐门推进；从 v0.11 起 UI + runtime 自主驱动新功能开发。
@@ -86,6 +95,9 @@ sha:
 3. 用户新建 hotfix：选择 GitHub issue + 场景（post-release 从 main 基线 / dev 从活跃分支），看到 HOTFIX-TRIAGE 预检与既有 AC 锚定结果；锚定成立继续建 hotfix，锚定不成立则明示退出 hotfix、转 backlog/new feature。
 
 - **完成结果**：新建的 release 进入 M-STORY（TRIAGE 门见 3.4）或记入 backlog 可稍后转正；hotfix 进入 hotfix 流程或明确转 backlog；失败或拒绝均给出原因与合法继续位置，不建半截 run 或分支。
+
+
+> **Aaron:** §3.3 需按上方 2026-10-10 用户故事重构为统一入口路径：输入一段话（三种来源：本身即故事/seed、GitHub issue id、backlog 条目）→ runtime 派发 Scribe 做可行性/重复/冲突建议 → 建议面板呈现给人，提供四个动作：①进入 backlog；②从 backlog 删除（仅当来源为 backlog）；③不进入开发，归档；④进入开发。选④后才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支、进入后续阶段；①②③不开 run、不建分支。此重排意味着 Scribe 评估先于 CREATE_BRANCH（flow.md §3/§4 随本版规格同步修订）。BS-06/07/08 相应改写，归档（③）需与 backlog（①）在存储上区分。
 
 ### 3.4. 人工门 UI 化与自驱动推进
 
