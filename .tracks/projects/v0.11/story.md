@@ -88,9 +88,10 @@ sha:
 ### 3.3. 统一入口创建 release / hotfix（Scribe 评估先于建分支）
 
 - **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。本版将 Scribe 评估前移至 CREATE_BRANCH 之前（flow.md §3/§4 随本版规格同步修订）。
-- **入口/触发**：用户经 Releases 窗口统一新建入口输入一段话，三种来源：本身即故事/seed、GitHub issue id、backlog 条目；hotfix 经新建 hotfix 入口进入。
+- **入口/触发**：用户经 Releases 窗口统一新建入口输入一段话，三种来源：本身即故事/seed、GitHub issue id（作新功能输入）、backlog 条目；hotfix 经新建 hotfix 入口进入。用户按意图显式分流：release/新功能意图走统一入口，hotfix 意图走 hotfix 入口；Scribe 建议面板不推荐 hotfix、不路由到 hotfix 流程。
 
 > **Sage:** 统一入口与 hotfix 入口都接受 GitHub issue，路由规则缺失：§3.3 入口称统一入口接受三种来源（含 GitHub issue id）走 Scribe 建议面板四选一（无 hotfix 选项），同时 hotfix 经单独入口（选择 GitHub issue + 场景）。当用户手持一个 GitHub issue 时，走哪条路径由谁决定？方向：A) 用户显式分流——release 意图走统一入口、hotfix 意图走 hotfix 入口，Scribe 面板不推荐 hotfix；B) 统一入口为唯一文本入口，Scribe 建议可推荐 hotfix 并路由到 hotfix 流程。推荐 A，因为四动作面板与 HOTFIX-TRIAGE/AC 锚定是两套独立预检，硬合流会改变面板与分支语义；若选 B，需在面板加项并定义路由。请明确 GitHub issue 输入的路由规则。
+>> **Scribe:** 采纳方向A：用户按意图显式分流，release/新功能意图走统一入口，hotfix意图走hotfix入口；Scribe面板不推荐hotfix。§3.3入口与BS-06已修订锁定。请确认后resolved。
 
 1. 用户提交一段输入后，runtime 派发 Scribe 做可行性/重复/冲突建议并将建议面板呈现给人；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1。
 2. 用户在建议面板四选一：①进入 backlog；②从 backlog 删除（仅当来源为 backlog 时可用）；③不进入开发，归档；④进入开发。只有选④才创建新 release——标题由 Scribe 决定（写入 frontmatter title，现行合同如此）、创建分支并进入后续阶段；①②③不开 run、不建分支。选①的条目进入 backlog 存储并在 sidebar 折叠组呈现；选③的归档与 backlog 在存储上区分；选②移除来源 backlog 条目；从 backlog 来源选④转正成功后移除原条目并记录去向。
@@ -161,7 +162,7 @@ sha:
 
 ### BS-06 统一入口与 Scribe 建议面板
 
-- EARS: `WHEN 用户经统一入口提交一段输入, THE 系统 SHALL 接受三种来源（本身即故事/seed、GitHub issue id、backlog 条目），派发 Scribe 做可行性/重复/冲突建议并呈现建议面板，提供四个动作：进入 backlog、从 backlog 删除（仅来源为 backlog 时可用）、不进入开发归档、进入开发；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1`
+- EARS: `WHEN 用户经统一入口提交一段输入, THE 系统 SHALL 接受三种来源（本身即故事/seed、作新功能输入的 GitHub issue id、backlog 条目），派发 Scribe 做可行性/重复/冲突建议并呈现建议面板，提供四个动作：进入 backlog、从 backlog 删除（仅来源为 backlog 时可用）、不进入开发归档、进入开发；输入为 raw seed 时逐字入骨架，为完整 story 时原样采纳、不包裹进 §1；统一入口不推荐 hotfix，hotfix 意图走独立 hotfix 入口`
 - 来源: [3.3 / flow.md §3.2 / 操作者补充输入 2026-10-10]
 - 说明: 锁定 Scribe 评估先于建分支的统一入口；防止完整 story 被改写包裹。
 
