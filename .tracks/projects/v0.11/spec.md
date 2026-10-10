@@ -210,6 +210,9 @@ WHEN Scribe 撰写 TRIAGE 报告，THE 系统 SHALL 要求报告含重复检测�
 
 **用户可观察结果**：后续 story 的 TRIAGE 报告自带重复/冲突栏目；统一入口建议面板的重复/冲突内容与同一规则一致。
 
+
+> **Aaron:** 增补 FR-0347 评审人合同：WHEN 评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程，THE 评审派发合同 SHALL 规定：该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程。来源：操作者裁定 2026-10-10（同日两次 revise_without_findings 三连升级的根治点；runtime 审计与 discussion_ready 出口闸均正确，缺的是评审人派发合同条款）。合同文本随本版写入 flow.md §4/§5 评审协议，与 FR-0346 同交付面。
+
 ## 非功能需求
 
 ### NFR-0157 单写路径与写安全
