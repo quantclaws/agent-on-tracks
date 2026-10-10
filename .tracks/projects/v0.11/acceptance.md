@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 acc_id: ACC-011
 created: 2026-10-10
 status: draft
-sha:
+sha: 1246c872aadd83b80cec188788d9f843751f2fc15b6e73465d263ccef3e9c02f
 ---
 
 # 自驱动工作台——Releases 整顿 + run 时间线 + release/hotfix 创建 + 人工门 UI 化 — 验收标准
