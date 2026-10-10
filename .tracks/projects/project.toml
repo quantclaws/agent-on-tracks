@@ -48,7 +48,7 @@ version = 1
 [layout]
 
 [layout.devon]
-writable = ["tracks/", "tests/unit/"]
+writable = ["tracks/", "tests/unit/", ".tracks/wiki/flow.md"]
 
 [layout.shield]
 writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/", "tests/_support/"]
