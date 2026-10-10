@@ -85,6 +85,7 @@ sha:
 
 - **完成结果**：用户可解释当前进展、历史 attempt 与回拨关系，可继续处理门动作或跳转文档；不可查看或无数据的节点可读降级，不伪造数据；全程键盘可达。
 
+> **Aaron:** 不要求键盘可达。用户选中任意节点，通过鼠标即可。
 ### 3.3. 统一入口创建 release / hotfix（Scribe 评估先于建分支）
 
 - **变更基线**：新增 — flow.md §3 M-START 与 §16 hotfix 的 UI 化；backlog 现状仅有 `backlog.recorded` 事件、无存储无投影，本版补存储与投影。CLI 的 M-START 门（活跃 run、脏树、未合并分支、建 releases/v{N+1} 分支）与 hotfix 流程（`run_cmd.py`/`hotfix_face.py`）为行为基线。本版将 Scribe 评估前移至 CREATE_BRANCH 之前（flow.md §3/§4 随本版规格同步修订）。
@@ -119,6 +120,7 @@ sha:
 
 - **完成结果**：用户可沿时间线连续处理多道门直到 run 进入下一阶段或完成；CLI 保留为管理后门，不作为常规路径。
 
+> **Aaron:** 实测缺口（2026-10-10 评审本 story 时撞到）：docs 编辑面要求批准绑定的 base_revision，v0.11 处于 M-STORY 时基线为空，工作台对"评审中的文档"无法保存任何编辑或评论——人工评审轮的"直接修改 + inline-comments"在 UI 无通道。需要在本版范围（§3.4/BS）内补评审轮的文档评论/编辑写入通道（或让编辑面支持 pre-approval 模式），否则 M-SPEC/M-ACC 的评审门同样只能回退文件编辑。
 ### 3.5. Scribe 分流检测合同
 
 - **变更基线**：新增 — Scribe 的 M-STORY TRIAGE 派发合同与 flow.md §4 规格新增固定栏目；本版 spec 交付的一部分，不做运行时功能。
