@@ -16,6 +16,7 @@ Contract token: IF-QUERY-001.
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import re
 import sqlite3
@@ -71,6 +72,12 @@ _HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-(\d+)$")
 # -- read-only connection helpers -------------------------------------------
 
 
+class _ROConn(sqlite3.Connection):
+    """Read-only connection remembering its database path (race retry)."""
+
+    trac_path: str
+
+
 def _ro(path: Path) -> sqlite3.Connection | None:
     if not path.exists():
         return None
@@ -83,12 +90,18 @@ def _ro(path: Path) -> sqlite3.Connection | None:
     # carry the sidecars and keep the ordinary read-only open.
     wal = path.parent / (path.name + "-wal")
     shm = path.parent / (path.name + "-shm")
+    conn: _ROConn
     if not wal.exists() and not shm.exists():
         try:
-            return sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+            conn = sqlite3.connect(
+                f"file:{path}?mode=ro&immutable=1", uri=True, factory=_ROConn
+            )
         except sqlite3.Error:
-            pass
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, factory=_ROConn)
+    else:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, factory=_ROConn)
+    conn.trac_path = str(path)
+    return conn
 
 
 def _service_db(home: Path) -> sqlite3.Connection | None:
@@ -106,7 +119,34 @@ def _blobs_home(repo_path: str) -> Path:
 def _rows(conn: sqlite3.Connection | None, sql: str, args: tuple = ()) -> list[tuple]:
     if conn is None:
         return []
-    return conn.execute(sql, args).fetchall()
+    try:
+        return conn.execute(sql, args).fetchall()
+    except sqlite3.Error as exc:
+        return _rows_retry(conn, exc, sql, args)
+
+
+def _rows_retry(
+    conn: sqlite3.Connection, exc: sqlite3.Error, sql: str, args: tuple
+) -> list[tuple]:
+    """T-008 read-hardening: a quiescent ``immutable=1`` snapshot can race a
+    live writer (torn read), and a run plane read inside its creation window
+    (file created, schema commit in flight) answers ``no such table`` even
+    over the plain open. Retry once over a fresh plain connection (which
+    sees the live WAL); a still-missing table is the no-rows case — the same
+    semantic a not-yet-existing database file already has. Else re-raise."""
+    if not isinstance(exc, sqlite3.OperationalError) or "no such table" not in str(exc):
+        path = getattr(conn, "trac_path", None)
+        if not path:
+            raise
+        with contextlib.closing(
+            sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        ) as fresh:
+            try:
+                return fresh.execute(sql, args).fetchall()
+            except sqlite3.OperationalError as retry_exc:
+                if "no such table" not in str(retry_exc):
+                    raise
+    return []
 
 
 def _json(raw: object) -> Any:

@@ -10,6 +10,11 @@ background task of the serve process and serves the Starlette application
 under uvicorn until SIGINT/SIGTERM, then appends ``service.stopped`` and
 exits 0.
 
+v0.11 (interfaces §1j.3/§1f.1): the supervisor tick additionally claims
+accepted human-gate commands for worker execution and takes submitted
+intakes into the SM-01 evaluation window (crash recovery included) — the
+self-drive closure's tick half; the drive channels are unchanged.
+
 Startup failure classification (§2a): unusable store or occupied port ->
 exit 1 with the concrete reason on stderr; first start without any password
 supply channel -> exit 2 with provisioning guidance. ``--port 0`` binds a
@@ -37,6 +42,7 @@ from typing import Any
 from tracks import __version__
 from tracks.server import auth
 from tracks.server.app import create_app
+from tracks.supervisor import intake as intake_worker
 from tracks.supervisor.db import ServiceDB
 from tracks.supervisor.lease import acquire_lease
 from tracks.supervisor.recover import recover_on_startup
@@ -64,6 +70,20 @@ _PASSWORD_HINT = (
     "variable, or an interactive terminal prompt, then start trac serve again."
 )
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL", re.IGNORECASE)
+
+# v0.11 (interfaces §1j.3): the human-gate command kinds the supervisor
+# claims for worker execution. The synchronous short writes (§1b execution
+# forms) never appear here — they execute at acceptance.
+_GATE_COMMAND_KINDS = (
+    "record_triage",
+    "record_review",
+    "record_stage_approval",
+    "record_release_decision",
+)
+# v0.11 (interfaces §1f.1): a row stranded in ``evaluating`` older than
+# this is crash wreckage — it returns to ``submitted`` for a re-dispatch
+# (budget <= 3 rides the intake worker's own reclaim accounting).
+_INTAKE_STALE_S = 600.0
 
 
 class _UsageError(ValueError):
@@ -323,6 +343,13 @@ class _DriveState:
 
     in_flight: set[str] = field(default_factory=set)
     cooldown: dict[str, float] = field(default_factory=dict)
+    # v0.11 claim bookkeeping: gate commands by command_id, intake
+    # evaluations by intake_id — separate namespaces so a gate claim never
+    # throttles the same run's ordinary drive (and vice versa).
+    gate_in_flight: set[str] = field(default_factory=set)
+    gate_cooldown: dict[str, float] = field(default_factory=dict)
+    intake_in_flight: set[str] = field(default_factory=set)
+    intake_cooldown: dict[str, float] = field(default_factory=dict)
 
 
 def _supervisor_tick(
@@ -332,6 +359,7 @@ def _supervisor_tick(
 ) -> None:
     for finished in worker.poll():
         state.in_flight.discard(str(finished.get("run_id") or ""))
+        state.gate_in_flight.discard(str(finished.get("command_id") or ""))
     now = time.monotonic()
     _drive_accepted(db, worker, worker_id, ttl, interval, state, now)
     runnable = scheduler.next_runnable()
@@ -344,6 +372,8 @@ def _supervisor_tick(
         _accept_fresh_drive(
             db, service, worker, worker_id, ttl, runnable, state, now
         )
+    _claim_accepted_gates(db, worker, worker_id, ttl, interval, state, now)
+    _claim_submitted_intakes(db, interval, state, now)
 
 
 def _drive_accepted(
@@ -397,6 +427,105 @@ def _accepted_drive_runs(db: ServiceDB) -> list[dict]:
             " WHERE status = 'accepted' AND kind = 'drive_run'"
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# -- v0.11 claim steps: human gates and intake evaluation (§1j.3/§1f.1) -------
+
+
+def _claim_accepted_gates(
+    db: ServiceDB, worker: WorkerManager, worker_id: str, ttl: int,
+    interval: float, state: _DriveState, now: float,
+) -> None:
+    """Claim accepted human-gate commands under the run lease (§1j.3).
+
+    A missed claim (another generation already owns the command) only
+    delays: the command stays claimable and the crash-recovery requeue
+    path returns it to accepted for a later tick — nothing is lost.
+    """
+    for row in _accepted_gate_commands(db):
+        command_id = str(row.get("command_id") or "")
+        run_id = str(row.get("run_id") or "")
+        throttled = (
+            not command_id
+            or not run_id
+            or command_id in state.gate_in_flight
+            or now - state.gate_cooldown.get(command_id, 0.0) < interval
+        )
+        if throttled:
+            continue
+        if worker.spawn(row, acquire_lease(db, run_id, worker_id, ttl)):
+            state.gate_in_flight.add(command_id)
+        else:
+            state.gate_cooldown[command_id] = now
+
+
+def _accepted_gate_commands(db: ServiceDB) -> list[dict]:
+    """Accepted rows of the closed human-gate kind set (§1j.3)."""
+    marks = ", ".join("?" for _ in _GATE_COMMAND_KINDS)
+    with contextlib.closing(_connect_store(db.home, readonly=True)) as conn:
+        rows = conn.execute(
+            f"SELECT command_id, kind, run_id, params_json FROM commands"
+            f" WHERE status = 'accepted' AND kind IN ({marks})",
+            _GATE_COMMAND_KINDS,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _claim_submitted_intakes(
+    db: ServiceDB, interval: float, state: _DriveState, now: float,
+) -> None:
+    """Take submitted intakes into the SM-01 evaluation window (§1f.1).
+
+    Crash recovery runs first — a stranded ``evaluating`` row past the
+    timeout returns to ``submitted`` for a re-dispatch — then each still
+    submitted row is handed to the evaluation worker off the tick path:
+    the supervisor never blocks on a Scribe session.
+    """
+    home = Path(db.home)
+    _reclaim_stale_intakes(home)
+    for intake_id in _submitted_intake_ids(db):
+        if (
+            intake_id in state.intake_in_flight
+            or now - state.intake_cooldown.get(intake_id, 0.0) < interval
+        ):
+            continue
+        state.intake_in_flight.add(intake_id)
+        state.intake_cooldown[intake_id] = now
+        threading.Thread(
+            target=_evaluate_intake,
+            args=(home, intake_id, state),
+            name=f"trac-intake-{intake_id}",
+            daemon=True,
+        ).start()
+
+
+def _submitted_intake_ids(db: ServiceDB) -> list[str]:
+    with contextlib.closing(_connect_store(db.home, readonly=True)) as conn:
+        rows = conn.execute(
+            "SELECT intake_id FROM intakes WHERE status = 'submitted'"
+        ).fetchall()
+    return [str(row["intake_id"]) for row in rows]
+
+
+def _evaluate_intake(home: Path, intake_id: str, state: _DriveState) -> None:
+    """One intake evaluation attempt in its background thread."""
+    try:
+        intake_worker.run_intake_evaluation(Path(home), intake_id)
+    except Exception as exc:  # one bad evaluation must not kill the service
+        _log("error", f"intake evaluation {intake_id} failed: {exc}")
+    finally:
+        state.intake_in_flight.discard(intake_id)
+
+
+def _reclaim_stale_intakes(home: Path) -> list[str]:
+    """Recover crash-stranded evaluations (evaluating -> submitted)."""
+    try:
+        return intake_worker.reclaim_stale_evaluating(
+            Path(home), older_than_s=_INTAKE_STALE_S
+        )
+    except Exception as exc:  # recovery is best-effort; the tick goes on
+        _log("error", f"intake reclaim failed: {exc}")
+        return []
 
 
 def _log(level: str, msg: str) -> None:

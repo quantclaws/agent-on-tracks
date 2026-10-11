@@ -72,9 +72,15 @@ def _rejected(reason: str) -> dict:
 
 
 def _known_state(store: Store, run_id: str):
-    """The run's state, or the unknown-run failure the worker reports."""
+    """The run's state, or the unknown-run failure the worker reports.
+
+    T-008 (M2/A2): known-ness is run-plane EXISTENCE (any event of the
+    run), not ``state.run_id`` — that field only projects from
+    ``story.requested``, so a seeded/CLI-established run whose plane starts
+    elsewhere reads ``run_id=None`` and would be misjudged unknown. A run
+    with a truly empty plane still fails closed."""
     state = store.state(run_id)
-    if state.run_id is None:
+    if state.run_id is None and next(iter(store.events(run_id)), None) is None:
         return None, _rejected(f"gate command references unknown run {run_id!r}")
     return state, None
 

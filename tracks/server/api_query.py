@@ -123,8 +123,7 @@ def _path_text(request: Any, name: str) -> str:
 
 
 def _ro(path: Path) -> sqlite3.Connection | None:
-    # Delegates to the projections read-only open (quiescent WAL databases
-    # open immutable — zero filesystem artifacts; see projections._ro).
+    # Delegates to the projections read-only open (see projections._ro).
     return projections._ro(path)
 
 
@@ -133,7 +132,10 @@ def _read_rows(path: Path, sql: str, args: tuple = ()) -> list[tuple]:
     if conn is None:
         return []
     with contextlib.closing(conn):
-        return conn.execute(sql, args).fetchall()
+        try:
+            return conn.execute(sql, args).fetchall()
+        except sqlite3.Error as exc:  # torn-immutable read race (T-008)
+            return projections._rows_retry(conn, exc, sql, args)
 
 
 def _json_dict(raw: object) -> dict:
@@ -955,8 +957,7 @@ def _registry_versions(repo_path: str) -> list[dict]:
 
 
 def _backlog_group(repo_path: str) -> dict:
-    """§1e.2/§1d.3 backlog: entries aggregated from ``backlog.recorded``
-    events by ULID, dispositions folded in so whereabouts stay queryable."""
+    """§1e.2/§1d.3 backlog: entries by ULID, dispositions folded in; count excludes."""
     entries: dict[str, dict] = {}
     dispositions: dict[str, dict] = {}
     rows = _read_rows(
@@ -1160,7 +1161,7 @@ async def hotfix_preview(request: Any) -> Any:
     report, issue = precheck_hotfix_report(
         Path(repo_path), _HotfixStoreView(repo_path), int(issue_raw), scenario
     )
-    precheck: dict[str, Any] = {"status": report.status}
+    precheck: dict[str, Any] = {"status": "ok" if report.status == "pass" else "rejected"}
     if report.reason:
         precheck["reason"] = report.reason
     if report.next:

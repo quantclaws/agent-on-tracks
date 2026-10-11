@@ -340,6 +340,30 @@ export function createEditor({ url, revision, content, reload } = {}) {
     };
   }
 
+  /**
+   * The caret line's text (§1n.3 anchor form): the textarea answers from
+   * its selectionStart; a selection inside the ir host answers the
+   * anchor's own block text. Null when nothing resolvable is focused —
+   * the composer then refuses to publish rather than anchor blindly.
+   */
+  function selectionLineText() {
+    if (document.activeElement === source && typeof source.selectionStart === "number") {
+      const upto = source.value.slice(0, source.selectionStart);
+      const lines = source.value.split("\n");
+      const lineNo = upto.split("\n").length - 1;
+      const line = lines[lineNo];
+      return typeof line === "string" && line.trim() ? line : null;
+    }
+    const selection = globalThis.getSelection ? globalThis.getSelection() : null;
+    const node = selection && selection.anchorNode ? selection.anchorNode : null;
+    if (!node) return null;
+    const block = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const host = block && block.closest ? block.closest('[data-testid="vditor-ir-host"]') : null;
+    if (!host) return null;
+    const text = node.textContent && node.textContent.trim();
+    return text || null;
+  }
+
   return {
     root,
     surface,
@@ -355,6 +379,7 @@ export function createEditor({ url, revision, content, reload } = {}) {
     conflictOpen,
     reloadDiscard,
     forceOverwrite,
+    selectionLineText,
     draft,
   };
 }

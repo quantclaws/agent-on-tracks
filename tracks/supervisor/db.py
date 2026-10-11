@@ -19,9 +19,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from tracks import paths
 from tracks.supervisor.lease import quarantine_late_result
 
 SCHEMA_VERSION = 1
+
+
+def _run_plane_has(repo_path: str, run_id: str) -> bool:
+    """True when the project repo's tracks.db holds the run (runs row or
+    events) — the run-plane half of the §1c discovery, read-only, mirroring
+    the accept side's ``_run_exists`` probes (T-008 M2/A1)."""
+    db_path = paths.db_path(paths.tracks_home(Path(repo_path)))
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        for query in (
+            "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1",
+            "SELECT 1 FROM events WHERE run_id = ? LIMIT 1",
+        ):
+            try:
+                if conn.execute(query, (run_id,)).fetchone() is not None:
+                    return True
+            except sqlite3.Error:
+                continue
+        return False
+    finally:
+        conn.close()
 
 # Closed set of service-plane event types (interfaces §1a). tracks.db
 # EVENT_TYPES is NOT extended in v0.9/v0.10 — the run-plane closed set stays
@@ -447,7 +474,11 @@ class ServiceDB:
         return dict(row) if row is not None else None
 
     def find_run_project_id(self, run_id: str | None) -> str | None:
-        """project_id that owns run_id (commands row, then service events)."""
+        """project_id that owns run_id — the shared three-step §1c discovery
+        (commands row → service events → registered projects' run-plane
+        scan), the same order the accept side's ``_project_for_run``
+        established; a run created straight in the run plane (seeded/CLI)
+        resolves through the scan, a truly unknown run still rejects."""
         if not run_id:
             return None
         queries = (
@@ -461,6 +492,13 @@ class ServiceDB:
                 row = conn.execute(query, (run_id,)).fetchone()
                 if row is not None and row[0]:
                     return str(row[0])
+        # T-008 (M2/A1): the third step — the run-plane existence scan over
+        # the registered projects' tracks.db (read-only, the same two probes
+        # the accept side's ``_run_exists`` owns), so the worker claim path
+        # resolves the same runs the accept path does.
+        for project in self.list_projects():
+            if _run_plane_has(str(project.get("repo_path") or ""), str(run_id)):
+                return str(project.get("project_id"))
         return None
 
     def get_schedule(self) -> dict | None:

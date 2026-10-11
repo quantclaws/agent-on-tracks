@@ -29,6 +29,78 @@ _PRISM_REVIEW_SUBSTATES = (
 
 _ANCHOR_VERDICT = {"anchor_overturned": "overturned"}
 
+# v0.11 (interfaces §1f.2): the Scribe intake evaluation brief's verbatim
+# input section heading (tracks/supervisor/intake.py materialize_assignment).
+_INTAKE_BODY_HEADING = "## 输入正文（逐字）"
+
+
+def _intake_input_body(doc_path: Path | None) -> str:
+    """The verbatim input body out of the Scribe evaluation brief.
+
+    The brief blockquotes the input line by line; an unreadable brief
+    reads as empty (the channel never crashes on a missing dispatch file).
+    """
+    if doc_path is None:
+        return ""
+    try:
+        text = Path(doc_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    body: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if line.startswith("## "):
+            inside = line.strip() == _INTAKE_BODY_HEADING
+            continue
+        if not inside:
+            continue
+        if line.startswith("> "):
+            body.append(line[2:])
+        elif line == ">":
+            body.append("")
+    return "\n".join(body).strip()
+
+
+def _has_story_frontmatter(body: str) -> bool:
+    """True when the verbatim input opens a story frontmatter block."""
+    text = body.lstrip()
+    if not text.startswith("---"):
+        return False
+    return any(line.strip() == "---" for line in text.splitlines()[1:])
+
+
+def _frontmatter_title(text: str) -> str | None:
+    """The title: value inside a leading story frontmatter block, if any."""
+    if not _has_story_frontmatter(text):
+        return None
+    for line in text.splitlines()[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            return None
+        if stripped.lower().startswith("title:"):
+            value = stripped[6:].strip().strip("\"'")
+            return value or None
+    return None
+
+
+def _first_body_line(text: str) -> str | None:
+    """The first non-delimiter content line, truncated for a title."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and stripped != "---":
+            return stripped[:40]
+    return None
+
+
+def _intake_suggested_title(body: str) -> str:
+    """A deterministic non-empty suggested title for the report."""
+    text = body.strip()
+    return (
+        _frontmatter_title(text)
+        or _first_body_line(text)
+        or "Scribe intake evaluation"
+    )
+
 
 def _simulate_map() -> dict:
     raw = os.environ.get("TRAC_FAKE_SIMULATE", "")
@@ -67,6 +139,8 @@ class FakeActMixin:
             return no_diff
         if role == "sage" and substate == "SAGE_TRIAGE":
             return self._act_sage_triage(assignment)
+        if role == "scribe" and substate == "INTAKE_EVAL":
+            return self._act_intake_eval(doc_path)
         if role == "devon":
             data = assignment if isinstance(assignment, dict) else {}
             return self._attach_declared_raw_output(
@@ -86,6 +160,36 @@ class FakeActMixin:
         """B1 (issue #2): the root writer fakes write to — the isolated
         worktree when the dispatch carries one, else the main tree."""
         return self._worktree_root or self.repo
+
+    def _act_intake_eval(self, doc_path: Path | None) -> dict:
+        """v0.11 §1f.2: the deterministic Scribe intake evaluation report.
+
+        The outcome carries the closed-schema ``intake_report`` the intake
+        worker's ``_coerce_report`` consumes — feasibility/duplicates/
+        conflicts/title/summary/input_form — with the two detection
+        columns explicitly recording 无发现 (found=false, empty lists) and
+        input_form derived from the brief's verbatim input body (story
+        frontmatter present -> complete, plain or unreadable -> raw).
+        """
+        body = _intake_input_body(doc_path)
+        input_form = "complete" if _has_story_frontmatter(body) else "raw"
+        return {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "intake evaluation: report issued",
+            "intake_report": {
+                "feasibility": {"verdict": "feasible", "blockers": []},
+                "duplicates": {"found": False, "items": []},
+                "conflicts": {"found": False, "pairs": []},
+                "title": _intake_suggested_title(body),
+                "input_form": input_form,
+                "summary": (
+                    "可行性/重复/冲突评估（"
+                    + input_form
+                    + " 输入）：无阻塞、无重复、无冲突"
+                ),
+            },
+        }
 
     def _act_legacy(
         self,

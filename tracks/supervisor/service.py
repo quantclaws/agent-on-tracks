@@ -419,30 +419,6 @@ _WEBGATE_KINDS = frozenset(
 # failure leaves the command unpersisted and unexecuted.
 RejectFn = Callable[..., None]
 
-_RUNS_BY_ID = "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1"
-_EVENTS_BY_RUN = "SELECT 1 FROM events WHERE run_id = ? LIMIT 1"
-
-
-def _run_exists(repo_path: str, run_id: str) -> bool:
-    """True when the repo's tracks.db already holds run_id (realpath read)."""
-    db_path = paths.db_path(paths.tracks_home(Path(repo_path)))
-    if not db_path.exists():
-        return False
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return False
-    try:
-        for query in (_RUNS_BY_ID, _EVENTS_BY_RUN):
-            try:
-                if conn.execute(query, (run_id,)).fetchone() is not None:
-                    return True
-            except sqlite3.Error:
-                continue
-        return False
-    finally:
-        conn.close()
-
 
 def _run_plane(repo_path: str, run_id: str) -> tuple[list[EventEnvelope], Any]:
     """(events, state) for a run, read from its tracks.db."""
@@ -1019,10 +995,14 @@ class CommandService:
         actor: str,
         actor_class: str,
         detail: str,
+        *,
+        status: int | None = None,
     ) -> None:
         """FR-0292 rejection: the precheck's concrete reason rides the detail
         while ``validation_failed`` stays the closed-set reason token
-        (interfaces §1a#8); nothing is persisted (SM-01.5)."""
+        (interfaces §1a#8); nothing is persisted (SM-01.5). ``status`` rides
+        the RULING seq 10924 explicit channel when the refusal carries its
+        own HTTP position (T-008 M2/B: the anchoring belt answers 422)."""
         self._deny(
             store,
             "create_run",
@@ -1032,6 +1012,7 @@ class CommandService:
             "validation_failed",
             f"hotfix precheck rejected: {detail}",
             access_denied=False,
+            status=status,
         )
 
     def _preflight_hotfix_journey(
@@ -1045,6 +1026,10 @@ class CommandService:
         release branch for dev, unlocatable baseline, taken ``fix/{issue}``)
         reject the acceptance with the concrete reason in the audit detail —
         no command row, no schedule entry, no fix branch and no run.
+        T-008 (M2/B): a PASSING precheck additionally clears the anchoring
+        belt — the target version's baseline trio must exist on disk
+        (§1i.2: 锚定不成立即 rejected，不建半截 fix 分支); missing pieces
+        refuse 422 carrying the names, still before anything persists.
         """
         scenario = _HOTFIX_SCENARIOS.get(str(request.get("journey") or ""))
         if scenario is None:
@@ -1058,9 +1043,10 @@ class CommandService:
                 actor_class,
                 f"project {request.get('project_id')!r} is not registered on this service",
             )
+        repo = Path(str(project["repo_path"]))
         try:
             report = _hotfix_precheck(
-                Path(str(project["repo_path"])),
+                repo,
                 _issue_number(request.get("issue")),
                 scenario,
             )
@@ -1081,6 +1067,45 @@ class CommandService:
                 actor_class,
                 f"{report.reason}: {report.next}",
             )
+        self._deny_hotfix_unanchored(store, request, actor, actor_class, repo, report)
+
+    def _deny_hotfix_unanchored(
+        self,
+        store: ServiceDB,
+        request: dict,
+        actor: str,
+        actor_class: str,
+        repo: Path,
+        report: Any,
+    ) -> None:
+        """T-008 (M2/B): the acceptance-time anchoring belt — a passing
+        precheck whose target version lacks the baseline trio (story/spec/
+        acceptance) refuses 422 naming the missing pieces; nothing persists
+        (SM-01.5: no command row, no branch, no residue)."""
+        target = getattr(report, "target_version", None)
+        vdir = (
+            paths.version_dir(paths.tracks_home(repo), str(target))
+            if target
+            else None
+        )
+        missing = [
+            name
+            for name in ("story.md", "spec.md", "acceptance.md")
+            if vdir is None or not (vdir / name).is_file()
+        ]
+        if not missing:
+            return
+        self._deny_hotfix_precheck(
+            store,
+            request,
+            actor,
+            actor_class,
+            "hotfix anchoring unavailable: target version"
+            f" {target if target else '<none>'} baseline is missing"
+            f" {', '.join(missing)}; approve/complete the target version"
+            " baseline first (interfaces §1i.2)",
+            status=422,
+        )
 
     def _reconcile_terminal_drive(
         self, store: ServiceDB, request: dict, deny: RejectFn
@@ -1124,18 +1149,15 @@ class CommandService:
 
     @staticmethod
     def _project_for_run(store: ServiceDB, run_id: Any) -> dict | None:
-        """The registered project owning run_id: the service-plane rows first
-        (commands / service events), then a tracks.db scan across the
-        registered projects — same discovery order as the read projections."""
+        """The registered project owning run_id through the shared three-step
+        §1c discovery (commands row → service events → registered projects'
+        run-plane scan) — all three steps live in ``ServiceDB
+        .find_run_project_id`` (T-008 M2/A1), so the accept side and the
+        worker claim side resolve the identical project for the identical
+        run, seeded/CLI-established runs included."""
         if not run_id:
             return None
-        project = store.get_project(store.find_run_project_id(str(run_id)))
-        if project is not None:
-            return project
-        for candidate in store.list_projects():
-            if _run_exists(str(candidate.get("repo_path") or ""), str(run_id)):
-                return candidate
-        return None
+        return store.get_project(store.find_run_project_id(str(run_id)))
 
     def _record_acceptance(
         self,
@@ -1375,17 +1397,33 @@ class CommandService:
     def _fetch_issue_or_deny(self, repo: Path, number: int, deny: RejectFn) -> Any:
         """Issue fetch with the IF-HOTFIX-011 classification mapping: a
         confirmed-missing or failing read channel rejects with
-        ``issue_fetch_failed`` carrying the classified recovery next."""
+        ``issue_fetch_failed`` carrying the classified recovery next.
+
+        T-008 gap fix (AC-FR0338-01): the backend's ``None`` is the
+        confirmed-missing confirmation (fake seed without the key / live
+        404 — the None-on-missing contract shared with the hotfix precheck
+        P-1, github.py untouched), so the unified entry must refuse it here
+        instead of letting it slip through the preflight into a 202: None
+        lands the same ``issue_fetch_failed`` refusal with the
+        ``not_found`` classification (the intake reason map answers 409;
+        SM-01.5 — the deny fires before any command/intake row persists)."""
         from tracks.effects.github import GithubIssuesError, select_issue_backend
 
         try:
-            return select_issue_backend(repo, "").fetch_issue(number)
+            issue = select_issue_backend(repo, "").fetch_issue(number)
         except GithubIssuesError as exc:
             classification = getattr(exc, "classification", "") or "network"
             deny(
                 "issue_fetch_failed",
                 f"issue {number} could not be fetched ({classification}): {exc}",
             )
+        if issue is None:
+            deny(
+                "issue_fetch_failed",
+                f"issue {number} could not be fetched (not_found):"
+                " the host confirms no such issue",
+            )
+        return issue
 
     def _preflight_decide_intake(self, store: ServiceDB, request: dict, deny: RejectFn) -> None:
         """§1b #15: the decision admission — evaluated-only readiness,
@@ -1625,7 +1663,9 @@ class CommandService:
         """The develop action's §1g.1 execution: the active-run exit records
         the input into backlog (legal terminal, no run, no branch); otherwise
         derive ``releases/v{N+1}`` and delegate to create_run carrying
-        title/story_form. Returns the intake.decided outcome."""
+        title/story_form. A backlog-sourced develop success additionally
+        disposes its origin entry as promoted (§1f.3/§1d.3). Returns the
+        intake.decided outcome."""
         if project is None:
             return {"outcome": "develop_failed", "reason": "project not registered"}
         repo = Path(str(project["repo_path"]))
@@ -1633,7 +1673,12 @@ class CommandService:
         schedule = store.get_schedule()
         active = schedule.get("active_run") if schedule is not None else None
         if active:
-            entry = new_ulid()
+            # T-008 (AC-FR0339-02, §1g.2): the M-START active-run exit lands
+            # its backlog.recorded ON the active run's own stream (the gate
+            # anchor reads store.events(active_run)) — the entry identity is
+            # that stream id (§1d.1), so the run-less entry stream is not
+            # used here; the kernel reducer keeps the marker idempotent and
+            # the active-run determination untouched (§1d.1 phantom note).
             _append_backlog_event(
                 repo, str(project.get("version") or "v0.1"), "backlog.recorded",
                 {
@@ -1642,9 +1687,9 @@ class CommandService:
                     "content": content,
                     "intake_id": intake.get("intake_id"),
                 },
-                entry,
+                active,
             )
-            return {"outcome": "backlog_recorded", "active_run": active, "backlog_entry_id": entry}
+            return {"outcome": "backlog_recorded", "active_run": active, "backlog_entry_id": active}
         report: dict = {}
         with contextlib.suppress(TypeError, ValueError):
             report = json.loads(intake.get("report_json") or "") or {}
@@ -1669,6 +1714,27 @@ class CommandService:
             surface="cli",
             idempotency_key=f"intake-develop-{intake.get('intake_id')}",
         )
+        # T-008 (AC-FR0338/FR-0339 closure, interfaces §1f.3/§1d.3 line 96/116):
+        # a successful develop promotes the origin entry — the SAME
+        # backlog.dispositioned event the dispose_backlog command lands
+        # (合同唯一), the derived version as the whereabout target, riding a
+        # run-less ULID. A denied create_run raises above, so no half-
+        # promoted residue (the submit-side preflight already refused an
+        # already-disposed origin_entry, keeping the single-disposition
+        # invariant).
+        origin_entry = str(intake.get("origin_entry") or "")
+        if str(intake.get("source") or "") == "backlog" and origin_entry:
+            _append_backlog_event(
+                repo,
+                str(project.get("version") or "v0.1"),
+                "backlog.dispositioned",
+                {
+                    "entry": origin_entry,
+                    "disposition": "promoted",
+                    "to": params["version"],
+                },
+                new_ulid(),
+            )
         return {
             "outcome": "develop",
             "run_id": create_run_id(params),

@@ -16,7 +16,7 @@
 
 import { requestJson } from "./api.js";
 import { clear, degradedMessage, element, loadInto } from "./dom.js";
-import { createDiscussionNav } from "./discussions.js";
+import { createCommentComposer, createDiscussionNav, isReviewRound } from "./discussions.js";
 import { createEditor } from "./editor.js";
 import { createPaneContainer } from "./panes.js";
 import { renderSidebar } from "./sidebar.js";
@@ -26,6 +26,44 @@ export const VEDITOR_BASE = "/static/vendor/vditor/";
 // The last opened document per project — {version, doc} session memory only
 // (the client persists nothing; a fresh session starts blank by design).
 const lastOpenDoc = new Map();
+
+// §1n.4: run details fetched to gate the review-round write controls (the
+// awaiting_gate projection is the single gate source; a run detail without
+// it simply answers no controls). Cached per editable run for the session.
+const runDetailCache = new Map();
+
+async function reviewRoundRunDetail(runId) {
+  if (!runId) return null;
+  if (runDetailCache.has(runId)) return runDetailCache.get(runId);
+  let detail = null;
+  try {
+    detail = await requestJson(`/api/runs/${encodeURIComponent(runId)}`);
+  } catch (error) {
+    detail = null; // the gate degrades to "no write controls", never to an error face
+  }
+  runDetailCache.set(runId, detail);
+  return detail;
+}
+
+/**
+ * The review-round comment control (§1n.3/§1n.4): mounted ONLY when the
+ * document's editable run sits at a review-round gate; every other context
+ * (and every unresolvable run detail) keeps the pane free of write controls
+ * beyond the existing editor save face.
+ */
+async function mountReviewComposer(pane, editor, model, docName, reloadThreads) {
+  pane.root.querySelectorAll('[data-testid="review-comment-bar"]').forEach((node) => node.remove());
+  if (!model || !model.editable_run_id) return;
+  const detail = await reviewRoundRunDetail(model.editable_run_id);
+  if (!detail || !isReviewRound(detail)) return;
+  const composer = createCommentComposer({
+    doc: docName,
+    runId: model.editable_run_id,
+    anchorLineOf: editor.selectionLineText,
+    onLanded: reloadThreads,
+  });
+  pane.body.append(composer.root);
+}
 
 let vditorRequest = null;
 
@@ -314,7 +352,9 @@ function createDocsWorkbench(projectId, versions) {
     if (pane.editorSlot) pane.editorSlot.replaceChildren(editor.saveControl);
     pane.body.append(editor.root);
     discussions = createDiscussionNav({ threads: [] });
-    loadThreads(projectId, version, docName, discussions);
+    const reloadThreads = () =>
+      loadThreads(projectId, version, docName, discussions).catch(() => null);
+    reloadThreads();
     // The pane-bar discussion navigation (louke): ☰ opens the thread list,
     // ↯ walks threads, ! jumps unresolved-only.
     pane.root.querySelector('[data-testid="discussion-toggle"]').onclick = () => {
@@ -344,6 +384,9 @@ function createDocsWorkbench(projectId, versions) {
         editor.hostDraft(area.value);
       });
     });
+    // §1n.4: the inline-comment control mounts only inside a review-round
+    // gate (awaiting_gate.type ∈ {review, review_pending_threads, triage}).
+    mountReviewComposer(pane, editor, model, docName, reloadThreads);
     setPaneStatus(pane, "已加载");
   }
 
