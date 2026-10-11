@@ -344,12 +344,19 @@ def test_extension_routes_declare_project_docs_endpoints():
             f"extension route entries are (path, handler, methods): {item!r}"
         )
     methods_by_path = {path: tuple(methods) for path, _bound, methods in routes}
-    assert set(methods_by_path) == {
+    # v0.11 (ISLAND_GATE_2 / M2): the same seam appends the §2b #36-38/#44
+    # read routes (releases aggregation + intake reads + hotfix preview), so
+    # the #31-34 docs face is asserted as a subset, not an exact set.
+    assert {
         "/api/projects/{pid}/docs/tree",
         "/api/projects/{pid}/docs/{version}/{doc}",
         "/api/projects/{pid}/docs/{version}/{doc}/diff",
         "/api/projects/{pid}/docs/{version}/{doc}/discussions",
-    }, "EXTENSION_ROUTES must carry exactly the §2b #31-34 docs endpoints"
+    } <= set(methods_by_path), (
+        "EXTENSION_ROUTES must carry the §2b #31-34 docs endpoints; v0.11"
+        " appends the #36-38/#44 read routes on the same seam (superset"
+        " criterion, interfaces §2b)"
+    )
     for path, handler, _methods in routes:
         assert callable(handler), f"{path} must bind the api_query read handler"
         assert methods_by_path[path] == ("GET",), f"{path} is a read-only GET endpoint"

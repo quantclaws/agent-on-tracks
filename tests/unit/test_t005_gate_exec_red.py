@@ -159,10 +159,12 @@ def _claim_gate_command(db: ServiceDB, home: Path, kind: str, params: dict, cid:
         "fixture: an accepted gate command must be claimable"
     )
     with contextlib.closing(sqlite3.connect(home / "service.db")) as conn:
+        # leases.run_id is the primary key: the 4-kind dispatch loop re-seeds
+        # the same run's lease, so the insert is idempotent (ISLAND_GATE_2/M2).
         conn.execute(
-            "INSERT INTO leases (run_id, worker_id, generation, acquired_at,"
-            " expires_at) VALUES (?, 'worker-w1', 1, '2026-10-12T00:00:00+00:00',"
-            " '2026-10-12T00:01:00+00:00')",
+            "INSERT OR IGNORE INTO leases (run_id, worker_id, generation,"
+            " acquired_at, expires_at) VALUES (?, 'worker-w1', 1,"
+            " '2026-10-12T00:00:00+00:00', '2026-10-12T00:01:00+00:00')",
             (_RUN,),
         )
         conn.commit()

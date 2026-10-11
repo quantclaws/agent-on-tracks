@@ -40,30 +40,19 @@ _PAUSED = "run.paused"
 _TERMINAL_STATUSES = frozenset({"completed", "backlog"})
 _GATE_TYPES = {"local_gate.passed": "passed", "local_gate.failed": "failed"}
 _TEST_RESULT_TYPES = frozenset(
-    {"local_gate.passed", "local_gate.failed", "full.executed", "red.validated", "test.collected"}
-)
+    {"local_gate.passed", "local_gate.failed", "full.executed", "red.validated", "test.collected"})
 _LATEST_AC_TYPES = ("verdict.passed", "verdict.failed", "red.validated", "test.written")
 
 _CONFIG_DEFAULTS: dict[str, Any] = {
-    "wait_initial_s": 60,
-    "wait_cap_s": 900,
-    "poll_interval_s": 5,
-    "poll_idle_cap_s": 60,
-    "lease_ttl_s": 30,
-    "version": "v0.9",
+    "wait_initial_s": 60, "wait_cap_s": 900, "poll_interval_s": 5, "poll_idle_cap_s": 60,
+    "lease_ttl_s": 30, "version": "v0.9",
 }
 
 # Project-domain doc read model (§1n.4): the six-piece closed set with
 # `design` kept as the architecture alias; shared with the write face.
-DOC_FILES = {
-    "story": "story.md",
-    "spec": "spec.md",
-    "acceptance": "acceptance.md",
-    "architecture": "architecture.md",
-    "interfaces": "interfaces.md",
-    "test-plan": "test-plan.md",
-    "design": "architecture.md",
-}
+DOC_FILES = {"story": "story.md", "spec": "spec.md", "acceptance": "acceptance.md",
+    "architecture": "architecture.md", "interfaces": "interfaces.md", "test-plan": "test-plan.md",
+    "design": "architecture.md",}
 _DOC_ORDER = ("story", "spec", "acceptance", "architecture", "interfaces", "test-plan")
 _VERSION_RE = re.compile(r"^v(\d+)\.(\d+)$")
 _HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-(\d+)$")
@@ -93,9 +82,7 @@ def _ro(path: Path) -> sqlite3.Connection | None:
     conn: _ROConn
     if not wal.exists() and not shm.exists():
         try:
-            conn = sqlite3.connect(
-                f"file:{path}?mode=ro&immutable=1", uri=True, factory=_ROConn
-            )
+            conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True,factory=_ROConn)
         except sqlite3.Error:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, factory=_ROConn)
     else:
@@ -202,9 +189,7 @@ def _run_watermark(repo_path: str, run_id: str) -> Any:
     """The run's current event watermark (``MAX(seq)``); None = no events."""
     conn = _tracks_db(repo_path)
     try:
-        rows = _rows(
-            conn, "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,)
-        )
+        rows = _rows(conn, "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,))
     finally:
         if conn is not None:
             conn.close()
@@ -218,22 +203,15 @@ def _run_events(repo_path: str, run_id: str) -> list[EventEnvelope]:
         return cached[1]
     conn = _tracks_db(repo_path)
     try:
-        rows = _rows(
-            conn,
+        rows = _rows(conn,
             "SELECT run_id, seq, ts, version, type, schema_version, command_id, task_id, payload "
-            "FROM events WHERE run_id = ? ORDER BY seq",
-            (run_id,),
-        )
+                "FROM events WHERE run_id = ? ORDER BY seq",
+            (run_id,),)
     finally:
         if conn is not None:
             conn.close()
-    events = [
-        event_envelope_from_row(row, _load_payload(row[8], repo_path))
-        for row in rows
-    ]
-    _cache_put(
-        _EVENTS_CACHE, (repo_path, run_id), (rows[-1][1] if rows else 0, events)
-    )
+    events = [event_envelope_from_row(row, _load_payload(row[8], repo_path)) for row in rows]
+    _cache_put(_EVENTS_CACHE, (repo_path, run_id), (rows[-1][1] if rows else 0, events))
     return events
 
 
@@ -252,9 +230,9 @@ def _state_of(repo_path: str, run_id: str) -> State:
 
 def _projects(conn: sqlite3.Connection | None) -> list[dict]:
     return [
-        {"project_id": row[0], "repo_path": row[1], "version": row[2]}
-        for row in _rows(conn, "SELECT project_id, repo_path, version FROM projects")
-    ]
+        {
+            "project_id": row[0], "repo_path": row[1], "version": row[2]
+        } for row in _rows(conn, "SELECT project_id, repo_path, version FROM projects")]
 
 
 def _project_by_id(conn: sqlite3.Connection | None, project_id: str | None) -> dict | None:
@@ -282,9 +260,7 @@ def _project_for_run(conn: sqlite3.Connection | None, run_id: str) -> dict | Non
         found = _project_by_id(conn, rows[0][0])
         if found is not None:
             return found
-    rows = _rows(
-        conn, "SELECT project_id FROM service_events WHERE run_id = ? LIMIT 1", (run_id,)
-    )
+    rows = _rows(conn, "SELECT project_id FROM service_events WHERE run_id = ? LIMIT 1", (run_id,))
     if rows:
         found = _project_by_id(conn, rows[0][0])
         if found is not None:
@@ -307,26 +283,17 @@ def _run_exists(repo_path: str, run_id: str) -> bool:
 def _project_runs(repo_path: str) -> list[dict]:
     conn = _tracks_db(repo_path)
     try:
-        rows = _rows(
-            conn,
+        rows = _rows(conn,
             "SELECT run_id, version, status, stage, substate, awaiting, updated_ts FROM runs "
-            "ORDER BY updated_ts",
-        )
+                "ORDER BY updated_ts",)
     finally:
         if conn is not None:
             conn.close()
     return [
         {
-            "run_id": row[0],
-            "version": row[1],
-            "status": row[2],
-            "stage": row[3],
-            "substate": row[4],
-            "awaiting": row[5],
-            "updated_ts": row[6],
-        }
-        for row in rows
-    ]
+            "run_id": row[0], "version": row[1], "status": row[2], "stage": row[3],
+            "substate": row[4], "awaiting": row[5], "updated_ts": row[6],
+        } for row in rows]
 
 
 # -- registry / plan documents ---------------------------------------------
@@ -425,23 +392,15 @@ def _chain_rows(repo_path: str, version: str | None, run_id: str) -> list[dict]:
         evidence = _ac_evidence(events, nodes)
         chain.append(
             {
-                "ac_id": ac_id,
-                "layer": _layer_of(nodes),
-                "test_nodes": nodes,
-                "latest_result": _latest_result(evidence),
-                "candidate_sha": state.candidate_sha,
+                "ac_id": ac_id, "layer": _layer_of(nodes), "test_nodes": nodes,
+                "latest_result": _latest_result(evidence), "candidate_sha": state.candidate_sha,
                 "evidence": evidence,
-            }
-        )
+            })
     return chain
 
 
 def _ac_closed(chain: list[dict]) -> int:
-    return sum(
-        1
-        for row in chain
-        if any(item["status"] == "ok" for item in row["evidence"])
-    )
+    return sum(1 for row in chain if any(item["status"] == "ok" for item in row["evidence"]))
 
 
 # -- progress / execution helpers ------------------------------------------
@@ -488,32 +447,25 @@ def _executions(events: list[EventEnvelope]) -> list[dict]:
             task_id = event.payload.get("task_id") or event.task_id
             if isinstance(task_id, str) and task_id and task_id not in started:
                 started.append(task_id)
-    completed = {
-        event.payload.get("task_id")
-        for event in events
-        if event.type == "task.completed"
-    }
+    completed = {event.payload.get("task_id") for event in events if event.type == "task.completed"}
     executions = []
     for task_id in started:
         if task_id in completed:
             continue
         executions.append(
             {
-                "role": _task_role(events, task_id),
-                "task_id": task_id,
+                "role": _task_role(events, task_id), "task_id": task_id,
                 "state": "failed" if _task_failed(events, task_id) else "executing",
                 "log_ref": _task_log_ref(events, task_id),
-            }
-        )
+            })
     return executions
 
 
 def _task_events(events: list[EventEnvelope], task_id: str) -> list[EventEnvelope]:
     return [
-        event
-        for event in events
-        if (event.payload or {}).get("task_id") == task_id or event.task_id == task_id
-    ]
+        event for event in events if (
+            event.payload or {}
+        ).get("task_id") == task_id or event.task_id == task_id]
 
 
 def _task_role(events: list[EventEnvelope], task_id: str) -> str:
@@ -542,12 +494,10 @@ def _task_log_ref(events: list[EventEnvelope], task_id: str) -> str:
 def _pause_state(
     conn: sqlite3.Connection | None, run_id: str
 ) -> tuple[dict, str | None]:
-    rows = _rows(
-        conn,
+    rows = _rows(conn,
         "SELECT type FROM service_events WHERE run_id = ? AND type IN (?, ?) "
-        "ORDER BY seq DESC LIMIT 1",
-        (run_id, _PAUSE_REQUESTED, _PAUSED),
-    )
+            "ORDER BY seq DESC LIMIT 1",
+        (run_id, _PAUSE_REQUESTED, _PAUSED),)
     if not rows:
         return {"requested": False, "effective": False}, None
     if rows[0][0] == _PAUSED:
@@ -556,28 +506,19 @@ def _pause_state(
 
 
 def _wait_spec(conn: sqlite3.Connection | None, run_id: str) -> dict | None:
-    rows = _rows(
-        conn,
+    rows = _rows(conn,
         "SELECT wait_class, reason, retry_at, known_reset, backoff_json FROM waits "
-        "WHERE run_id = ?",
-        (run_id,),
-    )
+            "WHERE run_id = ?",
+        (run_id,),)
     if not rows:
         return None
     wait_class, reason, retry_at, known_reset, backoff_json = rows[0]
-    return {
-        "wait_class": wait_class,
-        "reason": reason,
-        "retry_at": retry_at,
-        "known_reset": bool(known_reset),
-        "backoff": _json(backoff_json) if backoff_json else None,
-    }
+    return {"wait_class": wait_class, "reason": reason, "retry_at": retry_at,
+        "known_reset": bool(known_reset), "backoff": _json(backoff_json) if backoff_json else None,}
 
 
 def _lease(conn: sqlite3.Connection | None, run_id: str) -> dict:
-    rows = _rows(
-        conn, "SELECT generation, worker_id FROM leases WHERE run_id = ?", (run_id,)
-    )
+    rows = _rows(conn, "SELECT generation, worker_id FROM leases WHERE run_id = ?", (run_id,))
     if not rows:
         return {"generation": 0, "worker_id": ""}
     return {"generation": int(rows[0][0] or 0), "worker_id": rows[0][1] or ""}
@@ -601,10 +542,7 @@ def _is_terminal(state: State, events: list[EventEnvelope]) -> bool:
 
 
 def _control_state(
-    state: State,
-    events: list[EventEnvelope],
-    pause_label: str | None,
-    wait: dict | None,
+    state: State, events: list[EventEnvelope], pause_label: str | None, wait: dict | None,
     queued: bool,
 ) -> str:
     if pause_label is not None:
@@ -625,25 +563,17 @@ def _control_state(
 # §1k.2 type -> primary_action closed mapping (映射外无入口). The
 # AWAIT_RELEASE member is the M-RELEASE substate-shaped gate.
 _AWAIT_RELEASE = "AWAIT_RELEASE"
-_AWAITING_PRIMARY_ACTIONS = {
-    "triage": "triage",
-    "review": "review",
-    "review_pending_threads": "review",
-    "approval": "approve",
-    "escalation": "retry",
-    "rollback": "return",
-    "hotfix_triage": "guidance",
-}
-_AWAITING_REASON_LABELS = {
-    _AWAIT_RELEASE: "发布三择一决策（release / delay / return）",
+_AWAITING_PRIMARY_ACTIONS = {"triage": "triage", "review": "review",
+    "review_pending_threads": "review", "approval": "approve", "escalation": "retry",
+    "rollback": "return", "hotfix_triage": "guidance",}
+_AWAITING_REASON_LABELS = {_AWAIT_RELEASE: "发布三择一决策（release / delay / return）",
     "triage": "story triage 裁决（go / no-go / park）",
     "review": "文档阶段评审（comment / no-comment）",
     "review_pending_threads": "挂起线程恢复重评（comment / no-comment）",
     "approval": "批准基线（approve / revise）",
     "escalation": "失败升级处置（retry / return）",
     "rollback": "回滚目标确认（approve 选定目标）",
-    "hotfix_triage": "hotfix 锚定人工处置（owning surface 指引）",
-}
+    "hotfix_triage": "hotfix 锚定人工处置（owning surface 指引）",}
 
 
 def _awaiting_type(state: State) -> str | None:
@@ -666,19 +596,13 @@ def _awaiting_gate(state: State) -> dict | None:
     if failure.get("reason"):
         reason = f"{reason}（{failure['reason']}）"
     primary = (
-        "release-decision"
-        if gate_type == _AWAIT_RELEASE
-        else _AWAITING_PRIMARY_ACTIONS[gate_type]
-    )
-    return {
-        "type": gate_type,
-        "reason": reason,
+        "release-decision" if gate_type == _AWAIT_RELEASE else _AWAITING_PRIMARY_ACTIONS[gate_type])
+    return {"type": gate_type, "reason": reason,
         "impact": (
             f"run 停在 {stage}（{state.substate or gate_type}），该门完成前不再推进；"
             "在时间线下栏动作面板处理后自动推进到下一边界"
         ),
-        "primary_action": primary,
-    }
+        "primary_action": primary,}
 
 
 class _RunStoreView:
@@ -707,12 +631,8 @@ def _return_options(repo_path: str, run_id: str) -> dict:
     if not allowed:
         return {"allowed": False, "targets": []}
     executed = _already_executed_ops(view, run_id)
-    return {
-        "allowed": True,
-        "targets": [
-            {"stage": stage, "already_executed": executed} for stage in allowed
-        ],
-    }
+    return {"allowed": True,
+        "targets": [ {"stage": stage, "already_executed": executed} for stage in allowed ],}
 
 
 # -- todos ------------------------------------------------------------------
@@ -738,32 +658,18 @@ def _material_revision(project: dict) -> str | None:
 
 def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
     if state.awaiting == "approval":
-        return {
-            "run_id": run_id,
-            "kind": "stage_approval",
-            "object": state.stage or "approval",
+        return {"run_id": run_id, "kind": "stage_approval", "object": state.stage or "approval",
             "revision": _material_revision(project) or state.preview_digest,
             "context": f"{state.stage or 'stage'} awaiting Human approval",
-            "action_ref": f"/runs/{run_id}/review",
-        }
+            "action_ref": f"/runs/{run_id}/review",}
     if state.awaiting == "triage":
-        return {
-            "run_id": run_id,
-            "kind": "triage",
-            "object": state.stage or "triage",
-            "revision": None,
-            "context": "triage decision required",
-            "action_ref": f"/runs/{run_id}/review",
-        }
+        return {"run_id": run_id, "kind": "triage", "object": state.stage or "triage",
+            "revision": None, "context": "triage decision required",
+            "action_ref": f"/runs/{run_id}/review",}
     if state.substate == "AWAITING_RELEASE":
-        return {
-            "run_id": run_id,
-            "kind": "release_decision",
-            "object": state.stage or "release",
-            "revision": state.preview_digest,
-            "context": "release candidate awaiting decision",
-            "action_ref": f"/runs/{run_id}/release",
-        }
+        return {"run_id": run_id, "kind": "release_decision", "object": state.stage or "release",
+            "revision": state.preview_digest, "context": "release candidate awaiting decision",
+            "action_ref": f"/runs/{run_id}/release",}
     return None
 
 
@@ -842,10 +748,9 @@ def _mtime_iso(path: Path) -> str:
 def _editable_run_id(runs: list[dict], version: str) -> str | None:
     """The newest non-terminal run of ``version``, or None (§1n.1)."""
     active = [
-        run
-        for run in runs
-        if run["version"] == version and run["status"] not in _TERMINAL_STATUSES
-    ]
+        run for run in runs if run[
+            "version"
+        ] == version and run["status"] not in _TERMINAL_STATUSES]
     if not active:
         return None
     return max(active, key=lambda run: run["updated_ts"] or "")["run_id"]
@@ -875,17 +780,12 @@ def docs_tree_for_project(project: dict) -> dict:
         for doc in _DOC_ORDER:
             path = vdir / DOC_FILES[doc]
             if path.is_file():
-                docs.append(
-                    {"doc": doc, "revision": revision, "updated_at": _mtime_iso(path)}
-                )
+                docs.append({"doc": doc, "revision": revision, "updated_at": _mtime_iso(path)})
         versions.append(
             {
-                "version": version,
-                "title": _version_story_title(project, version),
-                "docs": docs,
+                "version": version, "title": _version_story_title(project, version), "docs": docs,
                 "editable_run_id": _editable_run_id(runs, version),
-            }
-        )
+            })
     return {"versions": versions}
 
 
@@ -930,15 +830,9 @@ def project_doc_discussions(
 
 
 def _thread_json(thread: Any) -> dict:
-    return {
-        "thread_id": thread.thread_id,
-        "status": thread.status,
-        "initiator": thread.initiator,
-        "anchor_line": thread.anchor_line,
-        "summary": thread.snippet,
-        "entry_line": thread.root_line,
-        "awaiting": _thread_awaiting(thread),
-    }
+    return {"thread_id": thread.thread_id, "status": thread.status, "initiator": thread.initiator,
+        "anchor_line": thread.anchor_line, "summary": thread.snippet,
+        "entry_line": thread.root_line, "awaiting": _thread_awaiting(thread),}
 
 
 def _thread_awaiting(thread: Any) -> str | None:
@@ -950,10 +844,9 @@ def _thread_awaiting(thread: Any) -> str | None:
     it carries exactly one distinct mention.
     """
     pending = [
-        comment
-        for comment in iter_comments(thread.root)
-        if not comment.children and comment.mentions
-    ]
+        comment for comment in iter_comments(
+            thread.root
+        ) if not comment.children and comment.mentions]
     if not pending:
         return None
     latest = max(pending, key=lambda comment: comment.line)
@@ -991,16 +884,11 @@ def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | No
     todo = _todo_for(run["run_id"], state, project)
     if run["version"] not in titles:
         titles[run["version"]] = _version_story_title(project, run["version"])
-    return {
-        "run_id": run["run_id"],
-        "title": titles[run["version"]] or run["run_id"],
-        "version": run["version"],
-        "status": run["status"],
-        "stage": run["stage"],
+    return {"run_id": run["run_id"], "title": titles[run["version"]] or run["run_id"],
+        "version": run["version"], "status": run["status"], "stage": run["stage"],
         "updated_ts": run["updated_ts"],
         "control_state": _run_control_state(conn, state, run["run_id"], []),
-        "human_todos": 1 if todo is not None else 0,
-    }
+        "human_todos": 1 if todo is not None else 0,}
 
 
 def project_overview(home: Path) -> dict:
@@ -1021,15 +909,11 @@ def project_overview(home: Path) -> dict:
         return {
             "projects": [
                 {
-                    "project_id": project["project_id"],
-                    "repo_path": project["repo_path"],
+                    "project_id": project["project_id"], "repo_path": project["repo_path"],
                     "version": project["version"],
-                }
-                for project in projects
+                } for project in projects
             ],
-            "runs": runs,
-            "human_todo_count": todo_count,
-        }
+            "runs": runs, "human_todo_count": todo_count,}
     finally:
         if conn is not None:
             conn.close()
@@ -1056,42 +940,29 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
         pause, pause_label = _pause_state(conn, run_id)
         wait = _wait_spec(conn, run_id)
         chain = _chain_rows(repo_path, version, run_id)
-        return {
-            "run_id": run_id,
-            "version": state.version or version,
-            "status": state.status,
-            "stage": state.stage,
-            "substate": state.substate,
+        return {"run_id": run_id, "version": state.version or version, "status": state.status,
+            "stage": state.stage, "substate": state.substate,
             "control_state": _control_state(
                 state, events, pause_label, wait, _is_queued(conn, run_id)
             ),
-            "pause": pause,
-            "wait": wait,
-            "awaiting_gate": _awaiting_gate(state),
+            "pause": pause, "wait": wait, "awaiting_gate": _awaiting_gate(state),
             "return_options": _return_options(repo_path, run_id),
             "progress": {
-                "tasks_done": state.tasks_completed,
-                "tasks_total": state.tasks_total,
-                "tests_passed": _latest_tests_passed(events),
-                "ac_closed": _ac_closed(chain),
+                "tasks_done": state.tasks_completed, "tasks_total": state.tasks_total,
+                "tests_passed": _latest_tests_passed(events), "ac_closed": _ac_closed(chain),
                 "ac_total": len(chain),
             },
-            "quality": {"gates": _gates(events)},
-            "executions": _executions(events),
-            "lease": _lease(conn, run_id),
-        }
+            "quality": {"gates": _gates(events)}, "executions": _executions(events),
+            "lease": _lease(conn, run_id),}
     finally:
         if conn is not None:
             conn.close()
 
 
 def project_timeline(
-    home: Path,
-    run_id: str,
+    home: Path, run_id: str,
     *,
-    command_id: str | None = None,
-    task_id: str | None = None,
-    ac_id: str | None = None,
+    command_id: str | None = None, task_id: str | None = None, ac_id: str | None = None,
     after_seq: str | None = None,
 ) -> dict:
     """Merged tracks.db + service_events timeline with cursor + stage order (§1e)."""
@@ -1117,39 +988,22 @@ def _timeline_rows(
     for event in _run_events(repo_path, run_id):
         rows.append(
             {
-                "source": "tracks",
-                "seq": event.seq,
-                "ts": event.ts,
-                "type": event.type,
-                "run_id": event.run_id,
-                "command_id": event.command_id,
-                "task_id": event.task_id,
-                "ac_refs": _event_ac_refs(event.payload or {}),
-                "summary": event.type,
+                "source": "tracks", "seq": event.seq, "ts": event.ts, "type": event.type,
+                "run_id": event.run_id, "command_id": event.command_id, "task_id": event.task_id,
+                "ac_refs": _event_ac_refs(event.payload or {}), "summary": event.type,
                 "payload_ref": "",
-            }
-        )
-    service = _rows(
-        conn,
+            })
+    service = _rows(conn,
         "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
-        "WHERE run_id = ? ORDER BY seq",
-        (run_id,),
-    )
+            "WHERE run_id = ? ORDER BY seq",
+        (run_id,),)
     for seq, ts, type_, run, command, payload in service:
         rows.append(
             {
-                "source": "service",
-                "seq": int(seq),
-                "ts": ts,
-                "type": type_,
-                "run_id": run,
-                "command_id": command,
-                "task_id": None,
-                "ac_refs": _event_ac_refs(_json(payload)),
-                "summary": type_,
-                "payload_ref": "",
-            }
-        )
+                "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
+                "command_id": command, "task_id": None, "ac_refs": _event_ac_refs(_json(payload)),
+                "summary": type_, "payload_ref": "",
+            })
     rows.sort(key=lambda row: (row["ts"] or "", 0 if row["source"] == "tracks" else 1, row["seq"]))
     return rows
 
@@ -1176,9 +1030,8 @@ def _cursor_of(rows: list[dict]) -> str:
     if not rows:
         return ""
     last = rows[-1]
-    raw = json.dumps(
-        {"ts": last["ts"], "source": last["source"], "seq": last["seq"]}, sort_keys=True
-    )
+    raw = json.dumps({"ts": last["ts"], "source": last["source"], "seq": last["seq"]},
+        sort_keys=True)
     return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
