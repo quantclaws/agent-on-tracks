@@ -1,6 +1,8 @@
-"""Workbench page shells (interfaces §1l / §1m.1; E-01, E-02).
+"""Workbench page shells (interfaces §1e.1 / §1l; E-01, E-02).
 
-v0.10 converges the server-rendered page surface to two HTML documents:
+v0.11 converges the server-rendered page surface to the six-name releases
+world (IF-RELEASES-001 §1e.1 / IF-WORKBENCH-001 v0.11 revision,
+FR-0333/FR-0334 breaking change, GO confirmed):
 
 - ``login`` renders the dual-column auth shell (E-02 / §1m.1): the hero
   column (image + slogan + image attribution) next to the login panel
@@ -8,62 +10,54 @@ v0.10 converges the server-rendered page surface to two HTML documents:
   that the client reveals when the login response carries
   ``name_required`` — E-02, §1m.2). The auth shell also bootstraps the
   shared native ES-module entry (``/static/app/shell.js``, §1l.2), so the
-  login/name flow runs in-page through the browser client — the name step
-  expands in place and the inline error line is carried by the JS flow
-  rather than a full-page navigation (the credential seeding + name flow
-  body lives in the app layer);
-- the seven workbench entries (E-01) render ONE shared workbench shell
-  document carrying the ``data-route`` deep link plus run_id/project_id
-  parameters, the three-zone chrome skeleton (tab bar + sidebar + multi-tab
-  main area), the icon-only seven-item tab bar in its fixed order (FR-0317)
-  and the native ES-module bootstrap ``/static/app/shell.js`` (NFR-0156).
-  All assets stay same-origin under ``/static/``; the shell never inlines
-  material rows or secrets (§1g.3, FR-0303 boundary).
+  login/name flow runs in-page through the browser client;
+- the workbench entries (E-01) render ONE shared workbench shell document
+  carrying the ``data-route`` deep link plus run_id/project_id parameters,
+  the three-zone chrome skeleton (tab bar + sidebar + main area) and the
+  icon-only five-item tab bar in its fixed order — releases/docs/todos/
+  settings/account (§1e.1; the v0.10 seven-item set loses the projects,
+  runs and review entries). All assets stay same-origin under ``/static/``;
+  the shell never inlines material rows or secrets (§1g.3, FR-0303
+  boundary).
 
-The ``PAGES`` closed set (E-01..E-08) and the URL table in ``app.py`` stay
-unchanged. The docs view injects the vendored Vditor build from the same
-origin on demand (interfaces §1n.3) — the server shell no longer inlines the
-editor assets, so the material review entry renders the shared shell too.
+The removed v0.10 URLs never render a page here — ``app.py`` answers them
+with 302 to ``/`` so deep links do not dangle. The docs view keeps loading
+the vendored Vditor build from the same origin on demand (§1n.3).
 
-Contract tokens: IF-WORKBENCH-001, IF-AUTHNAME-001, IF-SECRECY-001.
+Contract tokens: IF-RELEASES-001, IF-WORKBENCH-001, IF-AUTHNAME-001.
 """
 
 from __future__ import annotations
 
 import html
 
-# Closed set of server-rendered pages (E-01..E-08).
+# Closed set of server-rendered pages (IF-RELEASES-001 §1e.1): the six-name
+# releases world — '/' is the releases shell and /docs is the docs deep link.
 PAGES = (
     "login",
-    "overview",
-    "projects",
-    "run_new",
+    "releases",
     "run_detail",
-    "review",
     "todos",
     "release",
+    "docs",
 )
 
 _TITLES = {
     "login": "tracks - login",
-    "overview": "tracks - overview",
-    "projects": "tracks - projects",
-    "run_new": "tracks - new run",
+    "releases": "tracks - releases",
     "run_detail": "tracks - run detail",
-    "review": "tracks - material review",
     "todos": "tracks - todo center",
     "release": "tracks - release",
+    "docs": "tracks - docs",
 }
 
-# The FR-0318 seven-item function set of the tab bar in its fixed,
+# The §1e.1 five-item function set of the tab bar in its fixed,
 # non-draggable order (FR-0317), each entry paired with its deep-link
-# target. Settings/Account open in-page surfaces and carry no navigation
-# URL — they render as buttons, not links.
+# target — the link tabs carry the URL-table entries, while
+# Settings/Account open in-page surfaces and render as buttons, not links.
 _TABBAR_ITEMS = (
-    ("projects", "/projects"),
-    ("runs", "/"),
-    ("docs", "/"),
-    ("review", "/"),
+    ("releases", "/"),
+    ("docs", "/docs"),
     ("todos", "/todos"),
     ("settings", None),
     ("account", None),
@@ -72,15 +66,11 @@ _TABBAR_ITEMS = (
 # Inline icon bodies (no xmlns: an HTML-embedded SVG needs none, and shell
 # assets stay free of any external reference).
 _TABBAR_ICONS = {
-    "projects": (
-        '<rect x="3" y="3" width="7" height="7" rx="1"/>'
-        '<rect x="14" y="3" width="7" height="7" rx="1"/>'
-        '<rect x="3" y="14" width="7" height="7" rx="1"/>'
-        '<rect x="14" y="14" width="7" height="7" rx="1"/>'
+    "releases": (
+        '<path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z"/>'
+        '<circle cx="7.5" cy="7.5" r="1.5"/>'
     ),
-    "runs": '<path d="M7 4.5l12 7.5-12 7.5z"/>',
     "docs": '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
-    "review": '<circle cx="12" cy="12" r="8"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
     "todos": '<path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/>',
     "settings": (
         '<path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h16"/>'

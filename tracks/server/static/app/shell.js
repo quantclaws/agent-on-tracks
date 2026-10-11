@@ -1,23 +1,41 @@
 /**
- * Workbench shell bootstrap (interfaces §1l.1/§1l.2).
+ * Workbench shell bootstrap (interfaces §1l.1/§1l.2, §1e.1 five-tab world).
  *
  * The server renders one shared shell carrying the ``data-route`` deep link;
  * this entry restores the initial tab/sidebar, renders the active functional
  * area, and wires the tab bar's icon items to in-page tab switches (never a
  * full-page navigation — FR-0316). Unknown routes degrade explicitly.
+ *
+ * v0.11 (IF-RELEASES-001 §1e.1): the functional world is the five-tab closed
+ * set — releases/docs/todos/settings/account. Every route of the six-name
+ * URL table resolves into one of those windows: the run-scoped routes
+ * (run detail, release decision) land in the releases window, whose sidebar
+ * registry stays the switcher between runs; the projects and review routes
+ * no longer exist as pages (the server answers their old URLs with a 302
+ * to the releases root).
  */
 
 import { requestJson, setCsrfToken } from "./api.js";
-import { featureForRoute, readRoute } from "./router.js";
+import { readRoute } from "./router.js";
 import { renderSidebar } from "./sidebar.js";
 import { openTab } from "./tabs.js";
 import { renderView } from "./views.js";
 
+// Route → functional window of the §1e.1 URL table. Run-scoped routes ride
+// the releases window; the remaining pages map one-to-one onto their tab.
+const ROUTE_FEATURE = {
+  releases: "releases",
+  run_detail: "releases",
+  release: "releases",
+  docs: "docs",
+  todos: "todos",
+  settings: "settings",
+  account: "account",
+};
+
 const TITLES = {
-  projects: "projects",
-  runs: "runs",
+  releases: "releases",
   docs: "",
-  review: "review",
   todos: "todos",
   settings: "settings",
   account: "account",
@@ -33,7 +51,9 @@ export function bootstrap(root = document) {
   const shell = root.querySelector("#workbench") || root;
   wireTabbar(shell);
   const deepLink = readRoute(root);
-  const feature = featureForRoute(deepLink.route);
+  const feature = Object.prototype.hasOwnProperty.call(ROUTE_FEATURE, deepLink.route)
+    ? ROUTE_FEATURE[deepLink.route]
+    : null;
   if (!feature) {
     renderSidebar({ title: "unknown", nodes: [] }, shell);
     renderView(null, shell.querySelector('[data-testid="main-area"]'), {
@@ -42,12 +62,12 @@ export function bootstrap(root = document) {
     });
     return null;
   }
-  if ((deepLink.route === "run_detail" || deepLink.route === "release") && deepLink.runId) {
-    // A run-scoped deep link opens the Runs window with that run focused
-    // (the sidebar registry stays the switcher between runs).
-    return openTab("runs", {
-      feature: "runs",
-      route: "runs",
+  if (deepLink.runId && (deepLink.route === "run_detail" || deepLink.route === "release")) {
+    // A run-scoped deep link opens the releases window with that run
+    // focused (the sidebar registry stays the switcher between runs).
+    return openTab("releases", {
+      feature: "releases",
+      route: "releases",
       runId: deepLink.runId,
       title: deepLink.runId,
     });
@@ -61,7 +81,7 @@ export function bootstrap(root = document) {
   return tab;
 }
 
-// -- tab bar wiring (FR-0316/FR-0318): one delegated handler turns the seven
+// -- tab bar wiring (FR-0316/FR-0334): one delegated handler turns the five
 // server-rendered icon items into in-page tab switches. A click never follows
 // the <a href> — the same document instance continues — and marks the live
 // document so a full reload is distinguishable from an in-page switch (the

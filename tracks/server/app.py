@@ -14,6 +14,12 @@ merging the api_query read faces (§2b #31-34) plus the api_command
 docs-centre edit face (§2b #35) — the extension routes arrive without
 re-touching this root.
 
+v0.11 (IF-RELEASES-001 §1e.1 / FR-0333/FR-0334) converges the page face
+to the six-name releases world: the ``_PAGE_ROUTES`` URL table maps ``/``
+to the releases shell and adds the ``/docs`` deep link, while the three
+removed v0.10 URLs (``/projects``, ``/projects/{pid}/runs/new``,
+``/runs/{run_id}/review``) answer 302 to ``/``.
+
 The module stays importable without starlette (unit layer): the Starlette
 imports live inside the composing functions. The request seam is the one
 documented by the api modules — ``request.app.state.home`` / ``.service`` /
@@ -24,7 +30,7 @@ boundary (§1f.3) guards everything except ``/healthz``, the login face and
 ``/static``: API misses get 401 JSON, page misses a 302 to ``/login``.
 
 Contract tokens: IF-SERVE-001, IF-WEBAUTH-001, IF-QUERY-001, IF-STREAM-001,
-IF-DOCCENTER-001, IF-DOCSAVE-001.
+IF-DOCCENTER-001, IF-DOCSAVE-001, IF-RELEASES-001.
 """
 
 from __future__ import annotations
@@ -80,16 +86,23 @@ _ROUTES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
     ("/api/runs/{run_id}/events", api_events.stream_events, ("GET",)),
 )
 
-# Server-rendered pages (E-01..E-08, interfaces §2b page list).
+# Server-rendered pages (IF-RELEASES-001 §1e.1 URL table: the six-name
+# releases world — '/' is the releases shell, /docs is the docs deep link).
 _PAGE_ROUTES: tuple[tuple[str, str], ...] = (
-    ("/", "overview"),
+    ("/", "releases"),
     ("/login", "login"),
-    ("/projects", "projects"),
-    ("/projects/{pid}/runs/new", "run_new"),
     ("/runs/{run_id}", "run_detail"),
-    ("/runs/{run_id}/review", "review"),
     ("/todos", "todos"),
     ("/runs/{run_id}/release", "release"),
+    ("/docs", "docs"),
+)
+
+# v0.11 (FR-0333/FR-0334): the three removed v0.10 URLs answer 302 to "/"
+# so pre-convergence deep links never dangle — they render no page.
+_PAGE_REDIRECTS: tuple[tuple[str, str], ...] = (
+    ("/projects", "/"),
+    ("/projects/{pid}/runs/new", "/"),
+    ("/runs/{run_id}/review", "/"),
 )
 
 
@@ -146,6 +159,10 @@ def _build_routes(glue: _AuthGlue) -> list:
         Route(path, _page_endpoint(name), methods=["GET"]) for path, name in _PAGE_ROUTES
     ]
     routes += [
+        Route(path, _redirect_endpoint(target), methods=["GET"])
+        for path, target in _PAGE_REDIRECTS
+    ]
+    routes += [
         Route("/api/auth/login", glue.login, methods=["POST"]),
         Route("/api/auth/logout", glue.logout, methods=["POST"]),
         Route("/api/auth/name", glue.bind_name, methods=["POST"]),
@@ -195,6 +212,17 @@ def _page_endpoint(name: str) -> Any:
         from starlette.responses import HTMLResponse
 
         return HTMLResponse(pages.render_page(name, {}))
+
+    return endpoint
+
+
+def _redirect_endpoint(target: str) -> Any:
+    """One removed v0.10 URL answering 302 to its §1e.1 successor."""
+
+    async def endpoint(request: Any) -> Any:
+        from starlette.responses import RedirectResponse
+
+        return RedirectResponse(target, status_code=302)
 
     return endpoint
 
