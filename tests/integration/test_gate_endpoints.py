@@ -10,6 +10,7 @@ closed loop (gate action → next tick → next gate, no manual dispatch).
 
 from __future__ import annotations
 
+import itertools
 import json
 import sqlite3
 import time
@@ -79,6 +80,12 @@ def _serve_registered(tmp_path: Path, repo: Path):
     return proc, base, cookie, csrf, project_id
 
 
+# every call creates a distinct run, so each carries its own Idempotency-Key:
+# IF-009 §1b.2 dedups same-key + same-params submissions to a 200 receipt, so
+# a reused key would replay the first run's receipt instead of creating a run
+_RUN_SEQ = itertools.count(1)
+
+
 def _create_feature_run(base: str, cookie: str, csrf: str, project_id: str) -> str:
     status, body = http_post(
         base,
@@ -86,7 +93,7 @@ def _create_feature_run(base: str, cookie: str, csrf: str, project_id: str) -> s
         _RUN_PARAMS,
         cookies=cookie,
         csrf=csrf,
-        idempotency_key=f"gateui-run-{project_id}",
+        idempotency_key=f"gateui-run-{project_id}-{next(_RUN_SEQ)}",
     )
     assert status == 202, f"run creation must be accepted: {status} {body[:200]}"
     return json.loads(body)["run_id"]
@@ -143,14 +150,11 @@ def test_awaiting_gate_mapping(tmp_path: Path, host_repo, trac):
             "return",
             "guidance",
         ), f"primary_action stays inside the closed mapping: {gate!r}"
-
-        # a second run still inside its start phase has no gate to act on
-        other = _create_feature_run(base, cookie, csrf, project_id)
-        fresh = _run_detail(base, cookie, other)
-        assert fresh.get("awaiting_gate") is None, (
-            f"a run at no boundary projects awaiting_gate null (§1k.1): "
-            f"{fresh.get('awaiting_gate')!r}"
-        )
+        # the §1k.1 null form (a run at no boundary projects awaiting_gate
+        # null) is owned by test_non_awaiting_no_gate_entry in this module —
+        # under the self-drive contract (FR-0345) a fresh run walks itself to
+        # the next boundary, so "observe a run mid-flight" is not a
+        # deterministic observation on this face
     finally:
         stop_serve(proc)
 

@@ -81,14 +81,14 @@ _LEGACY_SERVICE_SCHEMA = (
     " created_at TEXT, expires_at TEXT);"
 )
 
-# The 7 non-login workbench entries (interfaces §1m.2 name gate; the PAGES
-# URL set minus /login).
+# The non-login workbench URL set of the v0.11 page table (interfaces §1m.2
+# name gate; the IF-RELEASES-001 §1e.1 URL set minus /login). The three
+# removed v0.10 URLs answer 302 to / instead — pinned in
+# tests/unit/test_workbench_shell_convergence_red.py.
 _WORKBENCH_PATHS = (
     "/",
-    "/projects",
-    "/projects/p1/runs/new",
+    "/docs",
     "/runs/r1",
-    "/runs/r1/review",
     "/todos",
     "/runs/r1/release",
 )

@@ -15,6 +15,13 @@ same-origin cases and the ui e2e journey (test-plan §11 #4).
 The closed-set regression half keeps its v0.9 AC anchors; the shell
 convergence half anchors the v0.10 acceptance criteria it serves.
 
+v0.11 contract adaptation (test-plan §11 #8, spec-driven by FR-0333/FR-0334):
+every invariant above survives into the six-name releases world
+(IF-RELEASES-001 §1e.1) and this file keeps pinning them dynamically over
+``pages.PAGES``; the closed-set shape itself (six names, five-tab bar, URL
+table, old-URL 302s) is pinned in
+``tests/unit/test_workbench_shell_convergence_red.py``.
+
 AC: FR-0316-02, FR-0318-03, FR-0320-01, FR-0321-01, FR-0321-02,
 NFR-0153-01 — TRACKS-TRACE IF-WORKBENCH-001, IF-AUTHNAME-001, IF-DOCREV-001.
 """
@@ -33,8 +40,9 @@ _REVISION_OLD = "1" * 64
 _REVISION_NEW = "2" * 64
 _DIFF_LINE = "+revision-two material line"
 
-# The FR-0318 seven-entry function set of the tab bar in its fixed order.
-_TAB_ORDER = ("projects", "runs", "docs", "review", "todos", "settings", "account")
+# The IF-RELEASES-001 §1e.1 five-entry function set of the tab bar in its
+# fixed order (FR-0334: the v0.10 seven-item set loses projects/runs/review).
+_TAB_ORDER = ("releases", "docs", "todos", "settings", "account")
 
 _WORKBENCH_ENTRIES = tuple(name for name in pages.PAGES if name != "login")
 
@@ -44,11 +52,16 @@ _ASSET_REF_RE = re.compile(r'(?:src|href)="([^"]+)"')
 
 
 def _calling(call: Callable[[], Any], label: str) -> Any:
-    """Call a rendering seam; a NotImplementedError stub becomes an assertion."""
+    """Call a rendering seam; a stub or unknown-page miss becomes an assertion."""
     try:
         return call()
     except NotImplementedError as exc:
         raise AssertionError(f"{label} is still a stub: {exc}") from None
+    except ValueError as exc:
+        raise AssertionError(
+            f"{label} must exist in the v0.11 PAGES closed set "
+            f"(IF-RELEASES-001 §1e.1): {exc}"
+        ) from None
 
 
 def _doc_context() -> dict:
@@ -98,11 +111,10 @@ def _tab_segment(html: str, name: str) -> str:
 
 # AC-FR0294-01@v0.9 TRACKS-TRACE IF-DOCREV-001 closed-set pages render HTML shells
 def test_pages_closed_set_renders_html_shells():
-    assert len(pages.PAGES) == 8, "PAGES is the E-01..E-08 closed set"
-    assert set(pages.PAGES) == {
-        "login", "overview", "projects", "run_new",
-        "run_detail", "review", "todos", "release",
-    }, "PAGES must cover the interfaces §2b page list"
+    # The closed-set shape itself (six names, §1e.1) is pinned in
+    # tests/unit/test_workbench_shell_convergence_red.py; this regression
+    # half stays dynamic over whatever PAGES ships.
+    assert pages.PAGES, "PAGES must remain a non-empty closed set"
     for name in pages.PAGES:
         html = _render(name)
         lowered = html.lower()
@@ -164,7 +176,7 @@ def test_login_carries_hidden_name_collection_step():
 # -- workbench shell (E-01): one shared document with data-route deep link ----
 
 
-# AC-FR0316-02@v0.10 TRACKS-TRACE IF-WORKBENCH-001 seven entries render one shared shell
+# AC-FR0316-02@v0.10 TRACKS-TRACE IF-WORKBENCH-001 workbench entries render one shared shell
 def test_workbench_entries_render_shared_shell_with_data_route():
     segments = []
     for name in _WORKBENCH_ENTRIES:
@@ -175,22 +187,26 @@ def test_workbench_entries_render_shared_shell_with_data_route():
             assert anchor in html, f"{name} shell must carry {anchor}"
         body = html[html.index("<body") : html.index("</body>")]
         segments.append(body.replace(f'data-route="{name}"', "data-route=ROUTE"))
-    assert len(set(segments)) == 1, "the seven workbench entries share one shell document"
+    assert len(set(segments)) == 1, "the workbench entries share one shell document"
 
 
 # AC-NFR0153-01@v0.10 TRACKS-TRACE IF-WORKBENCH-001 shell deep-links, never inlines rows
 def test_workbench_shell_carries_deep_link_without_material_rows():
-    html = _calling(lambda: pages.render_page("review", _doc_context()), "render_page(review)")
-    assert 'data-route="review"' in html, "the review entry renders the shared shell"
+    html = _calling(
+        lambda: pages.render_page("run_detail", _doc_context()), "render_page(run_detail)"
+    )
+    assert 'data-route="run_detail"' in html, (
+        "the run detail entry renders the shared shell"
+    )
     assert 'data-run-id="R-T010"' in html, "the deep link carries the run parameter"
     assert 'data-project-id="P-T010"' in html, "the deep link carries the project parameter"
     for leaked in (_REVISION_OLD, _REVISION_NEW, _DIFF_LINE, "reviewed material body", "SPEC-009"):
         assert leaked not in html, "the shell must not inline material rows"
 
 
-# AC-FR0316-02@v0.10 TRACKS-TRACE IF-WORKBENCH-001 review entry hosts no inline editor
-def test_review_entry_renders_shell_without_inline_editor():
-    html = _render("review")
+# AC-FR0316-02@v0.10 TRACKS-TRACE IF-WORKBENCH-001 docs entry hosts no inline editor
+def test_docs_entry_renders_shell_without_inline_editor():
+    html = _render("docs")
     assert "/static/vendor/vditor/" not in html, (
         "the shell must not inline editor asset tags; the docs view loads "
         "the vendored build on demand (§1n.3, test-plan §11 #4)"
@@ -199,15 +215,17 @@ def test_review_entry_renders_shell_without_inline_editor():
         assert ref.startswith("/"), f"shell references stay same-origin: {ref}"
 
 
-# AC-FR0318-03@v0.10 TRACKS-TRACE IF-WORKBENCH-001 tab bar: seven icon entries, fixed order
-def test_tabbar_renders_seven_fixed_icon_entries():
-    html = _render("overview")
+# AC-FR0334-01@v0.11 TRACKS-TRACE IF-WORKBENCH-001 tab bar: five icon entries, fixed order
+def test_tabbar_renders_five_fixed_icon_entries():
+    html = _render("releases")
     positions = []
     for name in _TAB_ORDER:
         token = f'data-testid="tabbar-item-{name}"'
         assert token in html, f"the tab bar must carry the {name} entry"
         positions.append(html.index(token))
-    assert positions == sorted(positions), "tab bar keeps the fixed seven-entry order (FR-0317)"
+    assert positions == sorted(positions), (
+        "tab bar keeps the fixed five-entry order (IF-RELEASES-001 §1e.1)"
+    )
     for name in _TAB_ORDER:
         segment = _tab_segment(html, name)
         assert "<svg" in segment, f"the {name} entry is icon-only"

@@ -274,6 +274,13 @@ def test_service_events_closed_set_matches_interfaces():
         "auth.login",
         # v0.10 IF-009 §1a 表 #25（FR-0321 审计）：名字绑定追加只读日志成员
         "auth.name_bound",
+        # v0.11 interfaces §0.1 #3 / §1a #26-28（FR-0338 审计）：intake 面三
+        # 成员（提交/评估/决策）随统一入口追加——T-002 RED 修订 round 1 对齐
+        # 钉定合同（PLANNING 承接 DIAGNOSE plan_defect seq 10722；v0.9 等值
+        # 钉与 v0.11 追加成员互斥，无生产状态可同时满足两侧）。
+        "intake.submitted",
+        "intake.evaluated",
+        "intake.decided",
     }
     assert len(sdb.SERVICE_EVENT_TYPES) == len(set(sdb.SERVICE_EVENT_TYPES))
 
@@ -305,6 +312,15 @@ def test_service_command_kinds_and_actor_partition():
         "return_stage",
         "retry_run",
         "drive_run",
+        # v0.11 interfaces §0.1 #2 / §1b #14-18（FR-0338/FR-0340/FR-0342）：
+        # 统一入口受理、intake 决策、backlog 处置与两个人工门记录命令随
+        # v0.11 追加且全部 human-only——T-002 RED 修订 round 1 对齐钉定合同
+        # （同上：v0.9 十三 kind 等值钉与本任务 R 节点要求的五新成员互斥）。
+        "submit_intake",
+        "decide_intake",
+        "dispose_backlog",
+        "record_triage",
+        "record_review",
     }
     assert set(svc.SERVICE_COMMAND_KINDS) == expected
     assert expected - {"drive_run"} == svc.HUMAN_ONLY_KINDS
