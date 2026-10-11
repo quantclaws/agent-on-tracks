@@ -83,7 +83,10 @@ def _seed_progressed_run(repo: Path, run_id: str) -> None:
 
 
 def _seed_publish_executed_run(repo: Path, run_id: str) -> None:
-    """A rollback-capable run: history already carries a published release."""
+    """A rollback-capable run: history already carries a published release —
+    the executed irreversible op rides the sealed done-op vocabulary the
+    shared legality rule counts (§1m.1 shared computation with
+    ``trac return``; R pin tests/unit/test_t002_return_stage_sync_red.py)."""
     _append(repo, run_id, "stage.entered", {"stage": "M-RELEASE"})
     _append(
         repo,
@@ -91,7 +94,33 @@ def _seed_publish_executed_run(repo: Path, run_id: str) -> None:
         "release.previewed",
         {"preview_digest": "sha256:" + "b" * 64},
     )
-    _append(repo, run_id, "publish.executed", {"tag": "v1.0.0", "remote": "origin"})
+    _append(
+        repo,
+        run_id,
+        "publish.executed",
+        {"status": "done", "operation_kind": "merge", "target": "main"},
+    )
+
+
+def _wait_for_event(repo: Path, run_id: str, kind: str, timeout: float = 15.0) -> None:
+    """Bounded wait for a command-executed event on the run plane."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        store = Store(tracks_home(repo))
+        try:
+            events = [event.type for event in store.events(run_id)]
+        finally:
+            store.close()
+        if kind in events:
+            return
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"{kind!r} never landed on the run plane within {timeout}s: "
+                f"{events!r}"
+            )
+        time.sleep(0.2)
 
 
 def _detail(base: str, cookie: str, run_id: str) -> dict:
@@ -338,14 +367,7 @@ def test_return_confirm_revalidation(tmp_path: Path):
         # leg 3: revalidation — the same return replays into a refusal that
         # names the reason and the legal continue position (no disguised undo
         # of the first executed return, §1m.2)
-        store = Store(tracks_home(repo))
-        try:
-            events = [event.type for event in store.events("run-tf-confirm")]
-        finally:
-            store.close()
-        assert "stage.rolled_back" in events, (
-            f"the executed return must be audited on the run plane: {events!r}"
-        )
+        _wait_for_event(repo, "run-tf-confirm", "stage.rolled_back")
         status, body = http_post(
             base,
             "/api/runs/run-tf-confirm/return",

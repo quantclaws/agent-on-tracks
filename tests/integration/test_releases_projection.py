@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -314,8 +315,9 @@ def test_backlog_storage_and_archive_distinct(tmp_path: Path):
 # AC-FR0340-02@v0.11 TRACKS-TRACE disposition recorded and promote flow
 def test_disposition_recorded_and_promote_flow(tmp_path: Path):
     """AC-FR0340-02: removing or promoting a backlog entry records the
-    disposition (``backlog.dispositioned``: removed/promoted + to), the entry
-    leaves the backlog projection, and the destination stays queryable; the
+    disposition (``backlog.dispositioned``: removed/promoted + to); the
+    retained row carries the marker while the folded count drops to the
+    undispositioned only (§1d.3 — the whereabouts stay queryable); the
     promote path re-enters the new-release flow through the unified entry."""
     proc, home, repo = _start_releases_serve(tmp_path)
     try:
@@ -338,13 +340,70 @@ def test_disposition_recorded_and_promote_flow(tmp_path: Path):
         assert status == 202, (
             f"the remove disposition must be accepted: {status} {body[:200]}"
         )
+        # the removal rides the worker — poll the public #36 face, then pin
+        # the locked fold: the retained row carries the marker (§1d.3 R pin:
+        # entries keep disposed rows, count folds to undispositioned only)
+        deadline = time.monotonic() + 15.0
+        while True:
+            payload = _releases(base, cookie, "proj-rel-4")
+            rows = {row["entry_id"]: row for row in payload["backlog"]["entries"]}
+            removed_row = rows.get(entry_a)
+            if removed_row is not None and removed_row["disposition"] == "removed":
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(
+                    "the removal never landed on the backlog projection within "
+                    f"15s: count={payload['backlog'].get('count')} rows={rows!r}"
+                )
+            time.sleep(0.2)
+        assert rows[entry_b]["disposition"] is None, (
+            f"the untouched entry stays the open control row: {rows[entry_b]!r}"
+        )
+        assert payload["backlog"]["count"] == 1, (
+            "the folded count only counts undispositioned entries (§1d.3): "
+            f"{payload['backlog']!r}"
+        )
 
-        # promote entry_b: the unified entry re-submits it as a backlog-source
-        # intake (§1f.1 转正 = submit_intake(source=backlog, origin_entry))
+        # promote half: the develop outcome needs a boundary-free project —
+        # an in-flight seeded run would make the §1g.1a active-run
+        # backlog_recorded outcome the legal develop terminal, while the
+        # promoted disposition only rides develop success (§1f.3 SM-01), so
+        # the unified-entry flow (§1f.1 转正 = submit_intake(source=backlog,
+        # origin_entry)) runs on its own repo with no runs in flight
+        repo_b = tmp_path / "repo-promote"
+        repo_b.mkdir()
+        (repo_b / "README.md").write_text("promote host\n", encoding="utf-8")
+        (repo_b / ".gitignore").write_text(".tracks/\n", encoding="utf-8")
+        for args in (
+            ("init", "-b", "main"),
+            ("config", "user.email", "releases@example.com"),
+            ("config", "user.name", "Releases Human"),
+            ("add", "README.md", ".gitignore"),
+            ("commit", "-m", "initial"),
+        ):
+            _git(repo_b, *args)
+        _register(home, repo_b, "proj-rel-5", "v1.0")
+        entry_p = new_ulid()
+        _append(
+            repo_b,
+            entry_p,
+            "v1.0",
+            "backlog.recorded",
+            {
+                "reason": "active_run",
+                "source": "issue",
+                "content": "转正候选条目",
+                "intake_id": None,
+            },
+        )
+
+        # the unified entry re-submits the backlog row as a backlog-source
+        # intake and the develop action rides the evaluated precondition
+        # (§1b #14/#15)
         status, body = http_post(
             base,
-            "/api/projects/proj-rel-4/intakes",
-            {"source": "backlog", "origin_entry": entry_b},
+            "/api/projects/proj-rel-5/intakes",
+            {"source": "backlog", "origin_entry": entry_p},
             cookies=cookie,
             csrf=csrf,
             idempotency_key="rel-promote-submit-1",
@@ -353,8 +412,7 @@ def test_disposition_recorded_and_promote_flow(tmp_path: Path):
             f"the backlog-source resubmission must be accepted: {status} {body[:200]}"
         )
         promote_intake = json.loads(body)["intake_id"]
-        # the develop action rides the same evaluated precondition (§1b #15)
-        wait_intake_terminal(base, cookie, "proj-rel-4", promote_intake)
+        wait_intake_terminal(base, cookie, "proj-rel-5", promote_intake)
         status, body = http_post(
             base,
             f"/api/intakes/{promote_intake}/decisions",
@@ -366,25 +424,36 @@ def test_disposition_recorded_and_promote_flow(tmp_path: Path):
         assert status == 202, (
             f"the develop decision must be accepted: {status} {body[:200]}"
         )
+        # develop success disposes the origin entry promoted (§1f.3 SM-01:
+        # 转正 = submit_intake(backlog) 走新建流程, develop 成功后处置原条目) —
+        # the disposition rides the worker, so poll the public #36 face
+        deadline = time.monotonic() + 90.0
+        while True:
+            promote_payload = _releases(base, cookie, "proj-rel-5")
+            promote_rows = {
+                row["entry_id"]: row for row in promote_payload["backlog"]["entries"]
+            }
+            promoted_row = promote_rows.get(entry_p)
+            if promoted_row is not None and promoted_row["disposition"] == "promoted":
+                break
+            if time.monotonic() > deadline:
+                raise AssertionError(
+                    "the promoted disposition never landed on the backlog "
+                    "projection within 90s although develop completed (decided "
+                    "+ run created): count="
+                    f"{promote_payload['backlog'].get('count')} rows={promote_rows!r}"
+                )
+            time.sleep(0.5)
 
-        payload = _releases(base, cookie, "proj-rel-4")
-        rows = {row["entry_id"]: row for row in payload["backlog"]["entries"]}
-        assert entry_a not in rows, (
-            f"a removed entry must leave the backlog projection: {rows!r}"
+        # the removed entry keeps its row with the removal marker — the
+        # whereabouts stay queryable, only the folded count drops it (§1d.3)
+        assert promoted_row["to"], (
+            "the promoted entry keeps its whereabouts queryable (§1d.3): "
+            f"{promoted_row!r}"
         )
-        if entry_b in rows:
-            # still present only while its promote flow has not disposed it;
-            # either way the disposition face must be queryable
-            assert rows[entry_b]["disposition"] in (None, "promoted"), (
-                f"the promoted entry carries its disposition: {rows[entry_b]!r}"
-            )
-        removed_targets = [
-            row
-            for row in payload["backlog"]["entries"]
-            if row.get("disposition") == "removed"
-        ]
-        assert not removed_targets, (
-            "a disposed entry must not stay listed as an open backlog row"
+        assert promote_payload["backlog"]["count"] == 0, (
+            "the folded count only counts undispositioned entries (§1d.3): "
+            f"{promote_payload['backlog']!r}"
         )
     finally:
         stop_serve(proc)
