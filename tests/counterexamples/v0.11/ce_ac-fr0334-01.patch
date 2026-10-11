@@ -1,9 +1,10 @@
 --- a/tracks/server/pages.py
 +++ b/tracks/server/pages.py
 @@ -36,6 +36,7 @@ PAGES = (
+     "login",
+     "releases",
      "run_detail",
 +    "review",
      "todos",
      "release",
-     "docs",
  )

@@ -1,6 +1,6 @@
 --- a/tracks/effects/opencode_review.py
 +++ b/tracks/effects/opencode_review.py
-@@
+@@ -5,4 +5,4 @@
 -                    # v0.11 §1p.2: revise only for the reviewer's own pending
 -                    # findings threads; non-self threads are not a basis.
 -                    if pending:
