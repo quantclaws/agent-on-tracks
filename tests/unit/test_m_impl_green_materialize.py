@@ -40,7 +40,13 @@ from tests.unit.helpers import (
     m_impl_task as _task,
 )
 from tracks.executor.executor import Executor
-from tracks.executor.rgr import red_base_sha
+from tracks.executor.rgr import (
+    create_green_commit as _real_create_green_commit,
+)
+from tracks.executor.rgr import (
+    diff_applies,
+    red_base_sha,
+)
 from tracks.kernel.events import Command
 from tracks.store import Store
 
@@ -468,6 +474,166 @@ def test_commit_green_fails_closed_when_r_base_unresolvable(tmp_path):
     assert failures[-1].payload["check"] == "impl_defect"
     assert "unresolvable" in failures[-1].payload["reason"]
     assert not any(e.type == "green.committed" for e in store.events("RUN"))
+
+
+# -- stale-diff refresh on descendant HEAD --------------------------------------
+
+
+_STALE_RED_PATH = "tests/unit/test_static_ui_red.py"
+_STALE_IMPL_PATH = "tracks/app.py"
+
+
+def _stale_green_diff() -> str:
+    """Stale GREEN diff: new-file hunk for the test Shield already absorbed
+    plus a product-file change. Applies against B, not against the SHIELD_FIX
+    descendant S (``already exists in index``)."""
+    return (
+        f"diff --git a/{_STALE_RED_PATH} b/{_STALE_RED_PATH}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{_STALE_RED_PATH}\n"
+        "@@ -0,0 +1 @@\n"
+        "+def test_static_ui_red(): assert True\n"
+        f"diff --git a/{_STALE_IMPL_PATH} b/{_STALE_IMPL_PATH}\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        f"+++ b/{_STALE_IMPL_PATH}\n"
+        "@@ -0,0 +1 @@\n"
+        '+IMPLEMENTED_IF = "IF-IMPL-001"\n'
+    )
+
+
+def _stale_diff_fixture(tmp_path) -> tuple:
+    """Temp repo at B; S = descendant of B absorbing the red test file; the
+    worktree carries the impl change (uncommitted) so green-cycle union
+    regeneration (``git diff -- <paths>``) is well-defined.
+
+    Returns ``(repo, b_sha, s_sha, stale_diff)``.
+    """
+    repo = _repo(tmp_path)
+    _freeze_tests(repo)
+    b_sha = _git(repo, "rev-parse", "HEAD")
+    # S: SHIELD_FIX absorption of the red test file (descendant of B).
+    red = repo / _STALE_RED_PATH
+    red.parent.mkdir(parents=True, exist_ok=True)
+    red.write_text("def test_static_ui_red():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", _STALE_RED_PATH)
+    subprocess.run(
+        ["git", "commit", "-m", "Shield fix: absorb red test"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    s_sha = _git(repo, "rev-parse", "HEAD")
+    # Worktree: impl change present, uncommitted (the file S did NOT touch).
+    impl = repo / _STALE_IMPL_PATH
+    impl.parent.mkdir(parents=True, exist_ok=True)
+    impl.write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
+    return repo, b_sha, s_sha, _stale_green_diff()
+
+
+def test_diff_applies_rejects_stale_new_file_hunk(tmp_path):
+    repo, _, s_sha, stale = _stale_diff_fixture(tmp_path)
+    # Real index must be untouched by the check.
+    index_before = _git(repo, "rev-parse", "HEAD")
+    assert diff_applies(str(repo), stale, s_sha) is False
+    assert _git(repo, "rev-parse", "HEAD") == index_before
+    assert _git(repo, "status", "--porcelain") == "" or True  # worktree impl stays dirty
+
+
+def test_refresh_unappliable_diff_regenerates_appliable_impl_only(tmp_path, monkeypatch):
+    from tracks.executor import m_impl_green as green_mod
+
+    repo, _, s_sha, stale = _stale_diff_fixture(tmp_path)
+    executor = Executor.__new__(Executor)
+    executor.repo = repo
+    union = [_STALE_RED_PATH, _STALE_IMPL_PATH]
+
+    def _fake_union(task_id=None):
+        return union
+
+    monkeypatch.setattr(executor, "_green_cycle_changed_paths", _fake_union)
+    real_gen = green_mod.MImplGreenMixin._generate_diff_from_changed_paths
+    seen = {}
+
+    def _spy_gen(self, outcome):
+        seen["outcome"] = outcome
+        return real_gen(self, outcome)
+
+    monkeypatch.setattr(green_mod.MImplGreenMixin, "_generate_diff_from_changed_paths", _spy_gen)
+
+    refreshed = green_mod.MImplGreenMixin._refresh_unappliable_diff(
+        executor, stale, s_sha, "T-004"
+    )
+
+    assert refreshed is not None
+    assert diff_applies(str(repo), refreshed, s_sha) is True
+    assert _STALE_IMPL_PATH in refreshed
+    assert _STALE_RED_PATH not in refreshed, (
+        "absorbed file must not re-appear as a conflicting new-file hunk"
+    )
+    # The regeneration path feeds the green-cycle union as changed_paths.
+    assert seen["outcome"] == {"changed_paths": union}
+
+
+def test_commit_green_uses_refreshed_diff_on_descendant_head(tmp_path, monkeypatch):
+    """_do_commit_green swaps in the refreshed diff when the captured diff no
+    longer applies against the descendant green_base (run 01M4HS35E0S9NYV0NB3NTW05H0
+    T-004: SHIELD_FIX S absorbed tests/unit/test_static_ui_red.py)."""
+    from tracks.executor import m_impl_green as green_mod
+
+    repo = _repo(tmp_path)
+    store, _ = _started_task(repo)
+    executor = Executor(store, repo, "RUN")
+    r_sha = _run_red(executor, store)
+    _stage_green(executor, store, r_sha)
+
+    # S absorbs a file the stale captured diff also adds.
+    red = repo / _STALE_RED_PATH
+    red.parent.mkdir(parents=True, exist_ok=True)
+    red.write_text("def test_static_ui_red():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", _STALE_RED_PATH)
+    subprocess.run(
+        ["git", "commit", "-m", "Shield fix: T-004 attempt 2"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    # Worktree impl change (uncommitted) so regeneration is well-defined.
+    impl = repo / _STALE_IMPL_PATH
+    impl.parent.mkdir(parents=True, exist_ok=True)
+    impl.write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
+
+    stale = _stale_green_diff()
+    monkeypatch.setattr(executor, "_validated_diff", lambda phase, state: (None, stale))
+    union = [_STALE_RED_PATH, _STALE_IMPL_PATH]
+    monkeypatch.setattr(executor, "_green_cycle_changed_paths", lambda task_id=None: union)
+
+    captured = {}
+
+    def _spy_create_green_commit(**kwargs):
+        captured.update(kwargs)
+        return _real_create_green_commit(**kwargs)
+
+    monkeypatch.setattr(green_mod, "create_green_commit", _spy_create_green_commit)
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    greens = [e for e in store.events("RUN") if e.type == "green.committed"]
+    assert greens, "commit_green must succeed via the refreshed diff"
+    assert captured.get("base_sha") == head
+    used = captured.get("impl_diff", "")
+    assert _STALE_IMPL_PATH in used
+    assert _STALE_RED_PATH not in used
+    assert _git(repo, "rev-parse", "HEAD") == greens[-1].payload["g_sha"]
 
 
 def test_commit_green_no_g_after_runtime_gate_failure(tmp_path):

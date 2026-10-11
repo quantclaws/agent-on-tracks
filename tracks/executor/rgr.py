@@ -24,6 +24,7 @@ __all__ = [
     "classify_red",
     "create_red_ref",
     "create_green_commit",
+    "diff_applies",
     "verify_lineage",
     "red_base_sha",
 ]
@@ -217,6 +218,45 @@ def create_green_commit(
         date=_base_commit_date(repo, base_sha),
     )
     return GreenCommit(sha=g_sha, parent=base_sha, trailers=trailers)
+
+
+def diff_applies(repo: str, diff_text: str, base_sha: str) -> bool:
+    """Check whether ``diff_text`` applies cleanly onto ``base_sha`` (cached).
+
+    Builds a TEMP index (``GIT_INDEX_FILE`` + ``git read-tree base_sha``) and
+    runs ``git apply --check --cached`` against it; never touches the real
+    index. Returns True when the diff applies, False otherwise (including an
+    unresolvable base or any git failure). Mirrors ``_build_tree`` so the
+    ``commit_green`` path can detect a stale GREEN impl diff re-based onto a
+    descendant HEAD (e.g. a SHIELD_FIX commit that already absorbed a new-file
+    hunk) before ``git apply --cached`` fails deterministically.
+    """
+    if not diff_text.strip():
+        return True
+    if not isinstance(base_sha, str) or not base_sha.strip():
+        return False
+    index_path: str | None = None
+    diff_path: str | None = None
+    try:
+        index_path = _temp_index(repo, base_sha)
+        diff_path = _write_temp(diff_text, ".diff")
+        env = dict(os.environ, GIT_INDEX_FILE=index_path)
+        proc = subprocess.run(
+            ["git", "apply", "--check", "--cached", "--whitespace=nowarn", diff_path],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        if index_path is not None:
+            _safe_unlink(index_path)
+        if diff_path is not None:
+            _safe_unlink(diff_path)
 
 
 def verify_lineage(

@@ -17,7 +17,7 @@ from tracks.executor.m_impl_anchor import (
     _manifest_path_matches,
     emit_devon_outcome_failure,
 )
-from tracks.executor.rgr import create_green_commit, red_base_sha, verify_lineage
+from tracks.executor.rgr import create_green_commit, diff_applies, red_base_sha, verify_lineage
 from tracks.executor.test_select import EvidenceIdentity, TestSelectError, reuse_allowed
 from tracks.kernel.machine import State
 from tracks.project import load_contract
@@ -416,6 +416,32 @@ class MImplGreenMixin:
                     return recorded
         return attempt
 
+    def _refresh_unappliable_diff(
+        self, diff: str, green_base: str, task_id: str | None
+    ) -> str | None:
+        """Regenerate a GREEN impl diff that no longer applies onto ``green_base``.
+
+        A mid-task SHIELD_FIX commit landing as a descendant of B can absorb a
+        new-file hunk the captured diff still carries, so ``git apply
+        --cached`` would fail deterministically ("already exists in index").
+        Regenerate from the working tree via the same green-cycle union the
+        ``_validated_diff`` fallback uses; return the refreshed diff only when
+        it is non-empty AND applies against ``green_base``, else None (caller
+        keeps the existing fail-closed behavior and never commits unverified
+        content).
+        """
+        if diff_applies(str(self.repo), diff, green_base):
+            return None
+        union = self._green_cycle_changed_paths(task_id)
+        if not union:
+            return None
+        refreshed = self._generate_diff_from_changed_paths({"changed_paths": union})
+        if not refreshed or not refreshed.strip():
+            return None
+        if not diff_applies(str(self.repo), refreshed, green_base):
+            return None
+        return refreshed
+
     def _do_commit_green(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
@@ -474,6 +500,9 @@ class MImplGreenMixin:
             )
             self._rebuild_task_log_projection()
             return
+        refreshed = self._refresh_unappliable_diff(diff, green_base, task_id)
+        if refreshed is not None:
+            diff = refreshed
         g = create_green_commit(
             repo=str(self.repo),
             run_id=self.run_id,
