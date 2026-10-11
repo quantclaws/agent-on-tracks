@@ -169,7 +169,10 @@ def test_triage_review_events_csrf_idempotency(tmp_path: Path, host_repo, trac):
     proc, base, cookie, csrf, project_id = _serve_registered(tmp_path, repo)
     try:
         # triage half: walk a run to the M-STORY triage boundary and decide go
-        triage_run = _create_feature_run(base, cookie, csrf, project_id + "-t")
+        # (the real registered project id: a suffix would address an
+        # unregistered project and orphan the run off the web plane;
+        # run distinctness comes from the per-call idempotency keys)
+        triage_run = _create_feature_run(base, cookie, csrf, project_id)
         wait_run_awaiting(base, cookie, triage_run, ("triage",))
 
         # credential discipline first: the bare write is refused
@@ -239,7 +242,7 @@ def test_triage_review_events_csrf_idempotency(tmp_path: Path, host_repo, trac):
         )
 
         # review half: the no-comment review reuses the same discipline
-        review_run = _create_feature_run(base, cookie, csrf, project_id + "-r")
+        review_run = _create_feature_run(base, cookie, csrf, project_id)
         wait_run_awaiting(base, cookie, review_run, ("triage",))
         status, body = http_post(
             base,

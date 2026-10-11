@@ -143,7 +143,9 @@ def test_develop_creates_branch_run_title(tmp_path: Path, host_repo, trac):
             f"the develop action must pass the gate: {status} {body[:200]}"
         )
 
-        branch = _wait_for(lambda: "releases/v2.0" in _branches(repo) or None)
+        branch = _wait_for(
+            lambda: "releases/v2.0" if "releases/v2.0" in _branches(repo) else None
+        )
         assert branch is not None, (
             f"the gate must derive releases/v2.0 from the seeded releases/v1.0: "
             f"{sorted(_branches(repo))!r}"
