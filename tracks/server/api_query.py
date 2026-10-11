@@ -40,6 +40,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -834,16 +835,21 @@ def _project_doc_history(
         payload = event["payload"]
         for revision in (payload.get("to_revision"), payload.get("from_revision")):
             add(revision, event["ts"], payload.get("actor"))
-    rel_dir = _relpath(version_dir, repo)
-    if rel_dir is not None:
-        triples = _git_log_triples(repo, rel_dir)
-        if triples is not None:
-            digests = _commit_trio_digests(
-                repo, [sha for sha, _, _ in triples], rel_dir
-            )
-            for sha, date, author in triples:
-                add(digests.get(sha), date.strip(), author.strip())
+    _add_git_commit_revisions(repo, version_dir, add)
     return entries
+
+
+def _add_git_commit_revisions(
+    repo: Path, version_dir: Path, add: Callable[[object, object, object], None]
+) -> None:
+    """Fold the version directory's git commits into the history via ``add``."""
+    rel_dir = _relpath(version_dir, repo)
+    triples = _git_log_triples(repo, rel_dir) if rel_dir is not None else None
+    if triples is None:
+        return
+    digests = _commit_trio_digests(repo, [sha for sha, _, _ in triples], rel_dir)
+    for sha, date, author in triples:
+        add(digests.get(sha), date.strip(), author.strip())
 
 
 def _project_material_events(home: Path, repo: Path, version: str, doc: str) -> list[dict]:
