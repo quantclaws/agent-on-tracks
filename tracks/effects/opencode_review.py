@@ -31,6 +31,12 @@ from .opencode_audit import _discussion_snapshot, _docset_text
 # same normalized/lowercased identity the discuss writer uses).
 _HUMAN_SPEAKER = "Human"
 
+# IF-REVIEW-002 §1p.2 (FR-0347, v0.11): the LEX_REVIEW revise branch narrows
+# to the reviewer's OWN pending findings threads — the thread initiator
+# matched against the current review role through the same ``speaker_key``
+# identity the discuss writer uses.
+_LEX_SPEAKER = "Lex"
+
 
 def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
     """The unresolved threads whose adjudication owner is Human (FR-0332).
@@ -61,6 +67,45 @@ def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
                 }
             )
     return pending
+
+
+def _reviewer_own_pending_threads(doc_paths: list[Path], reviewer: str) -> bool:
+    """Whether any unresolved thread was initiated by ``reviewer`` (FR-0347).
+
+    IF-REVIEW-002 §1p.2: only the reviewer's own pending findings threads
+    constitute a revise ground (the thread initiator matched against the
+    current review role). Unresolved threads initiated by anyone else are
+    their initiator's business — they never trigger a finding-free revision.
+    Computed server-side from the tracks/discuss parse, same as the park
+    branch."""
+    own_key = speaker_key(reviewer)
+    for path in doc_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for thread in parse_threads(text):
+            if thread.status == "resolved":
+                continue
+            if speaker_key(thread.initiator) == own_key:
+                return True
+    return False
+
+
+def _lex_review_verdict(doc_paths: list[Path]) -> tuple[str, list[dict] | None]:
+    """The LEX_REVIEW exit verdict (FR-0332 §1s.1 + IF-REVIEW-002 §1p.2).
+
+    Three branches: every thread resolved -> handled by check_ready upstream
+    (pass); only Human-adjudicated pending threads -> the
+    ``pass-pending-human-threads`` park with its §1s.1 payload; v0.11
+    narrowing — revise only when the reviewer (Lex) has own pending findings
+    threads, otherwise pass: non-own unresolved threads never constitute a
+    revise ground (thread confirmation stays with the initiator)."""
+    pending = _pending_human_threads(doc_paths)
+    if pending:
+        return _PARK_VERDICT, pending
+    if _reviewer_own_pending_threads(doc_paths, _LEX_SPEAKER):
+        return "revise", None
+    return "pass", None
 
 
 class OpencodeReviewMixin:
@@ -362,15 +407,12 @@ class OpencodeReviewMixin:
                 if ready:
                     result["verdict"] = "pass"
                 elif substate == "LEX_REVIEW":
-                    # FR-0332 §1s.1 three-branch LEX_REVIEW exit: only a
-                    # Human-pending-only doc-set parks; every other unresolved
-                    # owner keeps the revise route.
-                    pending = _pending_human_threads(doc_paths)
+                    # FR-0332 §1s.1 + IF-REVIEW-002 §1p.2 (v0.11): see
+                    # ``_lex_review_verdict`` for the three-branch exit —
+                    # the park payload rides along only on the park branch.
+                    result["verdict"], pending = _lex_review_verdict(doc_paths)
                     if pending:
-                        result["verdict"] = _PARK_VERDICT
                         result["pending_threads"] = pending
-                    else:
-                        result["verdict"] = "revise"
                 else:
                     result["verdict"] = "revise"
         return result

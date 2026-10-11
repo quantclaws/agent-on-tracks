@@ -448,9 +448,20 @@ class OpencodeAuditMixin:
             # author's RESPOND nothing anchored to reply to. Verdict revise
             # with no open reviewer-initiated thread in the doc-set ->
             # classified failure; verdict pass stays legal without threads.
+            #
+            # IF-REVIEW-002 §1p.2 (v0.11, FR-0347): the LEX_REVIEW face is
+            # governed by the narrowed `_lex_review_verdict`
+            # (opencode_review) — with content validation passed, a doc-set
+            # whose pending threads are all non-own (another reviewer's or
+            # Human-adjudicated) is the legal pass / pass-pending-human-
+            # threads shape, never a bare revise (a genuine LEX revise
+            # always carries reviewer-own threads, which the condition
+            # below already excludes). The doc-anchored M-DESIGN channel
+            # (non-LEX reviewer faces) keeps the bare-revise protection.
             ready, blockers = check_ready(_docset_text(doc_paths))
             if (
-                not ready
+                substate != "LEX_REVIEW"
+                and not ready
                 and not _unresolved_role_threads(doc_paths, role)
                 and not structured_findings
             ):

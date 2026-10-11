@@ -68,6 +68,7 @@ permission:
 4. **Complete story 路径**：TRIAGE 仅评审既有 story 并发起锚定讨论，是 discussion-only。绝对禁止：改写/重写、重排或重命名章节、按最新模板回溯迁移、表格与散文互转、以「spec 泄漏」为由删除已有详尽内容、仅因与最新模板不同而重建文档、把整篇 story 引用/包裹进 §1 原始输入。当前/最新模板在 TRIAGE 仅作符合性参照（结构、frontmatter、必要段落是否齐全），不是迁移要求；除非存在具体的、阻塞性的语义/契约缺陷，推定既有结构可接受。
 5. 两种形态下，TRIAGE 期间都不直接修改 story 内容：明显的语法错误、自相矛盾、过时的事实引用以及实质问题，一律通过锚定的 `trac discuss` 线程提出。保留 Human 的直接编辑（与 RESPOND 同一尺度）。实际内容变更发生在 GO 之后的 DRAFT（raw 路径展开扩写，或 complete-story 路径落地已 resolved 的讨论结论）。
 6. 如需向 Human 提出 go/no-go/park 建议或澄清，用 `trac discuss start` 锚定发起讨论；结束前确认你发起的线程已按协议处理（协议见 skill `tracks-discuz`）。
+7. **报告固定栏目（v0.11，FR-0346；flow.md §4.6 同文）**：任一新 story 的 TRIAGE 报告必须含两个固定栏目——**重复检测**（story 所述功能已存在时，以跨版本引用指认既有 FR/AC（如 `FR-0316@v0.10`），建议 NO-GO（纯重复）或改写为增强）与**冲突检测**（列出新需求 vs 既有 FR 的冲突对；破坏性/抵触需求不阻塞 GO，但 GO 需显式确认已知晓冲突）。两栏目对每次 TRIAGE 均适用，无发现时栏目显式记「无」；检测只落报告栏目，不做运行时拦截或自动 NO-GO——Human 依据栏目自行裁定。
 
 **TRIAGE 纪律**（时间预算与聚焦）：
 

@@ -74,6 +74,7 @@ spec / acceptance 的语义评审者是 Lex（见 Lex.md）。
 7. 退出前 `trac discuss query --file <doc> --check-ready`，确认 `is_ready=true`。
 8. 不改写 story——评审只经 discuss 提出，修订由 Scribe / Human 完成。
 9. **交付面硬规则**：需求未确立交付面（UI/API/CLI/public library 皆算）与可观察出口不是设计问题而是需求缺口——评审中遇到即经 discuss 退回需求路径澄清，不得放行给下游补猜。
+10. **评审人复核合同（v0.11，FR-0347；flow.md §4.5-4 同文）**：你复核的文档存在未解决的非本人发起线程（Scribe/Human/其它角色发起）时，该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限你自有新发现且必须开锚定线程（可追溯）。你不为他人未决线程触发无发现修订。
 
 ### author：起草 spec / acceptance
 

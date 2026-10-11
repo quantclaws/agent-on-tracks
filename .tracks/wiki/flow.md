@@ -45,7 +45,7 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 
 **目的**：建立 release 工作基础——release 分支、projects/v{x}/ 目录、初始 story.md。支持两种 Human 启动输入：(1) 原始 seed（一行/简短设想），逐字记入 story 骨架；(2) 已写就的完整 story，原样采纳为初始 story 文档（绝不将其整体引用/包裹进 §1 原始输入）。
 
-**进入条件**：Human 发起新 release 请求，并提供原始 seed 或已写就的完整 story。
+**进入条件**：Human 经统一入口提交输入（本身即故事/seed、作新功能输入的 GitHub issue id、backlog 条目三种来源），Scribe 评估呈现建议面板后选择「进入开发」（v0.11 重排：Scribe 评估先于 CREATE_BRANCH）。hotfix 意图走独立 hotfix 入口（§16），统一入口不推荐 hotfix。
 
 ### 3.1. 子状态机
 
@@ -53,20 +53,38 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 stateDiagram-v2
     direction TB
 
-    [*] --> CHECK_ACTIVE : Human 发起 start
+    [*] --> INTAKE : Human 经统一入口提交输入
+
+    INTAKE : 三种来源: raw seed / issue id / backlog 条目
+    INTAKE : dispatch Scribe 评估
+    INTAKE : 可行性/重复/冲突 + 建议标题
+    INTAKE --> PANEL : 评估完成
+
+    PANEL : 建议面板呈现四动作
+
+    PANEL --> BACKLOG : 选进入 backlog (SM-01.2)
+    BACKLOG : backlog.recorded 聚合存储
+    BACKLOG --> [*] : 不开 run, 不建分支
+
+    PANEL --> ARCHIVED : 选不进入开发归档 (SM-01.3)
+    ARCHIVED : 归档存储 (与 backlog 区分, 可查)
+    ARCHIVED --> [*] : 不开 run, 不建分支
+
+    PANEL --> REMOVED : 选从 backlog 删除 (SM-01.5, 仅 backlog 来源)
+    REMOVED : 移除来源条目并记录去向
+    REMOVED --> [*] : 不开 run, 不建分支
+
+    PANEL --> CHECK_ACTIVE : 选进入开发 (SM-01.4)
 
     CHECK_ACTIVE : 检查是否有活跃 run
-    CHECK_ACTIVE --> BACKLOG : 有活跃 run
+    CHECK_ACTIVE --> BACKLOG : 有活跃 run (提示并记入 backlog)
     CHECK_ACTIVE --> CHECK_WORKSPACE : 无活跃 run
-
-    BACKLOG : 新需求记入 backlog
-    BACKLOG --> [*] : 退出, 不创建分支
 
     CHECK_WORKSPACE : 检查工作区是否干净
     CHECK_WORKSPACE --> FAILED : 有未提交修改
     CHECK_WORKSPACE --> CHECK_BRANCHES : 干净
 
-    FAILED : 报告原因, 拒绝 start
+    FAILED：报告原因, 拒绝 start
     FAILED --> [*]
 
     CHECK_BRANCHES : 检查本地分支是否全部并入 main
@@ -76,9 +94,9 @@ stateDiagram-v2
     AWAIT_CONFIRM : awaiting_human
     AWAIT_CONFIRM : 提示未合并分支与后果
     AWAIT_CONFIRM --> CREATE_BRANCH : Human 确认继续
-    AWAIT_CONFIRM --> [*] : Human 取消
+    AWAIT_CONFIRM --> [*] : Human 取消 (不建分支)
 
-    CREATE_BRANCH : 从 main 创建 releases/v{x}
+    CREATE_BRANCH：从 main 创建 releases/v{N+1}；Scribe 定标题写入 frontmatter title
     CREATE_BRANCH --> CLASSIFY_INPUT : 分支创建成功
 
     CLASSIFY_INPUT : 识别 Human 输入形态
@@ -95,7 +113,9 @@ stateDiagram-v2
     ADOPT_STORY --> [*] : stage.exited -> M-STORY
 ```
 
-> 可休眠点：AWAIT_CONFIRM。
+> 可休眠点：AWAIT_CONFIRM；INTAKE→PANEL 期间（Scribe 评估中）。
+> 统一入口状态机（SM-01）：(1)（提交输入）→ `待决`；(2) `待决` → `backlog`；(3) `待决` → `已归档`；(4) `待决` → `开发中`（通过 M-START 门，Scribe 定标题，创建分支与 run）；(5) `待决`/`backlog` → `已删除`（仅来源为 backlog 时可从 backlog 删除）；(6) `backlog` → `开发中`（以条目为输入走新建流程，成功后移除原条目并记录去向）；(7) 选进入 backlog/归档/删除时为终态——不开 run、不建分支。未列出的状态转移即不允许。
+> 入口面：工作台统一入口（Releases 窗口）为常规路径，全部写操作经命令面事件单写路径；CLI（`trac start`）保留为管理后门。
 > 退出条件：release 分支存在 + story.md 就位（raw seed 骨架或被采纳的完整 story）+ stage.entered(M-START) 已落盘。
 
 ## 4. M-STORY
@@ -116,6 +136,7 @@ stateDiagram-v2
     TRIAGE : 判定 raw seed/skeleton vs complete story
     TRIAGE : raw: 评估可行性, 仅提阻塞产品问题
     TRIAGE : complete: 仅评审, 发起锚定讨论, 不改稿
+    TRIAGE : 报告固定栏目: 重复检测 + 冲突检测 (§4.6)
     TRIAGE : 提出 GO / NO-GO / PARK
 
     TRIAGE --> REJECTED : human.triage(no_go | park)
@@ -198,6 +219,15 @@ stage.exited
 1. 人类裁定与评审结论都是一等事件：没有 `human.triage(go)`，且未收齐 `human.review(no_comment)` + `sage.verdict(pass)`，decide() 不会产出进入 M-SPEC 的 command。story.md 里的分流表格只是事件的投影展示。
 2. 单写者纪律：任一时刻只有一个 actor 持有编辑权（顺序评审天然保证）；Scribe/Sage/Human 的所有落盘变更均由 Runtime 提交为独立 commit。
 3. **可休眠**：等待人类时 run 停在 awaiting_human，decide() 返回空 command 但 run 未终结，进程可退出；人类回来时从事件回放恢复继续。不得在内存里悬挂等待状态（Agent 会话状态的保留需单独设计，见 Aaron 注记）。
+4. **评审人复核合同（v0.11，FR-0347）**：评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程时，该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程（可追溯）。评审人不为他人未决线程触发无发现修订。
+
+### 4.6. TRIAGE 报告固定栏目（v0.11，FR-0346）
+
+Scribe 撰写任一新 story 的 TRIAGE 报告时，报告必须含两个固定栏目；同一规则适用于统一入口建议面板的重复/冲突内容（两处同源，见工作台统一入口合同）：
+
+1. **重复检测**：story 所述功能已存在时，以跨版本引用指认既有 FR/AC（如 `FR-0316@v0.10`），并给出建议——NO-GO（纯重复）或改写为增强（在既有 FR 上叠加增量）。
+2. **冲突检测**：列出新需求 vs 既有 FR 的冲突对（新需求条目 ↔ 既有 FR 引用），破坏性/抵触需求不阻塞 GO，但 GO 需显式确认已知晓冲突。
+3. 触发规则：两栏目对每次 TRIAGE 均适用（无发现时栏目显式记「无」）；检测只落报告栏目，不做运行时拦截或自动 NO-GO——Human 依据栏目自行裁定。
 
 ## 5. M-SPEC
 
@@ -273,6 +303,7 @@ stage.rolled_back / stage.exited
 1. 退出 M-SPEC 需同一轮收齐 `human.review(no_comment)` + `lex.verdict(pass)` + 格式终验 `verdict.passed`。
 2. 单写者纪律同 M-STORY：任一时刻只有一个 actor 持有编辑权，所有落盘变更由 Runtime 提交为独立 commit。
 3. 作者响应评论的角色固定为文档作者本人（story->Scribe，spec->Sage），reviewer 不直接改稿。
+4. **评审人复核合同（v0.11，FR-0347，与 §4.5-4 同文）**：评审人复核的文档存在未解决的非本人发起线程时，该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程（可追溯）。评审人（Sage/Lex/Prism）不为他人未决线程触发无发现修订。
 
 ## 6. M-ACC
 

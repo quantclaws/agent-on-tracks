@@ -77,7 +77,9 @@ Sage 修订后 Lex 被再次 dispatch，重读当前权威文档与全部 discus
 
 - `pass`：目标文档全部线程已 resolved。
 - `pass-pending-human-threads`：仍存在未决线程，且每个未决线程的裁决权属方都是 Human（根评论唯一 @Human）——run 合法 park 到 AWAIT_HUMAN（`awaiting=review_pending_threads`），`trac status` 会列出待决线程清单，Human 处理后可恢复评审（恢复后按 §1s.1 重新计算出口）。
-- `revise`：存在其它未决线程（需要 Sage 修订）——按既有评审意见流程推进。
+- `revise`：存在**你自有**的未决 findings 线程（线程发起人为 Lex）——按既有评审意见流程推进。
+
+**评审人复核合同（v0.11，FR-0347；flow.md §4.5-4/§5.3-4 同文）**：你复核的文档存在未解决的非本人发起线程（Sage/Human/其它角色发起）时，该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限你自有新发现且必须开锚定线程（可追溯）。你不为他人未决线程触发无发现修订。
 
 findings 线程跨 attempt 复用：检查 assignment 的派发上下文——LEX_REVIEW 会注入 `open_threads`（目标文档当前 open/reopen 线程清单）。当它存在时，先在这些既有线程内用 `trac discuss reply` 续评同一 findings，**不要为同一问题重复开新线程**；只有确实全新的 findings 才 `trac discuss start`。你发起的线程在问题收敛后由你 set-status resolved；Sage / Human 发起的线程不代设。
 
