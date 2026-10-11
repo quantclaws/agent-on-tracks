@@ -74,6 +74,20 @@ _HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-(\d+)$")
 def _ro(path: Path) -> sqlite3.Connection | None:
     if not path.exists():
         return None
+    # A quiescent WAL database (neither -wal nor -shm beside it — clean
+    # close, no live writer) opens immutable: the main file already holds
+    # every committed frame, so the snapshot is exact and the read leaves
+    # zero filesystem artifacts under the repo (a plain mode=ro connection
+    # to a WAL database materializes -shm/-wal sidecars it can never clean
+    # up). Live databases — the serve with its writer connected — always
+    # carry the sidecars and keep the ordinary read-only open.
+    wal = path.parent / (path.name + "-wal")
+    shm = path.parent / (path.name + "-shm")
+    if not wal.exists() and not shm.exists():
+        try:
+            return sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+        except sqlite3.Error:
+            pass
     return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 
 
@@ -566,6 +580,101 @@ def _control_state(
     return "推进中"
 
 
+# -- v0.11 awaiting gate + return options (§1k/§1m) ---------------------------
+
+# §1k.2 type -> primary_action closed mapping (映射外无入口). The
+# AWAIT_RELEASE member is the M-RELEASE substate-shaped gate.
+_AWAIT_RELEASE = "AWAIT_RELEASE"
+_AWAITING_PRIMARY_ACTIONS = {
+    "triage": "triage",
+    "review": "review",
+    "review_pending_threads": "review",
+    "approval": "approve",
+    "escalation": "retry",
+    "rollback": "return",
+    "hotfix_triage": "guidance",
+}
+_AWAITING_REASON_LABELS = {
+    _AWAIT_RELEASE: "发布三择一决策（release / delay / return）",
+    "triage": "story triage 裁决（go / no-go / park）",
+    "review": "文档阶段评审（comment / no-comment）",
+    "review_pending_threads": "挂起线程恢复重评（comment / no-comment）",
+    "approval": "批准基线（approve / revise）",
+    "escalation": "失败升级处置（retry / return）",
+    "rollback": "回滚目标确认（approve 选定目标）",
+    "hotfix_triage": "hotfix 锚定人工处置（owning surface 指引）",
+}
+
+
+def _awaiting_type(state: State) -> str | None:
+    """The §1k.1 gate type: the M-RELEASE gate substate maps onto the
+    AWAIT_RELEASE type, else a closed awaiting member; None when the run
+    awaits nothing."""
+    if state.substate == "AWAITING_RELEASE":
+        return _AWAIT_RELEASE
+    return state.awaiting if state.awaiting in _AWAITING_PRIMARY_ACTIONS else None
+
+
+def _awaiting_gate(state: State) -> dict | None:
+    """The run-detail ``awaiting_gate`` field group (§1k.1) or None."""
+    gate_type = _awaiting_type(state)
+    if gate_type is None:
+        return None
+    stage = state.stage or "run"
+    reason = f"{stage} 到达人工门：{_AWAITING_REASON_LABELS[gate_type]}"
+    failure = state.last_failure if isinstance(state.last_failure, dict) else {}
+    if failure.get("reason"):
+        reason = f"{reason}（{failure['reason']}）"
+    primary = (
+        "release-decision"
+        if gate_type == _AWAIT_RELEASE
+        else _AWAITING_PRIMARY_ACTIONS[gate_type]
+    )
+    return {
+        "type": gate_type,
+        "reason": reason,
+        "impact": (
+            f"run 停在 {stage}（{state.substate or gate_type}），该门完成前不再推进；"
+            "在时间线下栏动作面板处理后自动推进到下一边界"
+        ),
+        "primary_action": primary,
+    }
+
+
+class _RunStoreView:
+    """Store-shaped read-only view (§1m.1 与 CLI 同一合法性规则共享计算):
+    the shared ``trac return`` gate rules and already-executed scan run over
+    the same code the CLI face uses — no writer lock, no second copy."""
+
+    def __init__(self, repo_path: str) -> None:
+        self._repo_path = repo_path
+
+    def state(self, run_id: str) -> State:
+        return _state_of(self._repo_path, run_id)
+
+    def events(self, run_id: str) -> list[EventEnvelope]:
+        return _run_events(self._repo_path, run_id)
+
+
+def _return_options(repo_path: str, run_id: str) -> dict:
+    """The run-detail ``return_options`` field group (§1m.1): the CLI's legal
+    targets with each target's already-executed irreversible operations."""
+    from tracks.cli.gate_cmd import _return_gate
+    from tracks.cli.release_cmd import _already_executed_ops
+
+    view = _RunStoreView(repo_path)
+    _state, allowed, _error = _return_gate(view, run_id)
+    if not allowed:
+        return {"allowed": False, "targets": []}
+    executed = _already_executed_ops(view, run_id)
+    return {
+        "allowed": True,
+        "targets": [
+            {"stage": stage, "already_executed": executed} for stage in allowed
+        ],
+    }
+
+
 # -- todos ------------------------------------------------------------------
 
 
@@ -910,6 +1019,8 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
             ),
             "pause": pause,
             "wait": wait,
+            "awaiting_gate": _awaiting_gate(state),
+            "return_options": _return_options(repo_path, run_id),
             "progress": {
                 "tasks_done": state.tasks_completed,
                 "tasks_total": state.tasks_total,

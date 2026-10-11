@@ -1,42 +1,78 @@
 /**
- * Functional-area views (interfaces §1l.3, §1l.4): the tab bar's seven items
- * map onto these surfaces. Every view consumes the live query projections
- * (interfaces §1l.6 — no mock data) and renders an observable failure marker
- * (`api-failure`) when a request fails and a readable degradation marker
- * (`degrade-NotFound`) when a value is unknown. The main area title shows the
- * content title, never the tab-bar category name.
+ * Functional-area views (interfaces §1l.3, §1l.4; §1e.1 five-tab world):
+ * the tab bar's five items map onto these surfaces. Every view consumes
+ * the live query projections (interfaces §1l.6 — no mock data) and
+ * renders an observable failure marker (`api-failure`) when a request
+ * fails and a readable degradation marker (`degrade-NotFound`) when a
+ * value is unknown. The main area title shows the content title, never
+ * the tab-bar category name.
+ *
+ * v0.11 (FR-0334): the functional world is releases/docs/todos/settings/
+ * account — the projects/runs registries merge into the Releases window
+ * (rendered by releases.js, loaded on demand) and the Review placeholder
+ * is gone: stage reviews are carried by the awaiting action panel on the
+ * timeline's fixed detail pane. Run-scoped routes render the timeline
+ * view directly.
  */
 
 import { requestJson } from "./api.js";
 import { degradedMessage, element, loadInto } from "./dom.js";
-import { renderSidebar } from "./sidebar.js";
 import { renderDocsView } from "./docs.js";
 import { renderTimelineView } from "./timeline.js";
-import { openTab } from "./tabs.js";
 
 const VIEW_RENDERERS = {
-  projects: renderProjects,
-  runs: renderRuns,
+  releases: renderReleasesWindow,
   docs: renderDocsView,
-  review: renderReview,
   todos: renderTodos,
   settings: renderSettings,
   account: renderAccount,
   run_detail: renderTimelineView,
+  release: renderTimelineView,
 };
 
-// #227: registry rows are compact index entries — the full title stays on the
-// main area's face, so a row label keeps at most 20 characters and a run
-// without a story title (the projection falls back to the raw ULID run id,
-// e.g. hotfix runs) shows the bare version instead of id noise.
+// #227 (v0.10 ruling, NFR-0158-02): registry rows stay compact index
+// entries — the full title stays on the main area's face, so a row label
+// keeps at most 20 characters and a run without a story title (the
+// projection falls back to the raw ULID run id, e.g. hotfix runs) shows
+// the bare version instead of id noise.
 const RUN_ROW_MAX_CHARS = 20;
 
-function runRowLabel(run) {
+export function runRowLabel(run) {
   const version = run.version || "unknown";
   if (!run.title || run.title === run.run_id) return version;
   const chars = Array.from(`${version} · ${run.title}`);
   if (chars.length <= RUN_ROW_MAX_CHARS) return chars.join("");
   return `${chars.slice(0, RUN_ROW_MAX_CHARS).join("")}...`;
+}
+
+/** The Releases registry's two compact faces (#227): the sidebar nodes of
+ * the version-grouped registry and the main-area row elements. releases.js
+ * renders the window and consumes these through this seam — the releases
+ * view loads on demand below, so the import stays one-directional. */
+export function runRegistryFaces(runs) {
+  const nodes = runs.map((run) => ({
+    label: runRowLabel(run),
+    testid: `sidebar-run-${run.run_id || "unknown"}`,
+    href: "#",
+    attrs: {
+      "data-run-id": run.run_id || "",
+      "data-version": run.version || "",
+    },
+  }));
+  const rows = runs.map((run) =>
+    element("li", {
+      class: "run-row",
+      "data-testid": `registry-run-${run.run_id || "unknown"}`,
+      "data-run-id": run.run_id || "",
+      text: runRowLabel(run),
+    })
+  );
+  return { nodes, rows };
+}
+
+async function renderReleasesWindow(body, context = {}) {
+  const { renderReleasesView } = await import("./releases.js");
+  return renderReleasesView(body, context);
 }
 
 export function renderView(route, mainArea, context = {}) {
@@ -72,191 +108,6 @@ export function renderView(route, mainArea, context = {}) {
       });
   }
   return { body, done };
-}
-
-/** The registered projects + their live runs (overview projection, §1e). */
-async function collectOverviewRows(body, { withRuns = true } = {}) {
-  const projects = await requestJson("/api/projects");
-  const rows = Array.isArray(projects) ? projects : projects.projects || [];
-  const list = element("ul", { class: "project-list", "data-testid": "overview-list" });
-  for (const project of rows) {
-    const id = project.project_id || "unknown";
-    list.append(
-      element("li", {
-        class: "project-row",
-        "data-testid": `overview-project-${id}`,
-        text: `${id} · ${project.version || "unknown"}`,
-      })
-    );
-  }
-  body.append(list);
-  if (!rows.length) {
-    // §1l.5: an empty registry degrades readably — never a blank surface.
-    body.append(degradedMessage("No registered projects yet"));
-  }
-  if (!withRuns) return rows;
-  let failed = false;
-  for (const project of rows) {
-    const id = project.project_id || "unknown";
-    try {
-      const overview = await requestJson(
-        `/api/projects/${encodeURIComponent(id)}/overview`
-      );
-      const runList = element("ul", { class: "run-list", "data-testid": "overview-runs" });
-      for (const run of overview.runs || []) {
-        runList.append(
-          element("li", {
-            class: "run-row",
-            "data-testid": `overview-run-${run.run_id || "unknown"}`,
-            text: runRowLabel(run),
-          })
-        );
-      }
-      body.append(runList);
-    } catch (error) {
-      failed = true;
-    }
-  }
-  if (failed) {
-    body.append(
-      element("p", {
-        class: "request-error",
-        "data-testid": "api-failure",
-        role: "alert",
-        text: "The live run projection is unavailable right now.",
-      })
-    );
-  }
-  return rows;
-}
-
-function renderProjects(body) {
-  return loadInto(body, async () => {
-    await collectOverviewRows(body);
-    const sidebarNodes = [];
-    for (const row of body.querySelectorAll(".project-row")) {
-      const id = (row.getAttribute("data-testid") || "").replace(
-        "overview-project-",
-        ""
-      );
-      sidebarNodes.push({ label: id, testid: `sidebar-project-${id}` });
-    }
-    if (sidebarNodes.length) {
-      renderSidebar({ title: "projects", nodes: sidebarNodes });
-    }
-  });
-}
-
-function renderRuns(body, context = {}) {
-  return loadInto(body, async () => {
-    const projects = await requestJson("/api/projects");
-    const rows = Array.isArray(projects) ? projects : projects.projects || [];
-    const runs = [];
-    for (const project of rows) {
-      const id = project.project_id || "unknown";
-      try {
-        const overview = await requestJson(
-          `/api/projects/${encodeURIComponent(id)}/overview`
-        );
-        for (const run of overview.runs || []) runs.push({ ...run, projectId: id });
-      } catch (error) {
-        body.append(
-          element("p", {
-            class: "request-error",
-            "data-testid": "api-failure",
-            role: "alert",
-            text: `The live run projection for ${id} is unavailable right now.`,
-          })
-        );
-      }
-    }
-    // The overview face keeps the registered projects visible (the landing
-    // route merges Projects/Runs overview semantics — §1l.2); the run
-    // registry itself lives in the sidebar below.
-    const projectList = element("ul", {
-      class: "project-list",
-      "data-testid": "overview-list",
-    });
-    for (const project of rows) {
-      const id = project.project_id || "unknown";
-      projectList.append(
-        element("li", {
-          class: "project-row",
-          "data-testid": `overview-project-${id}`,
-          text: `${id} · ${project.version || "unknown"}`,
-        })
-      );
-    }
-    body.append(projectList);
-
-    // Newest first: the registry reads top-down as a history, and the main
-    // area opens on the newest run's stage track.
-    const newestFirst = [...runs].sort((a, b) =>
-      String(b.updated_ts || "").localeCompare(String(a.updated_ts || ""))
-    );
-
-    // The Runs area's subtree is the run registry itself (§1l.3: the sidebar
-    // shows the active item's children); a node opens that run's tab.
-    const sidebar = renderSidebar({
-      title: "runs",
-      nodes: newestFirst.map((run) => ({
-        label: runRowLabel(run),
-        testid: `sidebar-run-${run.run_id || "unknown"}`,
-      })),
-    });
-    if (sidebar) {
-      for (const anchor of sidebar.querySelectorAll('[data-testid^="sidebar-run-"]')) {
-        anchor.addEventListener("click", (event) => {
-          event.preventDefault();
-          const runId = (anchor.getAttribute("data-testid") || "").replace(
-            "sidebar-run-",
-            ""
-          );
-          if (runId) {
-            openTab("runs", {
-              feature: "runs",
-              route: "runs",
-              runId,
-              title: runId,
-            });
-          }
-        });
-      }
-    }
-
-    if (!newestFirst.length) {
-      body.append(degradedMessage("No runs yet"));
-      return;
-    }
-
-    // The main face opens on the focused run's stage track — the sidebar
-    // selection or the deep link decides which, newest by default. The run's
-    // identity rides the timeline face itself (the main header strip is
-    // gone, 2026-10-09 operator directive), under the registry label rule
-    // (#224/#227): version · title, bare version when the title is the raw
-    // run id.
-    const focus =
-      newestFirst.find((run) => run.run_id === context.runId) || newestFirst[0];
-    const focusVersion = focus.version || "unknown";
-    await renderTimelineView(body, {
-      runId: focus.run_id,
-      runTitle:
-        focus.title && focus.title !== focus.run_id
-          ? `${focusVersion} · ${focus.title}`
-          : focusVersion,
-    });
-  });
-}
-
-function renderReview(body) {
-  body.append(
-    element("p", {
-      class: "review-hint",
-      "data-testid": "review-hint",
-      text: "Material review lives in the docs centre.",
-    })
-  );
-  return null;
 }
 
 function renderTodos(body) {

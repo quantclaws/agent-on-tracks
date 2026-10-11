@@ -122,9 +122,9 @@ def _path_text(request: Any, name: str) -> str:
 
 
 def _ro(path: Path) -> sqlite3.Connection | None:
-    if not path.exists():
-        return None
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    # Delegates to the projections read-only open (quiescent WAL databases
+    # open immutable — zero filesystem artifacts; see projections._ro).
+    return projections._ro(path)
 
 
 def _read_rows(path: Path, sql: str, args: tuple = ()) -> list[tuple]:
@@ -924,10 +924,259 @@ async def command_status(request: Any) -> Any:
     return _response(200, request, payload)
 
 
+# -- v0.11 read faces: Releases aggregation, intakes, hotfix preview ----------
+
+
+def _registered_project(request: Any, pid: str) -> dict | None:
+    """The registered project row behind a {pid} read route (404 basis)."""
+    return projections._project_from_home(_home(request), pid or "")
+
+
+def _registry_versions(repo_path: str) -> list[dict]:
+    """§1e.2 registry: runs grouped per version, numeric-descending order."""
+    groups: dict[str, list[dict]] = {}
+    for run in projections._project_runs(repo_path):
+        if not run["version"]:
+            continue  # run-less phantom rows never join the registry
+        groups.setdefault(run["version"], []).append(
+            {key: run[key] for key in ("run_id", "stage", "status", "awaiting", "updated_ts")}
+        )
+    named = [name for name in groups if projections._version_sort_key(name)]
+    return [
+        {"version": version, "runs": groups[version]}
+        for version in sorted(named, key=projections._version_sort_key)
+    ]
+
+
+def _backlog_group(repo_path: str) -> dict:
+    """§1e.2/§1d.3 backlog: entries aggregated from ``backlog.recorded``
+    events by ULID, dispositions folded in so whereabouts stay queryable."""
+    entries: dict[str, dict] = {}
+    dispositions: dict[str, dict] = {}
+    rows = _read_rows(
+        _tracks_db_path(repo_path),
+        "SELECT run_id, ts, version, type, payload FROM events"
+        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
+    )
+    for run_id, ts, version, event_type, raw in rows:
+        payload = _load_payload(raw, repo_path)
+        if event_type == "backlog.recorded":
+            entries[run_id] = {
+                "entry_id": run_id,
+                "version": version,
+                "source": payload.get("source"),
+                "content": payload.get("content"),
+                "recorded_ts": ts,
+                "disposition": None,
+                "to": None,
+            }
+        elif isinstance(payload.get("entry"), str):
+            dispositions[payload["entry"]] = {
+                "disposition": payload.get("disposition"),
+                "to": payload.get("to"),
+            }
+    for entry_id, marker in dispositions.items():
+        if entry_id in entries:
+            entries[entry_id].update(marker)
+    backlog_rows = sorted(entries.values(), key=lambda row: str(row["recorded_ts"] or ""))
+    return {
+        "count": sum(1 for row in backlog_rows if row["disposition"] is None),
+        "entries": backlog_rows,
+    }
+
+
+async def releases(request: Any) -> Any:
+    """GET /api/projects/{pid}/releases: §1e.2 aggregation (#36)."""
+    home = _home(request)
+    pid = _param(request.path_params, "pid")
+    project = _registered_project(request, pid or "")
+    if project is None:
+        return _not_found("project", pid or "")
+    repo_path = str(project["repo_path"])
+    archive = [
+        {"intake_id": row[0], "content": row[1], "decided_ts": row[2]}
+        for row in _read_rows(
+            _service_db_path(home),
+            "SELECT intake_id, content, decided_at FROM intakes"
+            " WHERE project_id = ? AND decision = 'archive' ORDER BY decided_at",
+            (str(project["project_id"]),),
+        )
+    ]
+    payload = {
+        "summary": {
+            "project_id": project["project_id"],
+            "registered_version": project["version"],
+            "repo_name": Path(repo_path).name,
+        },
+        "versions": _registry_versions(repo_path),
+        "backlog": _backlog_group(repo_path),
+        "archive": archive,
+    }
+    return _response(200, request, payload)
+
+
+_INTAKE_COLUMNS = (
+    "intake_id, project_id, source, content, issue, origin_entry, status,"
+    " report_json, decision, decided_at, created_at, updated_at"
+)
+
+
+def _intake_rows(home: Path, pid: str, status: str | None) -> list[dict]:
+    """intakes rows of one project as dicts (§1c #9), optional status filter."""
+    sql = f"SELECT {_INTAKE_COLUMNS} FROM intakes WHERE project_id = ?"
+    args: tuple = (pid,)
+    if status is not None:
+        sql += " AND status = ?"
+        args += (status,)
+    sql += " ORDER BY created_at, intake_id"
+    names = _INTAKE_COLUMNS.replace(" ", "").split(",")
+    return [
+        dict(zip(names, row, strict=True))
+        for row in _read_rows(_service_db_path(home), sql, args)
+    ]
+
+
+def _intake_json(row: dict, *, with_report: bool) -> dict:
+    payload = {
+        "intake_id": row.get("intake_id"),
+        "source": row.get("source"),
+        "status": row.get("status"),
+        "decision": row.get("decision"),
+        "created_ts": row.get("created_at"),
+    }
+    if with_report:
+        report = _json_value(row.get("report_json"))
+        payload["report"] = report if isinstance(report, dict) else None
+    return payload
+
+
+async def intakes_list(request: Any) -> Any:
+    """GET /api/projects/{pid}/intakes?status= (#37): the intake read model."""
+    pid = _param(request.path_params, "pid") or ""
+    if _registered_project(request, pid) is None:
+        return _not_found("project", pid)
+    status = _param(request.query_params, "status")
+    rows = _intake_rows(_home(request), pid, status)
+    return _response(
+        200, request, {"intakes": [_intake_json(row, with_report=False) for row in rows]}
+    )
+
+
+async def intake_detail(request: Any) -> Any:
+    """GET /api/projects/{pid}/intakes/{intake_id} (#38, §1f.3 schema)."""
+    pid = _param(request.path_params, "pid") or ""
+    if _registered_project(request, pid) is None:
+        return _not_found("project", pid)
+    intake_id = _param(request.path_params, "intake_id") or ""
+    row = next(
+        (item for item in _intake_rows(_home(request), pid, None)
+         if item["intake_id"] == intake_id),
+        None,
+    )
+    if row is None:
+        return _not_found("intake", intake_id)
+    return _response(200, request, _intake_json(row, with_report=True))
+
+
+_HOTFIX_SCENARIOS = ("post-release", "dev")
+
+
+class _HotfixStoreView:
+    """Read-only store view so the shared precheck face (#44, §1i.1) runs
+    over the same ``precheck_hotfix_report`` code the CLI uses."""
+
+    def __init__(self, repo_path: str) -> None:
+        self._repo_path = repo_path
+        self.conn = projections._tracks_db(repo_path)
+
+    def active_run(self) -> str | None:
+        if self.conn is None:
+            return None
+        row = self.conn.execute(
+            "SELECT run_id FROM runs WHERE status NOT IN ('completed', 'backlog')"
+            " AND stage IS NOT NULL ORDER BY updated_ts DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
+
+    def state(self, run_id: str) -> Any:
+        return projections._state_of(self._repo_path, run_id)
+
+    def events(self, run_id: str) -> list:
+        return projections._run_events(self._repo_path, run_id)
+
+
+def _hotfix_anchoring(repo_path: str, report: Any) -> dict:
+    """§1i.1 anchoring availability: the target version's baseline trio
+    presence (approved status is a pass-report precondition)."""
+    target = getattr(report, "target_version", None)
+    if getattr(report, "status", None) != "pass" or not target:
+        return {
+            "status": "unanchored",
+            "details": f"precheck {getattr(report, 'status', 'unknown')}:"
+            f" {getattr(report, 'reason', None)}",
+        }
+    vdir = Path(repo_path) / ".tracks" / "projects" / str(target)
+    missing = [
+        name
+        for name in ("story.md", "spec.md", "acceptance.md")
+        if not (vdir / name).is_file()
+    ]
+    if missing:
+        return {
+            "status": "unanchored",
+            "target_version": str(target),
+            "details": f"baseline incomplete: {', '.join(missing)}",
+        }
+    return {
+        "status": "anchored",
+        "target_version": str(target),
+        "details": "baseline trio present on an approved version",
+    }
+
+
+async def hotfix_preview(request: Any) -> Any:
+    """GET /api/projects/{pid}/hotfix-preview?issue=&scenario= (#44, §1i.1)."""
+    pid = _param(request.path_params, "pid") or ""
+    project = _registered_project(request, pid)
+    if project is None:
+        return _not_found("project", pid)
+    scenario = _param(request.query_params, "scenario")
+    issue_raw = _param(request.query_params, "issue")
+    if scenario not in _HOTFIX_SCENARIOS or issue_raw is None or not issue_raw.isdigit():
+        return _error(
+            422,
+            "validation_failed",
+            "scenario must be one of post-release|dev and issue must be a number",
+        )
+    from tracks.executor.hotfix_face import precheck_hotfix_report
+
+    repo_path = str(project["repo_path"])
+    report, issue = precheck_hotfix_report(
+        Path(repo_path), _HotfixStoreView(repo_path), int(issue_raw), scenario
+    )
+    precheck: dict[str, Any] = {"status": report.status}
+    if report.reason:
+        precheck["reason"] = report.reason
+    if report.next:
+        precheck["next"] = report.next
+    payload = {
+        "scenario": scenario,
+        "issue": {
+            "number": int(issue_raw),
+            "title": issue.title if issue is not None else None,
+        },
+        "precheck": precheck,
+        "anchoring": _hotfix_anchoring(repo_path, report),
+    }
+    return _response(200, request, payload)
+
+
 # CORE-02 extension seam (T-001): the project-domain docs read endpoints
 # (§2b #31-34) declare their routes on this side; create_app merges the table
 # into the assembled route set so later faces land without re-touching the
-# composition root.
+# composition root. v0.11 (IF-RELEASES-001/IF-INTAKE-001/IF-HOTFIXUI-001)
+# appends the Releases aggregation + intake reads + hotfix preview (#36-38,
+# #44) on the same seam.
 EXTENSION_ROUTES = (
     ("/api/projects/{pid}/docs/tree", docs_tree, ("GET",)),
     ("/api/projects/{pid}/docs/{version}/{doc}", read_project_doc, ("GET",)),
@@ -937,4 +1186,8 @@ EXTENSION_ROUTES = (
         project_doc_discussions,
         ("GET",),
     ),
+    ("/api/projects/{pid}/releases", releases, ("GET",)),
+    ("/api/projects/{pid}/intakes", intakes_list, ("GET",)),
+    ("/api/projects/{pid}/intakes/{intake_id}", intake_detail, ("GET",)),
+    ("/api/projects/{pid}/hotfix-preview", hotfix_preview, ("GET",)),
 )
