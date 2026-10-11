@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._support.intake_fence import wait_intake_terminal
+from tests._support.intake_fence import wait_intake_terminal, wait_run_awaiting
 from tests._support.v09_web import (
     http_get,
     http_post,
@@ -227,24 +227,102 @@ def test_active_run_backlog_dirty_refusal_unmerged_confirm(tmp_path: Path, host_
     repo = _prepared_repo(tmp_path, trac)
     proc, base, cookie, csrf, project_id = _serve_registered(tmp_path, repo, "refuse")
     try:
-        # (a) active run: the seed records to backlog, no run, no branch
-        status, body = http_post(
-            base,
-            f"/api/projects/{project_id}/runs",
-            {
-                "journey": "feature",
-                "version": "v0.9",
-                "story": None,
-                "issue": None,
-                "target": None,
-                "preempt": False,
-            },
-            cookies=cookie,
-            csrf=csrf,
-            idempotency_key="mstart-active-run-1",
+        # (a) unmerged release branches are listed with their consequence and
+        # only a confirmed decision passes — observed before any run exists:
+        # an active run answers backlog_recorded at the earlier precondition
+        # (§1g.1 ordered gates), so this leg opens the sequence
+        subprocess.run(
+            ["git", "checkout", "-b", "releases/v9.9"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
         )
-        assert status == 202, f"the active-run premise must be creatable: {body[:200]}"
-        active_run = json.loads(body)["run_id"]
+        (repo / "unmerged.txt").write_text("divergent work\n", encoding="utf-8")
+        _git(repo, "add", "unmerged.txt")
+        _git(repo, "commit", "-m", "divergent release work")
+        subprocess.run(
+            ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True
+        )
+        before_unmerged = set(_branches(repo))
+
+        intake_c = _evaluated_intake(base, cookie, csrf, project_id, "unmerged-1")
+        status, body = _develop(base, cookie, csrf, intake_c, "unmerged-1")
+        assert status == 409, (
+            f"unmerged release branches must surface the confirmation: "
+            f"{status} {body[:200]}"
+        )
+        conflict = json.loads(body)
+        assert conflict["error"]["reason"] == "unmerged_release_branches", body[:200]
+        # AC-FR0339-02's observable: the refusal presents the unmerged
+        # branches and their confirm/cancel consequence — whether the shape
+        # carries them as a structured field or in the refusal text
+        refusal_text = json.dumps(conflict, ensure_ascii=False)
+        assert "releases/v9.9" in refusal_text, (
+            f"the unmerged branches must be presented: {conflict!r}"
+        )
+        assert "confirm" in refusal_text, (
+            f"the refusal must present the confirm consequence: {conflict!r}"
+        )
+
+        # confirm=false: the cancel exits without building anything — the
+        # unconfirmed decision is refused again (the 409 detail carries the
+        # cancel semantics), and the observable is the clean exit: no branch
+        status, body = _develop(
+            base, cookie, csrf, intake_c, "unmerged-cancel", confirm=False
+        )
+        assert status in (200, 202, 409), (
+            f"the cancel must be a legal exit: {status} {body[:200]}"
+        )
+        assert not (set(_branches(repo)) - before_unmerged), (
+            "the cancelled develop must not create a branch (§1g.1c)"
+        )
+
+        # (b) dirty tree: refused with the reason, no branch (no run is
+        # active, so the develop reaches the dirty precondition)
+        (repo / "README.md").write_text("dirty probe\n", encoding="utf-8")
+        intake_b = _evaluated_intake(base, cookie, csrf, project_id, "dirty-1")
+        status, body = _develop(base, cookie, csrf, intake_b, "dirty-1")
+        assert status == 422, (
+            f"a dirty worktree must refuse the develop action: {status} {body[:200]}"
+        )
+        assert json.loads(body)["error"]["reason"] == "dirty_tree", body[:200]
+        assert not (set(_branches(repo)) - before_unmerged), (
+            "a refused develop must not create a branch"
+        )
+        subprocess.run(
+            ["git", "checkout", "--", "README.md"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        # (c) a fresh develop with confirm=true passes the gate: the created
+        # run becomes the project's active run and its release branch
+        # bootstraps asynchronously (the M-START capture commits on it)
+        runs_before_confirm = _project_run_ids(base, cookie, project_id)
+        intake_d = _evaluated_intake(base, cookie, csrf, project_id, "unmerged-2")
+        status, body = _develop(
+            base, cookie, csrf, intake_d, "unmerged-confirm", confirm=True
+        )
+        assert status == 202, (
+            f"the confirmed develop must pass the gate: {status} {body[:200]}"
+        )
+        created = _wait_for(
+            lambda: (set(_branches(repo)) - before_unmerged - {"releases/v9.9"}) or None
+        )
+        assert created, (
+            f"the confirmed develop must create its branch: {sorted(_branches(repo))!r}"
+        )
+        confirmed_runs = _project_run_ids(base, cookie, project_id) - runs_before_confirm
+        assert len(confirmed_runs) == 1, (
+            f"the confirmed develop must open exactly one run: {confirmed_runs!r}"
+        )
+        active_run = next(iter(confirmed_runs))
+        wait_run_awaiting(base, cookie, active_run, ("triage",))
+
+        # (d) active run: the seed records to backlog, no run, no branch —
+        # the confirmed develop's run is the active premise; its branch is
+        # already part of the settled baseline snapshot below
         before = _branches(repo)
 
         intake_a = _evaluated_intake(base, cookie, csrf, project_id, "active-1")
@@ -285,78 +363,6 @@ def test_active_run_backlog_dirty_refusal_unmerged_confirm(tmp_path: Path, host_
         )
         assert not (set(_branches(repo)) - before), (
             "the active-run form must not create a branch (§1g.1a)"
-        )
-
-        # (b) dirty tree: refused with the reason, no branch, no run
-        (repo / "README.md").write_text("dirty probe\n", encoding="utf-8")
-        intake_b = _evaluated_intake(base, cookie, csrf, project_id, "dirty-1")
-        status, body = _develop(base, cookie, csrf, intake_b, "dirty-1")
-        assert status == 422, (
-            f"a dirty worktree must refuse the develop action: {status} {body[:200]}"
-        )
-        assert json.loads(body)["error"]["reason"] == "dirty_tree", body[:200]
-        assert not (set(_branches(repo)) - before), (
-            "a refused develop must not create a branch"
-        )
-        subprocess.run(
-            ["git", "checkout", "--", "README.md"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-
-        # (c) unmerged release branch: listed with consequence, confirm gates it
-        subprocess.run(
-            ["git", "checkout", "-b", "releases/v9.9"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-        (repo / "unmerged.txt").write_text("divergent work\n", encoding="utf-8")
-        _git(repo, "add", "unmerged.txt")
-        _git(repo, "commit", "-m", "divergent release work")
-        subprocess.run(
-            ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True
-        )
-        before_unmerged = set(_branches(repo))
-
-        intake_c = _evaluated_intake(base, cookie, csrf, project_id, "unmerged-1")
-        status, body = _develop(base, cookie, csrf, intake_c, "unmerged-1")
-        assert status == 409, (
-            f"unmerged release branches must surface the confirmation: "
-            f"{status} {body[:200]}"
-        )
-        conflict = json.loads(body)
-        assert conflict["error"]["reason"] == "unmerged_release_branches", body[:200]
-        listed = conflict["error"].get("branches") or conflict.get("branches") or []
-        assert "releases/v9.9" in listed, (
-            f"the unmerged branches must be listed: {conflict!r}"
-        )
-
-        # confirm=false: cancel exits without building anything
-        status, body = _develop(
-            base, cookie, csrf, intake_c, "unmerged-cancel", confirm=False
-        )
-        assert status in (200, 202), (
-            f"the cancel must be a legal exit: {status} {body[:200]}"
-        )
-        assert not (set(_branches(repo)) - before_unmerged), (
-            "the cancelled develop must not create a branch (§1g.1c)"
-        )
-
-        # a fresh develop with confirm=true passes the gate
-        intake_d = _evaluated_intake(base, cookie, csrf, project_id, "unmerged-2")
-        status, body = _develop(
-            base, cookie, csrf, intake_d, "unmerged-confirm", confirm=True
-        )
-        assert status == 202, (
-            f"the confirmed develop must pass the gate: {status} {body[:200]}"
-        )
-        created = _wait_for(
-            lambda: (set(_branches(repo)) - before_unmerged - {"releases/v9.9"}) or None
-        )
-        assert created, (
-            f"the confirmed develop must create its branch: {sorted(_branches(repo))!r}"
         )
     finally:
         stop_serve(proc)

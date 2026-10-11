@@ -86,11 +86,27 @@ def _serve_registered(tmp_path: Path, repo: Path):
 _RUN_SEQ = itertools.count(1)
 
 
-def _create_feature_run(base: str, cookie: str, csrf: str, project_id: str) -> str:
+def _create_feature_run(
+    base: str,
+    cookie: str,
+    csrf: str,
+    project_id: str,
+    *,
+    story: str | None = None,
+    preempt: bool = False,
+) -> str:
+    # distinct runs need distinct params: the creation face dedups an
+    # identical params set to the same run id, so a second same-shape create
+    # would return the first run (already driven on) instead of a fresh one
+    params = dict(_RUN_PARAMS)
+    if story is not None:
+        params["story"] = story
+    if preempt:
+        params["preempt"] = True
     status, body = http_post(
         base,
         f"/api/projects/{project_id}/runs",
-        _RUN_PARAMS,
+        params,
         cookies=cookie,
         csrf=csrf,
         idempotency_key=f"gateui-run-{project_id}-{next(_RUN_SEQ)}",
@@ -241,8 +257,13 @@ def test_triage_review_events_csrf_idempotency(tmp_path: Path, host_repo, trac):
             f"the event carries the acting principal: {triage_events[0]!r}"
         )
 
-        # review half: the no-comment review reuses the same discipline
-        review_run = _create_feature_run(base, cookie, csrf, project_id)
+        # review half: the no-comment review reuses the same discipline — a
+        # distinct story keeps this a distinct run (see _create_feature_run),
+        # and preempt is the documented way to start it while the triage
+        # leg's run still holds the project's single active slot
+        review_run = _create_feature_run(
+            base, cookie, csrf, project_id, story="review gate walk", preempt=True
+        )
         wait_run_awaiting(base, cookie, review_run, ("triage",))
         status, body = http_post(
             base,

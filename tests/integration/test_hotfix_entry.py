@@ -35,6 +35,79 @@ def _seed_hotfix_repo(host_repo) -> None:
     _seed_hotfix_host(host_repo)
 
 
+def _seed_hotfix_repo_without_baseline(host_repo) -> None:
+    """Unapproved target baseline + issue corpus + active release branch.
+
+    The locked anchoring rule (interfaces.md §1i.1) reads availability from
+    the target version's baseline trio existence AND approved status — the
+    target v0.9 trio here is unapproved (only v0.7 carries an approval
+    event, which also initializes the run-plane store), making the
+    version-level anchoring verdict unanchored for this premise.
+    """
+    from tests._support.hotfix_support import (
+        seed_host_issues,
+        seed_project_contract,
+        seed_release_branch,
+    )
+    from tests.integration.test_journey_versioning import _declare_hotfix_contract
+    from tracks.cli.main import HOST_BYPRODUCTS_GITIGNORE, HOST_BYPRODUCTS_MARKER
+    from tracks.paths import tracks_home, version_dir
+    from tracks.store import Store
+
+    seed_host_issues(host_repo)
+    seed_project_contract(host_repo)
+    store = Store(tracks_home(host_repo))
+    try:
+        store.append(
+            run_id="approval-v0.7",
+            version="v0.7",
+            type="approval.recorded",
+            payload={
+                "version": "v0.7",
+                "actor": "Aaron",
+                "digest": "fixture-v0.7",
+            },
+        )
+    finally:
+        store.close()
+    vdir = version_dir(tracks_home(host_repo), "v0.9")
+    vdir.mkdir(parents=True, exist_ok=True)
+    (vdir / "story.md").write_text(
+        "# v0.9 story\n\nunapproved baseline story.\n", encoding="utf-8"
+    )
+    (vdir / "spec.md").write_text(
+        "# v0.9 spec\n\n### FR-0030\n\nunapproved baseline spec.\n", encoding="utf-8"
+    )
+    (vdir / "acceptance.md").write_text(
+        "# v0.9 acceptance\n\n### AC-FR0030-01\n\nunapproved baseline AC.\n",
+        encoding="utf-8",
+    )
+    (vdir / "interfaces.md").write_text(
+        "# v0.9 interfaces\n\n## 5. IF Registry\n\n"
+        "- IF-BASELINE-001: baseline interface contract\n",
+        encoding="utf-8",
+    )
+    _declare_hotfix_contract(host_repo)
+    gitignore = host_repo / ".gitignore"
+    text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if HOST_BYPRODUCTS_MARKER not in text:
+        sep = "" if not text or text.endswith("\n") else "\n"
+        gitignore.write_text(text + sep + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", ".tracks/projects", ".gitignore"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "seed unapproved baseline trio"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    seed_release_branch(host_repo, "releases/v0.9")
+
+
 def _serve_registered(tmp_path: Path, repo: Path, marker: str):
     home = tmp_path / f"serve-home-{marker}"
     proc = start_serve(home, repo, port=0)
@@ -139,16 +212,21 @@ def test_anchor_fail_exits_no_half_branch(tmp_path: Path, host_repo):
     rejected state, the creation face refuses fail-closed, and no half-built
     fix branch or run remains; the exit guides to the backlog/new-feature
     entries."""
-    _seed_hotfix_repo(host_repo)
+    _seed_hotfix_repo_without_baseline(host_repo)
     before = _branches(host_repo)
     proc, base, cookie, csrf, project_id = _serve_registered(
         tmp_path, host_repo, "unanchored"
     )
     try:
-        # bug #77: a real bug whose behavior matches no documented AC
+        # issue #77: the stand-in corpus classifies it not_bug, so the
+        # anchoring gate refuses before any version-level anchoring — the
+        # display carries the rejected precheck and the unanchored verdict
         status, body = _preview(base, cookie, project_id, 77, "post-release")
         assert status == 200, f"the preview must resolve: {status} {body[:200]}"
         preview = json.loads(body)
+        assert preview["precheck"]["status"] == "rejected", (
+            f"the not_bug precheck must reject the entry: {preview.get('precheck')!r}"
+        )
         assert preview["anchoring"]["status"] == "unanchored", (
             f"the unanchored state must be displayed: {preview.get('anchoring')!r}"
         )
@@ -168,6 +246,9 @@ def test_anchor_fail_exits_no_half_branch(tmp_path: Path, host_repo):
         )
 
         # creation with the unanchored bug: fail-closed, nothing half-built
+        # (the rejection status channel differs by stage — precheck-rejected
+        # answers 400, the trio-missing gate 422 — both are the explicit
+        # validation_failed rejection)
         status, body = http_post(
             base,
             f"/api/projects/{project_id}/runs",
@@ -183,7 +264,7 @@ def test_anchor_fail_exits_no_half_branch(tmp_path: Path, host_repo):
             csrf=csrf,
             idempotency_key="hotfixui-create-unanchored-1",
         )
-        assert status == 422, (
+        assert status in (400, 422), (
             f"the unanchored entry must be refused: {status} {body[:200]}"
         )
         refusal = json.loads(body)
