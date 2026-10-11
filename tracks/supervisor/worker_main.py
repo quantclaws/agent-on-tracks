@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from tracks.executor.drive import DriveConfig, DriveResult, drive_once
+from tracks.supervisor import gate_exec
 from tracks.supervisor.db import ServiceDB
 from tracks.supervisor.waiting import WaitPolicy, classify_wait, enter_wait
 
@@ -108,24 +109,50 @@ def _project_repo(db: Any, project_id: Any) -> Path | None:
     return repo if repo.is_dir() else None
 
 
+def _resolve_run_repo(db: Any, row: dict) -> tuple[str, Path | None]:
+    """Resolve (run_id, repo) the same way for every claimable kind: the
+    command row first, then the service plane's run→project discovery."""
+    run_id = _run_id_of(row)
+    project_id = row.get("project_id")
+    if not project_id:
+        finder = getattr(db, "find_run_project_id", None)
+        project_id = finder(run_id) if callable(finder) else None
+    return run_id, _project_repo(db, project_id)
+
+
+def _execute_gate(db: Any, row: dict) -> tuple[dict | None, dict | None]:
+    """v0.11 §1j.3 (IF-GATEUI-001): a claimed human gate command executes
+    through the shared gate face (``gate_exec``), never the drive loop."""
+    run_id, repo = _resolve_run_repo(db, row)
+    if not run_id or repo is None:
+        return None, _unrecoverable(
+            f"cannot resolve run/project for command {row.get('command_id')!r}"
+        )
+    return gate_exec.execute_gate_command(
+        repo,
+        run_id,
+        str(row.get("kind") or ""),
+        _params(row),
+        str(row.get("actor") or "human"),
+    )
+
+
 def _execute(db: Any, row: dict) -> tuple[dict | None, dict | None]:
     """Run the claimed command; returns ``(result, failure)`` — exactly one
     is non-None and ``failure`` carries the closed failure_class vocabulary."""
-    if row.get("kind") != _DRIVE_KIND:
+    kind = row.get("kind")
+    if kind in gate_exec.GATE_KINDS:
+        return _execute_gate(db, row)
+    if kind != _DRIVE_KIND:
         return None, _unrecoverable(
             f"worker does not handle command kind {row.get('kind')!r} yet"
         )
-    run_id = _run_id_of(row)
+    run_id, repo = _resolve_run_repo(db, row)
     # 2026-09-23 (island-2 sweep, e2e web journey): a supervisor-accepted
     # internal drive_run carries no project_id of its own -- resolve the
     # project THROUGH the run with the same discovery order the service
     # plane uses (commands row, then service events), instead of failing
     # unrecoverable on the first drive of every fresh run.
-    project_id = row.get("project_id")
-    if not project_id:
-        finder = getattr(db, "find_run_project_id", None)
-        project_id = finder(run_id) if callable(finder) else None
-    repo = _project_repo(db, project_id)
     if not run_id or repo is None:
         return None, _unrecoverable(
             f"cannot resolve run/project for command {row.get('command_id')!r}"
@@ -227,7 +254,7 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
         # run nobody created is a genuine anomaly -- do NOT fabricate a run
         # plane; drive_once fails closed on it (T-008 pin preserved).
         return
-    version, raw = _version_story(params)
+    version, raw, title = _version_story(params)
     store = Store(paths.tracks_home(repo))
     try:
         with writer_lock(paths.tracks_home(repo)):
@@ -243,21 +270,36 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
                     params={"branch_name": f"releases/{version}", "base": "main"},
                 )
             )
-            _capture_story(repo, paths.tracks_home(repo), version, raw)
+            _capture_story(repo, paths.tracks_home(repo), version, raw, title)
             store.append(run_id, version, "stage.exited", {"stage": "M-START"})
             store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     finally:
         store.close()
 
-def _version_story(params: dict) -> tuple[str, str]:
-    """Extract (version, raw_story) from create_run params."""
+def _version_story(params: dict) -> tuple[str, str, str | None]:
+    """Extract (version, raw_story, title) from create_run params.
+
+    v0.11 §1g.2 (IF-MSTART-001): the develop path carries the
+    Scribe-suggested ``title`` and the input-form classification; the
+    capture render owns the form (raw skeleton / complete adoption) via
+    the machine classifier, so ``story_form`` needs no branching here.
+    """
     version = str(params.get("version") or "v0.1")
     raw = str(params.get("story") or "").strip() or "service-plane feature request"
-    return version, raw
+    title = params.get("title") or None
+    return version, raw, title
 
 
-def _capture_story(repo: Path, home: Any, version: str, raw: str) -> None:
-    """Write the story.md capture and commit it (M-START step)."""
+def _capture_story(
+    repo: Path, home: Any, version: str, raw: str, title: str | None = None
+) -> None:
+    """Write the story.md capture and commit it (M-START step).
+
+    v0.11 §1g.2: ``templating.render_story_capture`` renders per the input
+    form — a raw seed enters the §1-verbatim skeleton, a complete story is
+    adopted as-is — and the Scribe-suggested ``title`` prefills the
+    frontmatter when present (absent → the placeholder stays, exactly the
+    pre-v0.11 behavior for existing create_run callers)."""
     import datetime
 
     from tracks import paths, templating
@@ -267,7 +309,9 @@ def _capture_story(repo: Path, home: Any, version: str, raw: str) -> None:
     vdir.mkdir(parents=True, exist_ok=True)
     story = vdir / "story.md"
     story.write_text(
-        templating.render_story_skeleton(raw, datetime.date.today().isoformat()),
+        templating.render_story_capture(
+            raw, datetime.date.today().isoformat(), title=title
+        ),
         encoding="utf-8",
     )
     _git(repo, "add", str(story))

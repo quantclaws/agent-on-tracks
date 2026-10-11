@@ -11,7 +11,6 @@ import ast
 import json
 import os
 import sys
-from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -19,6 +18,18 @@ from tracks import paths, templating
 from tracks.executor import Executor, git
 from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import _resolve_run_version
+from tracks.executor.result_checkpoint import (
+    HumanCheckpoint as _HumanCheckpoint,
+)
+from tracks.executor.result_checkpoint import (
+    _stage_doc as _stage_doc,
+)
+from tracks.executor.result_checkpoint import (
+    run_human_gate_pipeline,
+)
+from tracks.executor.result_checkpoint import (
+    unstage_foreign_staged_content as _scope_staged_attribution,
+)
 from tracks.executor.stall import CommandStallError
 from tracks.kernel import Command
 from tracks.kernel.machine_verdicts import _REVIEW_PENDING_THREADS
@@ -193,31 +204,6 @@ def _unmerged_branches(repo: Path) -> list[str]:
         for ln in allb
         if ln.strip().lstrip("*").strip() not in merged
     ]
-
-
-def _scope_staged_attribution(repo: Path, version: str, label: str) -> int:
-    """v0.5 review-A attribution, AC-FR0267-02 realignment: pre-staged
-    content OUTSIDE the artifact allowlist is unstaged (``git reset`` --
-    content preserved in the working tree, never swept into the human
-    checkpoint commit) instead of refusing the gate; a dirty tree is
-    never a CLI-stage refusal — the walk proceeds and the M-VERIFY
-    freeze lands attention.required(dirty_tree) (needs_attention with
-    recovery guidance) at the contract's locked exit. Always returns 0."""
-    del label  # retained in the signature for caller stability
-    allowed_prefix = f".tracks/projects/{version}/"
-    staged = [
-        line.strip()
-        for line in git(
-            repo, "diff", "--cached", "--name-only", check=False
-        ).stdout.splitlines()
-        if line.strip()
-    ]
-    foreign = [f for f in staged if not f.startswith(allowed_prefix)]
-    if foreign:
-        # Unstage only; the working tree keeps the operator's content and
-        # the scoped checkpoint commit never picks it up.
-        git(repo, "reset", "--", *foreign, check=False)
-    return 0
 
 
 def _parse_action_actor(args: tuple[str, ...], usage: str) -> tuple[str, str | None] | None:
@@ -439,15 +425,6 @@ def cmd_run(repo: Path, *args: str) -> int:
     return 0
 
 
-def _stage_doc(stage: str) -> str | None:
-    """Return the doc name for the current stage (deferred import to avoid
-    circular dependency)."""
-    from tracks.kernel.machine import _STAGES
-
-    sd = _STAGES.get(stage)
-    return sd.doc if sd else None
-
-
 def _triage_artifacts(doc: str | None) -> tuple[list[str], list[str]]:
     """Returns (artifacts, checks). Triage always validates the stage doc
     with template check when a doc exists — no-diff is a legitimate no-change
@@ -478,50 +455,19 @@ def _review_action_params(action: str, stage: str) -> dict:
     }
 
 
-@dataclass(frozen=True)
-class _HumanCheckpoint:
-    """One Human ResultCheckpoint submit (triage / review)."""
-
-    label: str
-    event_type: str
-    payload: dict
-    verdict: str
-    artifacts: list[str]
-    checks: list[str]
-    requires_diff: bool
-    commit_label: str
-    forbid_diff: bool = False
-    discussion_only: bool = False
-
-
 def _do_human_pipeline(
     repo, state, store, run_id, checkpoint: _HumanCheckpoint
 ):
     """Run one Human ResultCheckpoint pipeline under the writer lock (triage /
-    review). Returns (rc, (final_state, awaiting_before)) or (rc, None) on an
-    early rejection. Pre-staged foreign content is unstaged for attribution
-    (_scope_staged_attribution); a dirty tree is never refused here (the
-    M-VERIFY freeze owns the AC-FR0267-02 exit)."""
-    rc = _scope_staged_attribution(repo, state.version, checkpoint.label)
-    if rc:
-        return rc, None
-    awaiting_before = state.awaiting
-    ex = Executor(store, repo, run_id)
-    doc = _stage_doc(state.stage)
-    ex.submit_human_result(
-        state=state,
-        domain_event_type=checkpoint.event_type,
-        payload=checkpoint.payload,
-        verdict=checkpoint.verdict,
-        artifacts=checkpoint.artifacts,
-        allowed_paths=[doc] if doc else [],
-        checks=checkpoint.checks,
-        requires_diff=checkpoint.requires_diff,
-        commit_label=checkpoint.commit_label,
-        forbid_diff=checkpoint.forbid_diff,
-        discussion_only=checkpoint.discussion_only,
+    review). v0.11 §1j.3: delegates to the shared ``run_human_gate_pipeline``
+    (the supervisor's gate worker executes the same core, IF-GATEUI-001) —
+    CLI semantics are zero-change. Returns (rc, (final_state,
+    awaiting_before)) or (rc, None) on an early rejection."""
+    return run_human_gate_pipeline(
+        repo, state, store, run_id, checkpoint,
+        scope_attribution=_scope_staged_attribution,
+        executor_factory=Executor,
     )
-    return 0, (ex.run_pipeline(), awaiting_before)
 
 
 def _triage_checkpoint(repo: Path, state, actor: str | None, decision: str) -> _HumanCheckpoint:

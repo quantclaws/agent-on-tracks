@@ -159,6 +159,42 @@ def _parse_approve_args(args: list[str]) -> tuple[str | None, str | None, str | 
     return actor, to_stage, None
 
 
+def _approve_reviewed_baseline(
+    repo: Path, home: Path, store: Store, run_id: str, state, actor: str
+) -> tuple[bool, str]:
+    """The shared M-REQ-APPROVAL approve core (v0.11 §1j.3, IF-GATEUI-001):
+    ``trac approve`` and the supervisor's gate worker execute this same
+    function under the writer lock. Binds the approval to the previewed
+    revision digest; a trio that changed under the preview regenerates it
+    and rejects THIS approve (C-02) — review and approve again. Returns
+    ``(approved, detail)`` where detail is the approved digest or the
+    rejection message. The caller owns the gate check (awaiting=approval)."""
+    del repo  # the digest binding reads the version dir only
+    vdir = paths.version_dir(home, state.version)
+    digest = revision_digest(vdir)
+    previews = [e for e in store.events(run_id) if e.type == "preview.generated"]
+    if not previews or previews[-1].payload["digest"] != digest:
+        # C-02: the trio changed under the reviewed preview — reject THIS
+        # approve (not the run) and regenerate the preview for re-review.
+        store.append(
+            run_id,
+            state.version,
+            "preview.generated",
+            {"digest": digest, "summary": baseline_summary(vdir)},
+        )
+        return False, (
+            "baseline changed since preview: approve rejected, "
+            "preview regenerated — review and approve again"
+        )
+    store.append(
+        run_id,
+        state.version,
+        "human.approval",
+        {"actor": actor, "digest": digest, "ts": datetime.now(timezone.utc).isoformat()},
+    )
+    return True, digest
+
+
 def cmd_approve(repo: Path, *args) -> int:
     actor, to_stage, err = _parse_approve_args(list(args))
     if err:
@@ -193,30 +229,13 @@ def cmd_approve(repo: Path, *args) -> int:
             )
             print(f"approved rollback to {target}")
             return 0
-        vdir = paths.version_dir(home, state.version)
-        digest = revision_digest(vdir)
-        previews = [e for e in store.events(run_id) if e.type == "preview.generated"]
-        if not previews or previews[-1].payload["digest"] != digest:
-            # C-02: the trio changed under the reviewed preview — reject THIS
-            # approve (not the run) and regenerate the preview for re-review.
-            store.append(
-                run_id,
-                state.version,
-                "preview.generated",
-                {"digest": digest, "summary": baseline_summary(vdir)},
-            )
-            return _err(
-                "baseline changed since preview: approve rejected, "
-                "preview regenerated — review and approve again"
-            )
         actor = _resolve_actor(repo, actor)
-        store.append(
-            run_id,
-            state.version,
-            "human.approval",
-            {"actor": actor, "digest": digest, "ts": datetime.now(timezone.utc).isoformat()},
+        approved, detail = _approve_reviewed_baseline(
+            repo, home, store, run_id, state, actor
         )
-    print(f"approved {digest}")
+        if not approved:
+            return _err(detail)
+    print(f"approved {detail}")
     return 0
 
 

@@ -248,30 +248,42 @@ def _is_runtime_storage(porcelain_line: str) -> bool:
     return path == ".tracks" or path.startswith(".tracks/")
 
 
-def _release_minors(repo: Path) -> set[int]:
-    """The project's existing release minor versions: ``releases/vX.Y``
-    branches plus the versioned project directories (§1g.1.d derives
-    ``releases/v{N+1}`` from the greatest of them)."""
-    minors: set[int] = set()
+def _release_versions(repo: Path) -> set[tuple[int, int]]:
+    """The project's existing release versions as ``(major, minor)`` pairs:
+    ``releases/vX.Y`` branches plus the versioned project directories
+    (§1g.1.d derives the next release from the greatest of them — monotone
+    over the full version, never below an existing release)."""
+    versions: set[tuple[int, int]] = set()
     for line in _git_branch_lines(repo):
         name = line.strip().lstrip("*+").strip()
         match = _RELEASE_VERSION_RE.search(name)
         if match and name.startswith("releases/"):
-            minors.add(int(match.group(2)))
+            versions.add((int(match.group(1)), int(match.group(2))))
     projects = paths.projects_dir(paths.tracks_home(repo))
     if projects.is_dir():
         for entry in projects.iterdir():
             match = _RELEASE_VERSION_RE.search(entry.name)
             if entry.is_dir() and match:
-                minors.add(int(match.group(2)))
-    return minors
+                versions.add((int(match.group(1)), int(match.group(2))))
+    return versions
 
 
 def _next_release_version(repo: Path) -> str:
-    """``releases/v{N+1}`` of the greatest existing release minor (§1g.1.d);
-    ``v0.1`` for a project without any release yet."""
-    minors = _release_minors(repo)
-    return f"v0.{max(minors) + 1}" if minors else "v0.1"
+    """The next release version (§1g.1.d), monotone over existing releases.
+
+    A project whose greatest release major is ``>0`` derives
+    ``v{max_major + 1}.0`` (DIAGNOSE seq 11461: a project at ``v1.0``
+    derives ``v2.0`` — never the minor-only ``v0.1`` that slid below the
+    existing release). A ``v0.x``-only project keeps the greatest-minor+1
+    line (``v0.2`` → ``v0.3``), and a project without any release starts
+    at ``v0.1``."""
+    versions = _release_versions(repo)
+    if not versions:
+        return "v0.1"
+    major = max(number for number, _ in versions)
+    if major > 0:
+        return f"v{major + 1}.0"
+    return f"v0.{max(minor for _, minor in versions) + 1}"
 
 
 def _unmerged_release_branches(repo: Path) -> list[str]:

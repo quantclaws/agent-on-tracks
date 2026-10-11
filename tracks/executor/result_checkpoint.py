@@ -11,11 +11,19 @@ Composition (C0302 split): payload construction lives in
 :mod:`tracks.executor.result_audit`; both mixins are composed into
 ``ResultCheckpointMixin`` below, so the pre-split import surface of this
 module is unchanged (``ResultCheckpointMixin`` still carries every method).
+
+v0.11 (interfaces §1j.3, IF-GATEUI-001): the human-gate pipeline core
+lives here as the single shared implementation — the CLI faces
+(``trac triage`` / ``trac review``) and the supervisor's gate worker
+(``tracks/supervisor/gate_exec.py``) execute the very same
+``run_human_gate_pipeline`` under the writer lock, so the two faces cannot
+drift (CLI semantics zero-change).
 """
 
 from __future__ import annotations
 
 import subprocess as subprocess  # noqa: F401  (explicit re-export: test seam)
+from dataclasses import dataclass
 
 from tracks.executor.file_identity import (  # noqa: F401  (re-export: test import seam)
     is_regular_file_identity as _is_regular_file_identity,
@@ -38,6 +46,112 @@ _COMMITTED_EVENT = {
     "interfaces.md": ("design.committed", "interfaces_sha"),
     "test-plan.md": ("design.committed", "test_plan_sha"),
 }
+
+
+# -- shared human-gate pipeline core (v0.11 interfaces §1j.3) ------------------
+
+
+@dataclass(frozen=True)
+class HumanCheckpoint:
+    """One Human ResultCheckpoint submit (triage / review).
+
+    Shared by the CLI faces and the supervisor's gate worker (§1j.3): the
+    worker assembles the same checkpoint shape the CLI does, so the
+    published ``human.*`` event payload stays identical on both faces.
+    """
+
+    label: str
+    event_type: str
+    payload: dict
+    verdict: str
+    artifacts: list
+    checks: list
+    requires_diff: bool
+    commit_label: str
+    forbid_diff: bool = False
+    discussion_only: bool = False
+
+
+def unstage_foreign_staged_content(repo, version: str, label: str) -> int:
+    """v0.5 review-A attribution, AC-FR0267-02 realignment: pre-staged
+    content OUTSIDE the artifact allowlist is unstaged (``git reset`` --
+    content preserved in the working tree, never swept into the human
+    checkpoint commit) instead of refusing the gate; a dirty tree is
+    never a CLI-stage refusal — the walk proceeds and the M-VERIFY
+    freeze lands attention.required(dirty_tree) (needs_attention with
+    recovery guidance) at the contract's locked exit. Always returns 0."""
+    del label  # retained in the signature for caller stability
+    allowed_prefix = f".tracks/projects/{version}/"
+    staged = [
+        line.strip()
+        for line in git(
+            repo, "diff", "--cached", "--name-only", check=False
+        ).stdout.splitlines()
+        if line.strip()
+    ]
+    foreign = [f for f in staged if not f.startswith(allowed_prefix)]
+    if foreign:
+        # Unstage only; the working tree keeps the operator's content and
+        # the scoped checkpoint commit never picks it up.
+        git(repo, "reset", "--", *foreign, check=False)
+    return 0
+
+
+def run_human_gate_pipeline(
+    repo,
+    state,
+    store,
+    run_id,
+    checkpoint: HumanCheckpoint,
+    scope_attribution=None,
+    executor_factory=None,
+):
+    """Run one Human ResultCheckpoint pipeline (triage / review).
+
+    The single §1j.3 implementation shared by ``trac triage`` / ``trac
+    review`` and the supervisor gate worker. Pre-staged foreign content is
+    unstaged for attribution; a dirty tree is never refused here (the
+    M-VERIFY freeze owns the AC-FR0267-02 exit). Returns
+    ``(rc, (final_state, awaiting_before))`` or ``(rc, None)`` on an early
+    rejection. ``scope_attribution`` / ``executor_factory`` let the CLI
+    face keep its historic module-level seams (``run_cmd`` globals are
+    read at call time, so the CLI tests that patch them keep steering the
+    pipeline) while the worker uses the shared defaults.
+    """
+    attribution = scope_attribution or unstage_foreign_staged_content
+    rc = attribution(repo, state.version, checkpoint.label)
+    if rc:
+        return rc, None
+    if executor_factory is None:
+        from tracks.executor.executor import Executor  # noqa: PLC0415 (cycle-safe)
+
+        executor_factory = Executor
+    awaiting_before = state.awaiting
+    ex = executor_factory(store, repo, run_id)
+    doc = _stage_doc(state.stage)
+    ex.submit_human_result(
+        state=state,
+        domain_event_type=checkpoint.event_type,
+        payload=checkpoint.payload,
+        verdict=checkpoint.verdict,
+        artifacts=checkpoint.artifacts,
+        allowed_paths=[doc] if doc else [],
+        checks=checkpoint.checks,
+        requires_diff=checkpoint.requires_diff,
+        commit_label=checkpoint.commit_label,
+        forbid_diff=checkpoint.forbid_diff,
+        discussion_only=checkpoint.discussion_only,
+    )
+    return 0, (ex.run_pipeline(), awaiting_before)
+
+
+def _stage_doc(stage: str) -> str | None:
+    """Return the doc name for the current stage (deferred import to avoid
+    circular dependency)."""
+    from tracks.kernel.machine import _STAGES
+
+    sd = _STAGES.get(stage)
+    return sd.doc if sd else None
 
 
 class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):

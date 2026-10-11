@@ -938,6 +938,31 @@ def _stage_order() -> list[str]:
 # -- public projections -----------------------------------------------------
 
 
+def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | None:
+    """One overview run row, or None when the row is not a run.
+
+    Skipped rows (DIAGNOSE seq 11461 item 3): run-less rows with an empty
+    version — the same criterion the §1e.2 registry (_registry_versions)
+    uses — and backlog/archive terminals, which are entries, never runs
+    (the nondevelop exits keep their no-run observability)."""
+    if not run["version"] or run["status"] in ("backlog", "archive"):
+        return None
+    state = _state_of(project["repo_path"], run["run_id"])
+    todo = _todo_for(run["run_id"], state, project)
+    if run["version"] not in titles:
+        titles[run["version"]] = _version_story_title(project, run["version"])
+    return {
+        "run_id": run["run_id"],
+        "title": titles[run["version"]] or run["run_id"],
+        "version": run["version"],
+        "status": run["status"],
+        "stage": run["stage"],
+        "updated_ts": run["updated_ts"],
+        "control_state": _run_control_state(conn, state, run["run_id"], []),
+        "human_todos": 1 if todo is not None else 0,
+    }
+
+
 def project_overview(home: Path) -> dict:
     """Projects + runs + per-run human-todo counts (§1e)."""
     conn = _service_db(home)
@@ -948,28 +973,11 @@ def project_overview(home: Path) -> dict:
         for project in projects:
             titles: dict[str, str | None] = {}
             for run in _project_runs(project["repo_path"]):
-                state = _state_of(project["repo_path"], run["run_id"])
-                todo = _todo_for(run["run_id"], state, project)
-                if todo is not None:
-                    todo_count += 1
-                if run["version"] not in titles:
-                    titles[run["version"]] = _version_story_title(
-                        project, run["version"]
-                    )
-                runs.append(
-                    {
-                        "run_id": run["run_id"],
-                        "title": titles[run["version"]] or run["run_id"],
-                        "version": run["version"],
-                        "status": run["status"],
-                        "stage": run["stage"],
-                        "updated_ts": run["updated_ts"],
-                        "control_state": _run_control_state(
-                            conn, state, run["run_id"], []
-                        ),
-                        "human_todos": 1 if todo is not None else 0,
-                    }
-                )
+                row = _overview_run_row(conn, project, run, titles)
+                if row is None:
+                    continue
+                todo_count += row["human_todos"]
+                runs.append(row)
         return {
             "projects": [
                 {

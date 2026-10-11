@@ -851,7 +851,13 @@ async def decide_intake(request: Any) -> CommandResponse:
     def respond(receipt: Any) -> dict:
         outcome = getattr(receipt, "intake_outcome", None)
         if isinstance(outcome, dict) and outcome.get("outcome") == "backlog_recorded":
-            return {"outcome": "backlog_recorded"}
+            # §1g.1a: the 200 payload is {outcome: backlog_recorded, active_run}
+            # — the active_run key names the run holding the lock so the UI
+            # can present it (DIAGNOSE seq 11461 item 2).
+            return {
+                "outcome": "backlog_recorded",
+                "active_run": outcome.get("active_run"),
+            }
         return {}
 
     def status_fn(receipt: Any, default: int) -> int:
