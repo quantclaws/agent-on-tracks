@@ -60,7 +60,17 @@ _PARAM_TYPES: dict[str, dict[str, object]] = {
         "target": (str, _NULL),
         "preempt": bool,
     },
-    "submit_clarification": {"run_id": str, "doc": str, "thread_token": str, "body": str},
+    # v0.11 §1n.3 (PLANNING round 1): the clarification takes thread_token
+    # XOR anchor_line — the XOR itself is validated service-side; the guard
+    # tolerates either key (null included; a JSON body carries the anchor
+    # line as an integer, the str form stays tolerated too).
+    "submit_clarification": {
+        "run_id": str,
+        "doc": str,
+        "body": str,
+        "thread_token": (str, _NULL),
+        "anchor_line": (str, int, _NULL),
+    },
     "edit_material": {"run_id": str, "doc": str, "base_revision": str, "content": str},
     "record_stage_approval": {
         "run_id": str,
@@ -78,9 +88,36 @@ _PARAM_TYPES: dict[str, dict[str, object]] = {
     "pause_run": {"run_id": str},
     "resume_run": {"run_id": str},
     "abandon_run": {"run_id": str, "reason": str},
-    "return_stage": {"run_id": str, "to": str, "reason": str, "confirm": bool},
+    # v0.9 §1b#11 as revised by v0.11 PLANNING round 1: confirm is a
+    # conditional gate (only crossing already-executed irreversible
+    # operations demands confirm=true), so the key is optional here — the
+    # service-side preflight enforces the condition.
+    "return_stage": {
+        "run_id": str,
+        "to": str,
+        "reason": str,
+        "confirm": (bool, _NULL),
+    },
     "retry_run": {"run_id": str},
     "drive_run": {"run_id": str},
+    # v0.11 §1b #14-18 (PLANNING round 1 guard mirror): the five new kinds
+    # with their optional keys — the same closed set the service accepts.
+    "submit_intake": {
+        "project_id": str,
+        "source": str,
+        "content": (str, _NULL),
+        "issue": (int, _NULL),
+        "origin_entry": (str, _NULL),
+    },
+    "decide_intake": {"intake_id": str, "action": str, "confirm": (bool, _NULL)},
+    "dispose_backlog": {
+        "project_id": str,
+        "entry_id": str,
+        "disposition": str,
+        "to": (str, _NULL),
+    },
+    "record_triage": {"run_id": str, "decision": str},
+    "record_review": {"run_id": str, "action": str},
 }
 
 # Closed enums per kind (interfaces §1b); unknown values are rejected.
@@ -88,6 +125,13 @@ _ENUM_PARAMS: dict[str, dict[str, frozenset]] = {
     "create_run": {"journey": frozenset({"feature", "hotfix_post", "hotfix_dev"})},
     "record_stage_approval": {"decision": frozenset({"approve", "revise"})},
     "record_release_decision": {"action": frozenset({"release", "delay", "return"})},
+    "submit_intake": {"source": frozenset({"text", "issue", "backlog"})},
+    "decide_intake": {
+        "action": frozenset({"backlog", "archive", "remove_backlog", "develop"})
+    },
+    "dispose_backlog": {"disposition": frozenset({"removed", "promoted"})},
+    "record_triage": {"decision": frozenset({"go", "no_go", "park"})},
+    "record_review": {"action": frozenset({"comment", "no_comment"})},
 }
 
 

@@ -168,6 +168,7 @@ from .machine_human_gates import (
     _on_preview_generated,
 )
 from .machine_lifecycle import (
+    _on_backlog_dispositioned,
     _on_backlog_recorded,
     _on_branch_created,
     _on_branch_deleted,
@@ -316,6 +317,10 @@ class State:
     spec_committed: bool = False
     acceptance_committed: bool = False
     backlog_recorded: bool = False
+    # v0.11 IF-BACKLOG-001 (§1d.1): the run-less disposition marker folds as
+    # an idempotent flag on the entry's projection; never affects status or
+    # the active-run determination.
+    backlog_dispositioned: bool = False
     terminal_state: str | None = None
     # M-REQ-APPROVAL (FR-0180/0190/0200, IF-003 §10c)
     preview_ready: bool = False
@@ -564,6 +569,7 @@ _APPLY = {
     "human.retry": _on_human_retry,
     "review.round_started": _on_review_round_started,
     "backlog.recorded": _on_backlog_recorded,
+    "backlog.dispositioned": _on_backlog_dispositioned,
     "run.completed": _on_run_completed,
     "run.breaker_tripped": _on_run_breaker_tripped,
     "branch.created": _on_branch_created,

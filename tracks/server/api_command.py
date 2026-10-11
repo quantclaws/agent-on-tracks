@@ -85,15 +85,43 @@ _STATUS_BY_REASON = {
     "stale_preview": 409,
     "active_run_exists": 409,
     "not_found": 404,
+    # v0.11 §2b #39-43 failure columns: the intake/gate faces' closed reason
+    # tokens land on their contracted codes (422 shape/awaiting refusals,
+    # 409 positional conflicts).
+    "intake_not_ready": 422,
+    "dirty_tree": 422,
+    "awaiting_mismatch": 422,
+    "unmerged_release_branches": 409,
+}
+
+# Per-endpoint overrides of the generic reason map (§2b failure columns):
+# the retry position rides 409 through the readable cause (#26 precedent),
+# and v0.11 PLANNING revision round 2 extends the same convention to the
+# #25 return face — its validation_failed carries the already_executed
+# confirmation position, a conflict-shaped 409, not a malformed request.
+_ENDPOINT_STATUS: dict[tuple[str, str], int] = {
+    ("retry_run", "validation_failed"): 409,
+    ("return_stage", "validation_failed"): 409,
+    ("submit_intake", "validation_failed"): 422,
+    ("submit_intake", "issue_fetch_failed"): 409,
+    ("dispose_backlog", "validation_failed"): 422,
+    # RULING seq 10924 R4/R5: the decision-shape refusals (unknown action;
+    # remove_backlog on a non-backlog source) and the §1n.3 XOR shape
+    # refusals are 422 — the reason tokens stay in the closed set, only the
+    # status column moves. The missing Idempotency-Key refusal carries its
+    # own explicit 400 (service-side) and outranks this map in _accept.
+    ("decide_intake", "validation_failed"): 422,
+    ("submit_clarification", "validation_failed"): 422,
 }
 
 
 def _rejection_status(kind: str, reason: str) -> int:
-    """§2b status for a service rejection: the closed reason map, with the
-    retry endpoint's fixed 409 override (§2b #26 — the retry position is
-    conveyed through the readable cause, not the reason token)."""
-    if kind == "retry_run" and reason == "validation_failed":
-        return 409
+    """§2b status for a service rejection: the closed reason map with the
+    per-endpoint failure-column overrides (retry #26 / return #25 positions
+    via 409; the intake faces' shape refusals via 422)."""
+    override = _ENDPOINT_STATUS.get((kind, reason))
+    if override is not None:
+        return override
     return _STATUS_BY_REASON.get(reason, 400)
 
 
@@ -200,7 +228,7 @@ def _rejection_audit(
         project_id=params.get("project_id"),
         run_id=params.get("run_id"),
     )
-    return _error(status or _STATUS_BY_REASON.get(reason, 400), reason, detail)
+    return _error(status or _rejection_status(kind, reason), reason, detail)
 
 
 # -- run context (project resolution + run state, all read-only) --------------
@@ -245,6 +273,7 @@ async def _mutate(
     guard_params: dict | None = None,
     preflight: Any = None,
     respond: Any = None,
+    status_fn: Any = None,
 ) -> CommandResponse:
     """Shared mutation pipeline; ``params`` is what the service receives."""
     session = _authenticated(request)
@@ -260,6 +289,7 @@ async def _mutate(
         guard_params=guard_params,
         preflight=preflight,
         respond=respond,
+        status_fn=status_fn,
     )
 
 
@@ -272,6 +302,7 @@ def _validated_mutate(
     guard_params: dict | None = None,
     preflight: Any = None,
     respond: Any = None,
+    status_fn: Any = None,
 ) -> CommandResponse:
     """Guard -> preflight -> accept tail for an already-resolved session.
 
@@ -286,7 +317,7 @@ def _validated_mutate(
         failure = preflight(request, session, params)
         if failure is not None:
             return failure
-    return _accept(request, kind, params, session, respond=respond)
+    return _accept(request, kind, params, session, respond=respond, status_fn=status_fn)
 
 
 def _accept(
@@ -295,8 +326,14 @@ def _accept(
     params: dict,
     session: Any,
     respond: Any = None,
+    status_fn: Any = None,
 ) -> CommandResponse:
-    """Delegate to CommandService.accept(surface=http) and map the outcome."""
+    """Delegate to CommandService.accept(surface=http) and map the outcome.
+
+    ``status_fn(receipt, default)`` lets a §2b face override the default
+    200-dedup/202-accepted pair (the #40 develop active-run form answers
+    200 with its outcome payload on the FIRST acceptance too).
+    """
     try:
         receipt = _service(request).accept(
             kind,
@@ -307,13 +344,22 @@ def _accept(
             idempotency_key=request.headers.get("Idempotency-Key"),
         )
     except Rejection as rejection:
+        # RULING seq 10924: an explicit Rejection status (the missing
+        # Idempotency-Key 400) outranks the per-endpoint reason map; None
+        # falls back to the map.
+        status = getattr(rejection, "status", None)
         return _error(
-            _rejection_status(kind, rejection.reason), rejection.reason, rejection.detail
+            status or _rejection_status(kind, rejection.reason),
+            rejection.reason,
+            rejection.detail,
         )
     payload: dict = {"command_id": receipt.command_id}
     if respond is not None:
         payload.update(respond(receipt))
-    return CommandResponse(200 if receipt.deduplicated else 202, payload)
+    status = 200 if receipt.deduplicated else 202
+    if status_fn is not None:
+        status = status_fn(receipt, status)
+    return CommandResponse(status, payload)
 
 
 def _run_scoped(kind: str):
@@ -331,17 +377,25 @@ def _run_scoped(kind: str):
 
 
 def _projected_revision(repo: Path, version: str | None, doc: str | None, content: str) -> str:
-    """The trio revision digest the accepted edit will produce once applied."""
+    """The trio revision digest the accepted edit will produce once applied.
+
+    v0.11 §1n.2 creation window (PLANNING revision round 2): a missing
+    sibling degrades to the fixed ``missing`` label — the projection never
+    raises inside the window (a crash here surfaced as the 500 the
+    acceptance anchors saw), and a complete directory keeps the v0.10
+    construction byte-identical (pure extension).
+    """
     edited = _DOC_FILES.get(doc or "")
     pieces = []
     for label, name in _TRIO:
         if name == edited:
             body = split_frontmatter(content)[1]
         else:
-            text = (paths.version_dir(tracks_home(repo), version or "") / name).read_text(
-                encoding="utf-8"
-            )
-            body = split_frontmatter(text)[1]
+            doc_path = paths.version_dir(tracks_home(repo), version or "") / name
+            if not doc_path.is_file():
+                pieces.append(f"{label}:missing")
+                continue
+            body = split_frontmatter(doc_path.read_text(encoding="utf-8"))[1]
         pieces.append(f"{label}:{hashlib.sha256(body.encode('utf-8')).hexdigest()}")
     return hashlib.sha256("\n".join(pieces).encode("utf-8")).hexdigest()
 
@@ -767,8 +821,86 @@ async def retry_run(request: Any) -> CommandResponse:
     )
 
 
+# -- v0.11 unified intake / backlog / human-gate write faces (§2b #39-43) -----
+
+
+async def submit_intake(request: Any) -> CommandResponse:
+    """POST /api/projects/{pid}/intakes -> submit_intake (§2b #39).
+
+    202 carries the created intake_id next to the command_id (§1f.3); the
+    closed-source shape check and the acceptance-time issue fetch reject
+    through their own tokens (422 / 409 issue_fetch_failed).
+    """
+    params = {**await _json_body(request), "project_id": request.path_params.get("pid")}
+
+    def respond(receipt: Any) -> dict:
+        return {"intake_id": receipt.intake_id} if receipt.intake_id else {}
+
+    return await _mutate(request, "submit_intake", params, respond=respond)
+
+
+async def decide_intake(request: Any) -> CommandResponse:
+    """POST /api/intakes/{intake_id}/decisions -> decide_intake (§2b #40).
+
+    The develop-over-active-run terminal answers 200 with its outcome
+    payload (backlog_recorded — the run keeps the lock, the input lands in
+    backlog); every other acceptance answers the default 202.
+    """
+    params = {**await _json_body(request), "intake_id": request.path_params.get("intake_id")}
+
+    def respond(receipt: Any) -> dict:
+        outcome = getattr(receipt, "intake_outcome", None)
+        if isinstance(outcome, dict) and outcome.get("outcome") == "backlog_recorded":
+            return {"outcome": "backlog_recorded"}
+        return {}
+
+    def status_fn(receipt: Any, default: int) -> int:
+        outcome = getattr(receipt, "intake_outcome", None)
+        if isinstance(outcome, dict) and outcome.get("outcome") == "backlog_recorded":
+            return 200
+        return default
+
+    return await _mutate(
+        request, "decide_intake", params, respond=respond, status_fn=status_fn
+    )
+
+
+async def dispose_backlog(request: Any) -> CommandResponse:
+    """POST /api/projects/{pid}/backlog/{entry_id}/dispositions (§2b #41)."""
+    params = {
+        **await _json_body(request),
+        "project_id": request.path_params.get("pid"),
+        "entry_id": request.path_params.get("entry_id"),
+    }
+    return await _mutate(request, "dispose_backlog", params)
+
+
+async def record_triage(request: Any) -> CommandResponse:
+    """POST /api/runs/{run_id}/triage -> record_triage (§2b #42)."""
+    params = {**await _json_body(request), "run_id": request.path_params.get("run_id")}
+    return await _mutate(
+        request, "record_triage", params, preflight=_run_scoped("record_triage")
+    )
+
+
+async def record_review(request: Any) -> CommandResponse:
+    """POST /api/runs/{run_id}/review -> record_review (§2b #43)."""
+    params = {**await _json_body(request), "run_id": request.path_params.get("run_id")}
+    return await _mutate(
+        request, "record_review", params, preflight=_run_scoped("record_review")
+    )
+
+
 # CORE-02-style extension seam: the composition root merges the declared
-# routes so the §2b #35 docs-centre edit face lands without re-touching app.py.
+# routes so the §2b #35 docs-centre edit face and the v0.11 #39-43 intake /
+# backlog / human-gate write faces land without re-touching app.py — every
+# new write rides the one _mutate pipeline (CSRF + Idempotency-Key enforced,
+# missing headers rejected without persisting, idempotency dedup; NFR-0157).
 EXTENSION_ROUTES = (
     (_DOCS_EDIT_PATH, edit_project_doc, ("POST",)),
+    ("/api/projects/{pid}/intakes", submit_intake, ("POST",)),
+    ("/api/intakes/{intake_id}/decisions", decide_intake, ("POST",)),
+    ("/api/projects/{pid}/backlog/{entry_id}/dispositions", dispose_backlog, ("POST",)),
+    ("/api/runs/{run_id}/triage", record_triage, ("POST",)),
+    ("/api/runs/{run_id}/review", record_review, ("POST",)),
 )

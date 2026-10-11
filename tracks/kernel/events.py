@@ -235,6 +235,13 @@ EVENT_TYPES = (
     # machine serialization) instead of the fenced text block. Payload
     # carries the path + sha256 digest. Audit-only; kernel ignores it.
     "envelope.file_delivered",
+    # v0.11 IF-BACKLOG-001 (interfaces §1d.1): the disposition marker of a
+    # backlog entry — run-less ULID identity in the same space as the
+    # disposed entry, payload {entry, disposition: removed|promoted, to,
+    # reason?}. The kernel folds it as an idempotent marker that never
+    # participates in the active-run determination (the _on_backlog_recorded
+    # phantom semantics stay unchanged).
+    "backlog.dispositioned",
 )
 
 # interfaces §4 — v0.1 closed command set.

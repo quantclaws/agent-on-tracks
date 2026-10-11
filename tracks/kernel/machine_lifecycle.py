@@ -199,6 +199,17 @@ def _on_backlog_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
         s.status = "backlog"
 
 
+def _on_backlog_dispositioned(s: State, p: dict, ev: EventEnvelope) -> None:
+    # v0.11 IF-BACKLOG-001 (interfaces §1d.1): the disposition of a backlog
+    # entry folds as a pure idempotent marker — replaying the event (or a
+    # second one for the same entry) changes nothing else. It must never
+    # touch status/awaiting, so the run-less ULID the event rides on keeps
+    # the _on_backlog_recorded phantom semantics: not an active run, not a
+    # gate. The projections derive removal/whereabouts from the event
+    # stream, not from this flag.
+    s.backlog_dispositioned = True
+
+
 def _on_run_completed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.status = "completed"
     s.awaiting = None

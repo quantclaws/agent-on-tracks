@@ -17,6 +17,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from tracks.supervisor.lease import quarantine_late_result
 
@@ -25,7 +26,9 @@ SCHEMA_VERSION = 1
 # Closed set of service-plane event types (interfaces §1a). tracks.db
 # EVENT_TYPES is NOT extended in v0.9/v0.10 — the run-plane closed set stays
 # frozen. v0.10 appends #25 ``auth.name_bound`` (IF-WEBAUTH-001 name
-# binding, interfaces §1a #25).
+# binding, interfaces §1a #25). v0.11 appends the intake audit trio #26-28
+# (IF-INTAKE-001, interfaces §1a: submission by the command service,
+# evaluation by the intake worker, decision by the command service).
 SERVICE_EVENT_TYPES = (
     "service.started",
     "service.stopped",
@@ -52,6 +55,9 @@ SERVICE_EVENT_TYPES = (
     "access.denied",
     "auth.login",
     "auth.name_bound",
+    "intake.submitted",
+    "intake.evaluated",
+    "intake.decided",
 )
 
 COMMAND_STATUSES = ("accepted", "claimed", "completed", "failed", "rejected")
@@ -88,6 +94,18 @@ _SCHEMA_SCRIPT = (
     " created_at TEXT, expires_at TEXT);"
     "CREATE TABLE IF NOT EXISTS schedule ("
     " id INTEGER PRIMARY KEY CHECK (id = 1), active_run TEXT, queue_json TEXT);"
+    # v0.11 IF-INTAKE-001 (interfaces §1c #9): the SM-01 intake state
+    # machine's storage — status flows submitted -> evaluating -> evaluated
+    # -> decided (failed is the retryable dead end, re-dispatch budget <= 3
+    # tracked through the intake.evaluated event stream); report_json
+    # carries the §1f.2 Scribe evaluation report; decision / decided_at
+    # record the terminal action. Idempotent CREATE TABLE so pre-v0.11
+    # stores gain it at startup, rows untouched.
+    "CREATE TABLE IF NOT EXISTS intakes ("
+    " intake_id TEXT PRIMARY KEY, project_id TEXT, source TEXT, content TEXT,"
+    " issue INTEGER NULL, origin_entry TEXT NULL, status TEXT,"
+    " report_json TEXT NULL, decision TEXT NULL, decided_at TEXT NULL,"
+    " created_at TEXT, updated_at TEXT);"
 )
 
 # v0.10 schema evolution (interfaces §1c #6): the auth table's nullable
@@ -361,6 +379,60 @@ class ServiceDB:
                 "SELECT project_id, repo_path, version FROM projects ORDER BY rowid"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_intake(self, intake_id: str | None) -> dict | None:
+        """One intakes row (§1c #9) as a dict; None when unknown."""
+        if not intake_id:
+            return None
+        with contextlib.closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM intakes WHERE intake_id = ?", (str(intake_id),)
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def insert_intake(self, row: dict) -> None:
+        """Insert one intakes row (submit_intake's synchronous short write)."""
+        columns = (
+            "intake_id", "project_id", "source", "content", "issue", "origin_entry",
+            "status", "report_json", "decision", "decided_at", "created_at", "updated_at",
+        )
+        values = [row.get(column) for column in columns]
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute(
+                f"INSERT INTO intakes ({', '.join(columns)})"
+                f" VALUES ({', '.join('?' for _ in columns)})",
+                values,
+            )
+            conn.commit()
+
+    def update_intake(
+        self,
+        intake_id: str,
+        *,
+        status: str | None = None,
+        report_json: str | None = None,
+        decision: str | None = None,
+        decided_at: str | None = None,
+    ) -> None:
+        """Update the mutable lifecycle columns of one intakes row."""
+        sets: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("status", status), ("report_json", report_json),
+            ("decision", decision), ("decided_at", decided_at),
+        ):
+            if value is not None:
+                sets.append(f"{column} = ?")
+                values.append(value)
+        if not sets:
+            return
+        sets.append("updated_at = ?")
+        values.append(_utcnow())
+        values.append(str(intake_id))
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute(f"UPDATE intakes SET {', '.join(sets)} WHERE intake_id = ?", values)
+            conn.commit()
 
     def get_project(self, project_id: str | None) -> dict | None:
         """Registered project row by id (interfaces §1c table 2)."""
