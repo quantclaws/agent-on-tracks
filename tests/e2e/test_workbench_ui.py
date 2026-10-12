@@ -453,6 +453,11 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
         ui_serve.seed_run(f"run-ui-multi-{index}", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
 
+    # v0.11 five-tab world: the landing Releases window shows the registry
+    # (compact faces) — the timeline face renders on selection. Open the
+    # newest run so the event projection (timeline-last-event) presents.
+    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for(timeout=10000)
+    page.get_by_test_id("registry-run-run-ui-multi-7").click()
     # The landing runs view settles each row on the NEWEST drained event:
     # a JSON poll batch carries one cursor for the whole batch, so applying
     # only its head row would freeze the line at the OLDEST event.
@@ -462,16 +467,16 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
 
     # The Runs area's subtree is the run registry, newest first, and the
     # main face opens on the newest run's stage track (not a flat row list).
+    # v0.11: the focused timeline face keeps no sidebar registry (the
+    # Releases window does) — go back to the registry for the sidebar.
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for(timeout=10000)
     sidebar_runs = page.locator("[data-testid^='sidebar-run-run-ui-multi-']")
     expect(sidebar_runs.first).to_be_visible(timeout=10000)
     assert sidebar_runs.count() == 8, "the sidebar lists the whole registry"
     assert (sidebar_runs.first.get_attribute("data-testid") or "").endswith(
         "run-ui-multi-7"
     ), "the newest run leads the sidebar"
-    expect(page.locator("[data-testid='timeline']")).to_be_visible()
-
-    page.get_by_test_id("tabbar-item-releases").click()
-    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for()
 
     page.get_by_test_id("tabbar-item-docs").click()
     page.locator("[data-testid='doc-tree-item-v1.0-spec']").wait_for(timeout=10000)
@@ -501,7 +506,7 @@ def test_runs_registry_human_titles(ui_serve, page):
     node = page.get_by_test_id("sidebar-run-run-ui-title-1")
     node.wait_for()
     label = node.inner_text() or ""
-    assert label == "v1.0 · Web 工作台完善（UI）...", (
+    assert label == "v1.0 · Web 工作台完善（UI）…", (
         f"the sidebar run label truncates at 20 characters: {label!r}"
     )
     hotfix = page.get_by_test_id("sidebar-run-run-ui-hotfix-1")
@@ -518,7 +523,7 @@ def test_runs_registry_human_titles(ui_serve, page):
 
     page.get_by_test_id("tabbar-item-releases").click()
     registry = page.get_by_test_id("registry-run-run-ui-title-1")
-    assert (registry.inner_text() or "") == "v1.0 · Web 工作台完善（UI）...", (
+    assert (registry.inner_text() or "") == "v1.0 · Web 工作台完善（UI）…", (
         "the Releases registry row truncates the same way"
     )
 
@@ -561,9 +566,11 @@ def test_v010_rulings_regression(ui_serve, page):
     assert re.search(r"--accent\s*:", styles_text), "token block stays canonical"
 
     # 紧凑行: the Releases registry row truncates at 20 characters
+    ui_serve.seed_project("proj-rulings-1", "v1.0")
     ui_serve.seed_version_docs("v1.0", story_title="紧凑行裁定回归用超长标题需要截断处理")
     ui_serve.seed_run("run-ui-rulings-1", "v1.0")
     page.reload(wait_until="domcontentloaded")
+    page.locator("[data-testid='view-releases']").wait_for()
     row = page.get_by_test_id("registry-run-run-ui-rulings-1")
     row.wait_for()
     label = (row.inner_text() or "").strip()

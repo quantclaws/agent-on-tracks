@@ -71,6 +71,16 @@ export async function activateTab(area) {
     }
   }
   active = window;
+  // A tab-bar re-click re-renders the area's window from its CURRENT context
+  // (the registry re-lists): a re-click DROPS a one-shot deep-link runId
+  // and returns to the registry — EXCEPT when the re-click is the tab
+  // machine's own first activation of a freshly opened deep-link window
+  // (no prior activation yet): then the focus must survive.
+  if (area === "releases" && window.context && window.context.runId && window._activated) {
+    delete window.context.runId;
+    delete window.context.runTitle;
+  }
+  window._activated = true;
   const shell = document.querySelector("#workbench") || document;
   const mainArea = shell.querySelector('[data-testid="main-area"]');
   const token = ++activationToken;

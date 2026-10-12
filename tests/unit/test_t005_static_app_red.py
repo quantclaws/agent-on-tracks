@@ -343,7 +343,7 @@ def test_run_registry_rows_truncate_labels_and_drop_id_fallback():
         "a title that fell back to the raw run id renders as the bare "
         "version — no ULID noise in the registry (#227)"
     )
-    assert 'join("")}...' in views, (
+    assert 'join("")}…' in views, (
         "a truncated registry row ends with an ellipsis (#227)"
     )
     assert "text: runRowLabel(run)" in views, (

@@ -144,6 +144,7 @@ def login_session(
     password: str = _SERVE_PASSWORD,
     timeout: float = 5.0,
     display_name: str = "Shell Human",
+    collect_name: bool = True,
 ) -> tuple[str, str]:
     """Login via POST /api/auth/login (§2b #1); returns (cookie, csrf).
 
@@ -153,7 +154,10 @@ def login_session(
     declares ``name_required``, the display name is submitted through
     POST /api/auth/name (§2b #29 — idempotent, contract-validated) so the
     returned session is provisioned for the workbench data face; servers
-    without the name gate are unaffected.
+    without the name gate are unaffected. Pass ``collect_name=False`` when
+    the browser journey itself must collect the name (the name gate is
+    service-level; API paths stay ungated per app.py _AuthBoundary, so the
+    API setup still succeeds while the browser login sees the name step).
     """
     data = json.dumps({"password": password}).encode()
     req = urllib.request.Request(
@@ -165,7 +169,7 @@ def login_session(
         cookie = resp.headers.get("Set-Cookie", "")
     csrf = body["csrf_token"]
     assert cookie and csrf, f"login must issue session + csrf, got {body!r}"
-    if body.get("name_required"):
+    if collect_name and body.get("name_required"):
         name_data = json.dumps({"name": display_name}).encode()
         name_req = urllib.request.Request(
             base_url + "/api/auth/name",

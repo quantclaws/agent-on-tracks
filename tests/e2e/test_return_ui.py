@@ -34,14 +34,22 @@ _TS = "2026-10-11T00:00:00+00:00"
 
 
 def _seed_return_run(repo: Path, run_id: str) -> None:
-    """A run whose history already carries a published release (§4c outlet)."""
+    """A run whose history already carries a published release (§4c outlet).
+
+    The sealed done-op vocabulary the shared legality rule counts (§1m.1):
+    publish.executed with status=done + operation_kind/target (mirrors the
+    integration timeline face's _seed_publish_executed_run).
+    """
     store = Store(tracks_home(repo))
     try:
         store.append(run_id, "v0.9", "stage.entered", {"stage": "M-RELEASE"})
         store.append(
             run_id, "v0.9", "release.previewed", {"preview_digest": "sha256:" + "c" * 64}
         )
-        store.append(run_id, "v0.9", "publish.executed", {"tag": "v0.9.0", "remote": "origin"})
+        store.append(
+            run_id, "v0.9", "publish.executed",
+            {"status": "done", "operation_kind": "merge", "target": "main"},
+        )
     finally:
         store.close()
 

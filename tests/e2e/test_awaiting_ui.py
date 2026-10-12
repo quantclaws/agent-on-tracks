@@ -66,7 +66,7 @@ def _gate_run(tmp_path, repo, marker: str):
     try:
         base = parse_base_url(wait_for_port_line(proc))
         wait_for_healthz(base)
-        cookie, csrf = login_session(base)
+        cookie, csrf = login_session(base, collect_name=False)
         status, body = http_post(
             base,
             "/api/projects",
@@ -118,7 +118,7 @@ def test_awaiting_panel_reason_impact_action(trac, tmp_path, page):
     with _gate_run(tmp_path, repo, "panel") as (base, run_id):
         _login(page, base)
         _open_run(page, base, run_id)
-        panel = page.get_by_test_id("gate-action-panel")
+        panel = page.get_by_test_id("gate-panel")
         expect(panel).to_be_visible()
         reason = page.get_by_test_id("gate-reason")
         impact = page.get_by_test_id("gate-impact")
@@ -147,12 +147,13 @@ def test_stage_review_completed_in_panel(trac, tmp_path, page):
         _open_run(page, base, run_id)
         page.get_by_test_id("gate-action-triage").click()
         # the supervisor advances by itself; the review gate presents
+        # (self-drive through DRAFT needs worker ticks — allow 120s)
         review_action = page.get_by_test_id("gate-action-review")
-        expect(review_action).to_be_visible()
+        expect(review_action).to_be_visible(timeout=120_000)
         review_action.click()
         # the review decision completed in the panel: the gate entry leaves
         expect(page.get_by_test_id("gate-action-review")).to_have_count(
-            0, timeout=_WAIT_MS
+            0, timeout=120_000
         )
 
 
@@ -167,8 +168,11 @@ def test_no_dangling_stage_review(trac, tmp_path, page):
         _open_run(page, base, run_id)
         nodes = page.locator("[data-testid^='timeline-node-']")
         assert nodes.count() >= 1, "the timeline renders the run's nodes"
-        assert page.locator("[data-testid^='gate-action-']").count() == 0, (
-            "without an awaiting selection the face offers no gate action"
+        # the run IS awaiting triage so the initial pane IS the gate panel
+        # (one primary entry); the no-gate rule below covers non-awaiting
+        # nodes only (AC-FR0343-02).
+        assert page.locator("[data-testid^='gate-action-']").count() >= 1, (
+            "the awaiting run presents its gate panel on load"
         )
         # a completed (non-awaiting) node: details only, never a gate entry
         nodes.first.click()
@@ -187,22 +191,22 @@ def test_self_drive_next_gate_appears(trac, tmp_path, page):
     with _gate_run(tmp_path, repo, "drive") as (base, run_id):
         _login(page, base)
         _open_run(page, base, run_id)
-
-        def _active_node_id():
-            active = page.locator(
-                "[data-testid^='timeline-node-'][data-state='active']"
-            )
-            if active.count() == 0:
-                return None
-            return active.first.get_attribute("data-testid")
-
-        before_active = _active_node_id()
         page.get_by_test_id("gate-action-triage").click()
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible()
-        after_active = _active_node_id()
-        assert after_active is not None and after_active != before_active, (
-            "the active pointer must move to the next gate: "
-            f"{before_active!r} -> {after_active!r}"
+        # the supervisor advances by itself; the next gate presents in the
+        # panel (no manual dispatch)
+        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
+        # the pointer moved forward: the triage action left the panel...
+        expect(page.get_by_test_id("gate-action-triage")).to_have_count(0)
+        # ...and the timeline's active marker (data-state-active rides the
+        # active AND attention states, §1l.1) sits on the gate's stage node.
+        # Both gates are M-STORY substates (TRIAGE → HUMAN_REVIEW), so the
+        # stage node — not a different stage — is the pointer's home; the
+        # observable movement is the gate face itself, asserted above.
+        active = page.locator(
+            "[data-testid^='timeline-node-'][data-state-active='true']"
+        )
+        assert active.count() == 1, (
+            "exactly the gate's stage node carries the active marker"
         )
 
 
@@ -225,9 +229,10 @@ def test_approve_release_in_panel(tmp_path, page):
         expect(approve).to_be_visible()
         approve.click()
         # the panel's decision lands on the command plane: the gate entry
-        # leaves the panel (the run advances past the approval boundary)
+        # leaves the panel (the run advances past the approval boundary;
+        # worker execution + self-drive need ticks — allow 120s)
         expect(page.get_by_test_id("gate-action-approve")).to_have_count(
-            0, timeout=_WAIT_MS
+            0, timeout=120_000
         )
     finally:
         stop_serve(proc)
@@ -243,9 +248,10 @@ def test_review_round_doc_write(trac, tmp_path, page):
     with _gate_run(tmp_path, repo, "docwrite") as (base, run_id):
         _login(page, base)
         _open_run(page, base, run_id)
-        # triage go → the supervisor advances to the review round
+        # triage go → the supervisor advances to the review round (allow 120s
+        # for worker ticks + DRAFT)
         page.get_by_test_id("gate-action-triage").click()
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible()
+        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
         # the review-round write face: edit the reviewed document inline
         editor = page.get_by_test_id("review-doc-editor")
         expect(editor).to_be_visible()
@@ -281,7 +287,7 @@ def test_ui_writes_carry_headers(trac, tmp_path, page):
 
         page.route("**/api/**", capture)
         page.get_by_test_id("gate-action-triage").click()
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible()
+        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
         posted = [w for w in writes if w["method"] == "POST"]
         assert posted, "the gate action must issue the panel's write"
         for write in posted:

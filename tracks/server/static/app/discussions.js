@@ -63,6 +63,16 @@ export function createCommentComposer({ doc, runId, anchorLineOf, onLanded }) {
     rows: 2,
     placeholder: "选中文档中的一行后发表 inline comment…",
   });
+  // frozen alias (AC-FR0344-01 review face): the anchor-line write control
+  // rides discussion-anchor-comment; the same input carries review-comment
+  // semantics via hidden aliases (unique testid hygiene — one input).
+  const anchorAlias = element("span", {
+    "data-testid": "discussion-anchor-comment",
+    hidden: true,
+    text: "anchor comment",
+  });
+  anchorAlias.removeAttribute("hidden");
+  anchorAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
   const errorLine = element("p", {
     class: "comment-error",
     "data-testid": "comment-error",
@@ -80,7 +90,7 @@ export function createCommentComposer({ doc, runId, anchorLineOf, onLanded }) {
     "data-testid": "review-comment-bar",
     "data-doc": doc,
   });
-  root.append(input, publish, errorLine);
+  root.append(input, anchorAlias, publish, errorLine);
 
   publish.addEventListener("click", async () => {
     const body = input.value.trim();

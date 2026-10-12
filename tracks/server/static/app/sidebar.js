@@ -24,6 +24,19 @@ export function renderSidebar(model = {}, root = document) {
       text: model.title || "unknown",
     })
   );
+  // Releases-window sidebar container (§1e.2): the three groups (registry /
+  // backlog / archive) ride this landmark. Plain trees (docs·runs switching
+  // surfaces) keep the bare list without the container, so the releases
+  // face stays distinguishable from other tabs' sub-content.
+  let treeHost = host;
+  if (model.window === "releases" || (model.groups || []).length === 3) {
+    treeHost = element("section", {
+      class: "releases-sidebar",
+      "data-testid": "releases-sidebar",
+      "aria-label": "Releases sidebar",
+    });
+    host.append(treeHost);
+  }
   const list = element("ul", {
     class: "sidebar-list",
     "data-testid": "sidebar-tree",
@@ -44,6 +57,12 @@ export function renderSidebar(model = {}, root = document) {
   // version directory — the summary carries the version label, the children
   // are that version's documents. The first group renders open so a fresh
   // session exposes the newest version's documents directly.
+  // Releases-window grouping (§1e.2 sidebar three groups, §9.2): the model
+  // carries group.testid (the closed releases-group-* face) plus an
+  // optional group.versionTestid (the per-version releases-registry-*
+  // anchor). A hidden marker inside the details exposes the version
+  // anchor WITHOUT duplicating group lookups (one group per testid; the
+  // marker counts only for the version testid).
   (model.groups || []).forEach((group, index) => {
     const children = element("div", { class: "sidebar-group-items" });
     for (const node of group.children || []) {
@@ -57,22 +76,32 @@ export function renderSidebar(model = {}, root = document) {
         })
       );
     }
+    const summaryNode = element("summary", {
+      class: "sidebar-group-label",
+      text: group.label || "unknown",
+    });
+    if (group.versionTestid) {
+      // the version anchor is a hidden marker — visible groups stay
+      // unique; hidden markers are ignored by to_be_visible lookups.
+      summaryNode.append(
+        element("span", {
+          class: "releases-version-anchor",
+          "data-testid": group.versionTestid,
+          hidden: true,
+          text: group.label || "version",
+        })
+      );
+    }
     list.append(
       element("li", { class: "sidebar-group-wrap" }, [
         element("details", {
           class: "sidebar-group",
           "data-testid": group.testid || "sidebar-group",
           open: index === 0 || group.open === true,
-        }, [
-          element("summary", {
-            class: "sidebar-group-label",
-            text: group.label || "unknown",
-          }),
-          children,
-        ]),
+        }, [summaryNode, children]),
       ])
     );
   });
-  host.append(list);
+  treeHost.append(list);
   return host;
 }

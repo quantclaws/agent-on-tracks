@@ -127,12 +127,18 @@ def _command_dispatch_sage(s: State) -> Command:
     return Command(kind="dispatch_agent", params=params)
 
 
-def _on_hotfix_requested(s: State, p: dict) -> None:
+def _on_hotfix_requested(s: State, p: dict, ev) -> None:
     """Reducer: ``hotfix.requested`` {issue, scenario} (IF-HOTFIX-002).
 
     Projects the run-establishment fact: ``hotfix_issue`` /
     ``hotfix_scenario`` on State; substate stays PRECHECK (SM-01.1).
+    The envelope's run identity is projected exactly like
+    ``story.requested`` does, so the serve drive plane recognises the
+    established run (IF-DRIVE-001 unknown-run guard) — the version
+    identity keeps flowing through the ``stage.entered`` envelope
+    fallback, never overridden here.
     """
+    s.run_id = ev.run_id
     s.hotfix_issue = p.get("issue")
     s.hotfix_scenario = p.get("scenario")
 

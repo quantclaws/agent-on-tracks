@@ -585,6 +585,15 @@ def _awaiting_type(state: State) -> str | None:
     return state.awaiting if state.awaiting in _AWAITING_PRIMARY_ACTIONS else None
 
 
+def _run_branch(state: State) -> str | None:
+    """The run's git branch identity (hotfix runs live on ``fix/{issue}``,
+    IF-HOTFIX-006): projected run-plane state, no new data source. None for
+    non-hotfix runs (the Releases registry owns their release-branch face)."""
+    if state.hotfix_issue is not None:
+        return f"fix/{state.hotfix_issue}"
+    return None
+
+
 def _awaiting_gate(state: State) -> dict | None:
     """The run-detail ``awaiting_gate`` field group (§1k.1) or None."""
     gate_type = _awaiting_type(state)
@@ -735,8 +744,26 @@ def _version_story_title(project: dict, version: str) -> str | None:
 
 
 def _revision_or_none(vdir: Path) -> str | None:
+    """The version directory's revision token for the docs read faces.
+
+    The inherited (v0.10) construction is the trio digest
+    (``baseline.revision_digest``) — the token the run-domain edit face #17
+    binds, and the value the docs tree/read has always presented for dirs
+    whose trio is derivable. §1n.1 globalizes ``docs_revision`` (six-piece,
+    missing-aware) so that the docs-centre edit face #35 stays bindable in
+    ANY review round: when the trio digest is structurally unavailable
+    (spec/acceptance not yet written — the M-STORY window), the read faces
+    fall back to the docs_revision instead of answering a null revision that
+    no edit face could bind. Complete dirs keep the v0.10 value byte for
+    byte (pure extension, §1n.1)."""
     try:
         return revision_digest(vdir)
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:
+        from tracks.supervisor.service import docs_revision  # cycle-safe
+
+        return docs_revision(vdir)
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -942,6 +969,7 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
         chain = _chain_rows(repo_path, version, run_id)
         return {"run_id": run_id, "version": state.version or version, "status": state.status,
             "stage": state.stage, "substate": state.substate,
+            "branch": _run_branch(state),
             "control_state": _control_state(
                 state, events, pause_label, wait, _is_queued(conn, run_id)
             ),
@@ -986,11 +1014,21 @@ def _timeline_rows(
 ) -> list[dict]:
     rows = []
     for event in _run_events(repo_path, run_id):
+        payload = dict(event.payload or {})
         rows.append(
             {
                 "source": "tracks", "seq": event.seq, "ts": event.ts, "type": event.type,
                 "run_id": event.run_id, "command_id": event.command_id, "task_id": event.task_id,
-                "ac_refs": _event_ac_refs(event.payload or {}), "summary": event.type,
+                "ac_refs": _event_ac_refs(payload), "summary": event.type,
+                # §1l.1/§9.2 full timeline rendering: the client derives the
+                # five-state labels / attempt grouping / rollback edges from
+                # the event stream itself — the payload (stage, attempt, …)
+                # is the derivation input, never a second source. The
+                # response face redacts it (api_query._response), the SSE
+                # face redacts it too (api_events._redacted).
+                "payload": payload,
+                "stage": payload.get("stage"),
+                "attempt": payload.get("attempt"),
                 "payload_ref": "",
             })
     service = _rows(conn,
@@ -998,11 +1036,16 @@ def _timeline_rows(
             "WHERE run_id = ? ORDER BY seq",
         (run_id,))
     for seq, ts, type_, run, command, payload in service:
+        parsed = _json(payload)
+        parsed = parsed if isinstance(parsed, dict) else {}
         rows.append(
             {
                 "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
-                "command_id": command, "task_id": None, "ac_refs": _event_ac_refs(_json(payload)),
-                "summary": type_, "payload_ref": "",
+                "command_id": command, "task_id": None, "ac_refs": _event_ac_refs(parsed),
+                "summary": type_, "payload": parsed,
+                "stage": parsed.get("stage"),
+                "attempt": parsed.get("attempt"),
+                "payload_ref": "",
             })
     rows.sort(key=lambda row: (row["ts"] or "", 0 if row["source"] == "tracks" else 1, row["seq"]))
     return rows

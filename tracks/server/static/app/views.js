@@ -42,7 +42,7 @@ export function runRowLabel(run) {
   if (!run.title || run.title === run.run_id) return version;
   const chars = Array.from(`${version} · ${run.title}`);
   if (chars.length <= RUN_ROW_MAX_CHARS) return chars.join("");
-  return `${chars.slice(0, RUN_ROW_MAX_CHARS).join("")}...`;
+  return `${chars.slice(0, RUN_ROW_MAX_CHARS).join("")}…`;
 }
 
 /** The Releases registry's two compact faces (#227): the sidebar nodes of

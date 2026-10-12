@@ -1,10 +1,8 @@
 diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
-index c4816cc..d196cd8 100644
---- a/tracks/server/api_query.py
-+++ b/tracks/server/api_query.py
-@@ -950,10 +950,9 @@ def _registry_versions(repo_path: str) -> list[dict]:
-             {key: run[key] for key in ("run_id", "stage", "status", "awaiting", "updated_ts")}
-         )
+index 8ec42ef..069035f 100644
+@@ -988,10 +988,9 @@
+             row["title"] = title or row["run_id"]
+             row["version"] = version
      named = [name for name in groups if projections._version_sort_key(name)]
 -    return [
 -        {"version": version, "runs": groups[version]}

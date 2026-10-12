@@ -342,15 +342,33 @@ def _doc_file(project: dict, doc: str) -> Path | None:
     return _vdir(project) / name if name else None
 
 
-def _doc_context(home: Path, run_id: str, doc: str) -> tuple[Path, Path, str] | None:
-    """(repo, doc file, current revision digest) for a run/doc, or None."""
+def _doc_context(home: Path, run_id: str, doc: str) -> tuple[Path, Path, str | None] | None:
+    """(repo, doc file, current trio revision digest or None) for a run/doc.
+
+    The version resolves from the RUN's own version first — a run lives in
+    its version's material dir, the same resolution the write face uses
+    (``_material_context``); the registered project's version is only the
+    fallback. The revision token is the TRIO digest the run-domain edit face
+    (#17, trio-only) validates against; None when the digest is structurally
+    unavailable (the §1n.2 pre-approval window — spec/acceptance not yet
+    written), never a crash."""
     project = _project_for_run(home, run_id)
     if project is None:
         return None
-    doc_file = _doc_file(project, doc)
-    if doc_file is None or not doc_file.exists():
+    name = _DOC_FILES.get(doc)
+    if not name:
         return None
-    return Path(project["repo_path"]), doc_file, revision_digest(_vdir(project))
+    state = projections._state_of(project["repo_path"], run_id)
+    version = state.version or project.get("version")
+    vdir = Path(project["repo_path"]) / ".tracks" / "projects" / str(version)
+    doc_file = vdir / name
+    if not doc_file.exists():
+        return None
+    try:
+        revision = revision_digest(vdir)
+    except (OSError, UnicodeDecodeError):
+        revision = None
+    return Path(project["repo_path"]), doc_file, revision
 
 
 def _body_sha(text: str) -> str:
@@ -941,7 +959,15 @@ def _registered_project(request: Any, pid: str) -> dict | None:
 
 
 def _registry_versions(repo_path: str) -> list[dict]:
-    """§1e.2 registry: runs grouped per version, numeric-descending order."""
+    """§1e.2 registry: runs grouped per version, numeric-descending order.
+
+    #224/#227 (v0.10 rulings, NFR-0158-02): each run row carries the
+    human-friendly story title of its version (story.md frontmatter
+    ``title:``), falling back to the raw run id (the hotfix case) — the
+    frontend ``runRowLabel`` truncates the combined label at 20 chars.
+    """
+    import re
+
     groups: dict[str, list[dict]] = {}
     for run in projections._project_runs(repo_path):
         if not run["version"]:
@@ -949,6 +975,18 @@ def _registry_versions(repo_path: str) -> list[dict]:
         groups.setdefault(run["version"], []).append(
             {key: run[key] for key in ("run_id", "stage", "status", "awaiting", "updated_ts")}
         )
+    for version in groups:
+        story = Path(repo_path) / ".tracks" / "projects" / version / "story.md"
+        title: str | None = None
+        try:
+            head = story.read_text(encoding="utf-8")[:2048]
+        except (OSError, UnicodeDecodeError):
+            head = ""
+        match = re.search(r"^title:[ \t]*(.+?)[ \t]*$", head, re.MULTILINE)
+        title = match.group(1) if match else None
+        for row in groups[version]:
+            row["title"] = title or row["run_id"]
+            row["version"] = version
     named = [name for name in groups if projections._version_sort_key(name)]
     return [
         {"version": version, "runs": groups[version]}

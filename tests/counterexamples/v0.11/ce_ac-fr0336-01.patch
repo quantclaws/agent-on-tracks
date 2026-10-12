@@ -1,8 +1,6 @@
 diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
-index 5f5e18a..57a12ea 100644
---- a/tracks/server/static/app/timeline.js
-+++ b/tracks/server/static/app/timeline.js
-@@ -342,6 +342,12 @@ function acChainList(acChain) {
+index a10e035..2b1889f 100644
+@@ -414,6 +414,12 @@
  function selectNode(node, stage, detail, events) {
    const view = node.closest(".view") || node.parentElement;
    if (!view) return;
@@ -13,5 +11,5 @@ index 5f5e18a..57a12ea 100644
 +  });
 +  view.append(overlay);
    const host = view.querySelector('[data-testid="detail-pane"]');
-   for (const other of view.querySelectorAll("[data-selected]") || []) {
-     other.removeAttribute("data-selected");
+   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
+     other.removeAttribute("data-state-selected");

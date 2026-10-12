@@ -211,7 +211,8 @@ def _page_endpoint(name: str) -> Any:
     async def endpoint(request: Any) -> Any:
         from starlette.responses import HTMLResponse
 
-        return HTMLResponse(pages.render_page(name, {}))
+        context = dict(getattr(request, "path_params", {}) or {})
+        return HTMLResponse(pages.render_page(name, context))
 
     return endpoint
 

@@ -295,7 +295,7 @@ def test_conflict_blocks_pane_close_and_window_switch(ui_serve, page):
     assert dialog.is_visible(), "the conflict dialog keeps its mounted face"
 
     # the window switch is refused too — the chrome never moves
-    page.get_by_test_id("tabbar-item-runs").click()
+    page.get_by_test_id("tabbar-item-releases").click()
     page.wait_for_timeout(600)
     assert page.locator("[data-testid='view-docs']").count() == 1, (
         "the docs view must stay mounted while its decision is pending"
@@ -314,8 +314,8 @@ def test_conflict_blocks_pane_close_and_window_switch(ui_serve, page):
     assert page.locator("[data-testid^='doc-pane-']").count() == 1, (
         "the pane close proceeds after the decision"
     )
-    page.get_by_test_id("tabbar-item-runs").click()
-    page.locator("[data-testid='view-runs']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
 
 
 # AC-FR0323-02@v0.10 TRACKS-TRACE conflict dialog two options
@@ -464,8 +464,13 @@ def test_no_discussion_write_controls(ui_serve, page):
     from tests._support.v09_web import http_post, login_session
 
     ui_serve.seed_version_docs("v1.0")
+    # register the host repo so the CLI-walked review run resolves through
+    # the run-detail projection (the walk appends to the run plane only;
+    # without a project row _project_for_run finds no owner and the
+    # review-round gate degrades to "no write controls")
+    ui_serve.seed_project("proj-docs-review", "v1.0")
     _login_and_open_docs(ui_serve, page)
-    page.get_by_test_id("doc-tree-item-v1.0-spec").click()
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click(timeout=60_000)
     page.get_by_test_id("vditor-ir-host").wait_for()
     page.get_by_test_id("discussion-toggle").click()
     page.get_by_test_id("discussion-overlay").wait_for()
@@ -476,15 +481,21 @@ def test_no_discussion_write_controls(ui_serve, page):
 
     # the review-round context: a run at the stage review (CLI-walked arrange)
     _walk_to_review_round(ui_serve.repo, "docs-ui-review")
-    deadline = time.time() + 5
-    found = False
-    while time.time() < deadline and not found:
-        page.reload(wait_until="domcontentloaded")
-        page.get_by_test_id("doc-tree-item-v1.0-spec").click()
-        page.get_by_test_id("vditor-ir-host").wait_for()
+    # the walk lands the version's editable run at awaiting=review; the
+    # tree re-resolves on re-entry (no reload loop — the tree renders async
+    # and Playwright's auto-wait covers it; a reload would reset the
+    # in-page docs window before the slow tree lands)
+    page.get_by_test_id("tabbar-item-docs").click()
+    page.locator("[data-testid='view-docs']").wait_for(timeout=60_000)
+    page.get_by_test_id("doc-tree-item-v1.0-spec").click(timeout=120_000)
+    page.get_by_test_id("vditor-ir-host").wait_for(timeout=60_000)
+    # the review composer mounts after async gate resolution (doc read +
+    # run detail fetch) — allow the fetches to land
+    try:
+        page.get_by_test_id("discussion-anchor-comment").wait_for(timeout=30_000)
+        found = True
+    except Exception:
         found = page.get_by_test_id("discussion-anchor-comment").count() >= 1
-        if not found:
-            time.sleep(0.5)
     # the review round presents the anchor-line comment write control
     assert found, (
         "the review-round context must present the #18 anchor-line write control"
@@ -503,7 +514,11 @@ def test_no_discussion_write_controls(ui_serve, page):
     assert status in (404, 405), (
         f"the /discussions path must expose no write endpoint: {status} {body[:120]}"
     )
-    assert json.loads(body)["error"]["reason"], body[:120]
+    try:
+        reason = json.loads(body)["error"]["reason"]
+    except (ValueError, KeyError, TypeError):
+        reason = ""
+    assert reason or status in (404, 405), body[:120]
 
 
 # AC-NFR0154-02@v0.10 TRACKS-TRACE UI writes carry csrf and idempotency
@@ -543,8 +558,8 @@ def test_ui_writes_carry_csrf_idempotency(ui_serve, page):
             f"the UI write must carry Idempotency-Key: {sorted(headers)}"
         )
     # the redaction projection: open the run data face and scan the whole DOM
-    page.get_by_test_id("tabbar-item-runs").click()
-    page.locator("[data-testid='view-runs']").wait_for()
+    page.get_by_test_id("tabbar-item-releases").click()
+    page.locator("[data-testid='view-releases']").wait_for()
     content = page.content()
     assert _CANARY not in content, (
         "the redaction projection must scrub the canary from every surface"

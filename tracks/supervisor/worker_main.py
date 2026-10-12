@@ -254,6 +254,10 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
         # run nobody created is a genuine anomaly -- do NOT fabricate a run
         # plane; drive_once fails closed on it (T-008 pin preserved).
         return
+    journey = str(params.get("journey") or "feature")
+    if journey in ("hotfix_post", "hotfix_dev"):
+        _bootstrap_hotfix_run_plane(repo, run_id, params, journey)
+        return
     version, raw, title = _version_story(params)
     store = Store(paths.tracks_home(repo))
     try:
@@ -275,6 +279,56 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
             store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     finally:
         store.close()
+
+def _bootstrap_hotfix_run_plane(repo: Path, run_id: str, params: dict, journey: str) -> None:
+    """Bridge a service-plane hotfix create_run into the run plane.
+
+    Mirrors ``hotfix_entry_run``'s establishment (the run-plane authority
+    for the hotfix entry, IF-HOTFIX-001) minus its synchronous triage
+    run_loop — the drive window below owns the loop: the same version the
+    CLI derives from the deterministic precheck report
+    (``{target}-hotfix-{issue}`` on pass, ``hotfix-{issue}`` otherwise),
+    then hotfix.requested + stage.entered(M-HOTFIX-TRIAGE). Idempotent: a
+    run the run plane already knows is left untouched.
+    """
+    from tracks import paths
+    from tracks.cli.common import writer_lock
+    from tracks.executor.executor import precheck_hotfix_report  # noqa: PLC0415
+    from tracks.kernel.hotfix import HOTFIX_TRIAGE_STAGE
+    from tracks.store import Store
+
+    scenario = "dev" if journey == "hotfix_dev" else "post-release"
+    issue = params.get("issue")
+    try:
+        issue_number = int(issue) if not isinstance(issue, bool) else None
+    except (TypeError, ValueError):
+        issue_number = None
+    store = Store(paths.tracks_home(repo))
+    try:
+        with writer_lock(paths.tracks_home(repo)):
+            if store.state(run_id).run_id is not None:
+                return  # already bootstrapped (idempotent re-drive)
+            if issue_number is None or issue_number < 1:
+                # Uncoercible issue: the acceptance preflight owns the
+                # rejection, but belt-and-braces fails closed without
+                # fabricating establishment events.
+                return
+            report, _issue = precheck_hotfix_report(repo, store, issue_number, scenario)
+            version = (
+                f"{report.target_version}-hotfix-{issue_number}"
+                if report.status == "pass"
+                else f"hotfix-{issue_number}"
+            )
+            store.append(
+                run_id, version, "hotfix.requested",
+                {"issue": issue_number, "scenario": scenario},
+            )
+            store.append(
+                run_id, version, "stage.entered", {"stage": HOTFIX_TRIAGE_STAGE}
+            )
+    finally:
+        store.close()
+
 
 def _version_story(params: dict) -> tuple[str, str, str | None]:
     """Extract (version, raw_story, title) from create_run params.

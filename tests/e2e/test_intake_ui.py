@@ -59,7 +59,7 @@ def _entry_serve(tmp_path, repo, marker: str):
     try:
         base = parse_base_url(wait_for_port_line(proc))
         wait_for_healthz(base)
-        cookie, csrf = login_session(base)
+        cookie, csrf = login_session(base, collect_name=False)
         status, body = http_post(
             base,
             "/api/projects",
@@ -89,6 +89,10 @@ def _submit_via_ui(page, base_url: str, text: str) -> None:
     page.get_by_test_id("intake-input").fill(text)
     page.get_by_test_id("intake-submit").click()
     expect(page.get_by_test_id("intake-panel")).to_be_visible()
+    # the Scribe evaluation runs on the supervisor tick schedule — the
+    # fixed columns present when the intake leaves evaluating (up to ~3min)
+    for testid in ("panel-feasibility", "panel-duplicates", "panel-conflicts"):
+        expect(page.get_by_test_id(testid)).to_be_visible(timeout=180_000)
 
 
 # AC-FR0338-01@v0.11 TRACKS-TRACE scribe panel columns and four actions
@@ -101,10 +105,7 @@ def test_scribe_panel_four_actions(trac, tmp_path, page):
     with _entry_serve(tmp_path, repo, "panel") as base:
         _login(page, base)
         _submit_via_ui(page, base, _SEED_TEXT)
-        # the three report columns render (§1f.2 fixed columns)
-        expect(page.get_by_test_id("panel-feasibility")).to_be_visible()
-        expect(page.get_by_test_id("panel-duplicates")).to_be_visible()
-        expect(page.get_by_test_id("panel-conflicts")).to_be_visible()
+        # (columns already waited in _submit_via_ui; re-assert visibility)
         # the four actions
         for action in ("backlog", "remove", "archive", "develop"):
             expect(page.get_by_test_id(f"panel-action-{action}")).to_be_visible()
@@ -134,17 +135,30 @@ def test_develop_happy_creates_release(trac, tmp_path, page):
         _submit_via_ui(page, base, _SEED_TEXT)
         page.get_by_test_id("panel-action-develop").click()
         # the gate passes and the release window regains the new version row
-        deadline = time.time() + 60
+        # (decide_intake develop runs sync M-START + branch; the panel
+        # reloads on receipt — poll the registry face for the new row)
+        deadline = time.time() + 120
         seen = False
         while time.time() < deadline and not seen:
             content = page.content()
             seen = "releases/v2.0" in content or "v2.0" in content
             if not seen:
-                time.sleep(0.5)
+                time.sleep(1.0)
         assert seen, "the new release version must present after the gate"
-        # the M-STORY activity presents on the timeline
-        active = page.locator("[data-testid^='timeline-node-'][data-state='active']")
-        expect(active.first).to_be_visible()
+        # the M-STORY activity presents on the timeline: open the new run's
+        # face (the registry re-rendered in place after the decision)
+        page.get_by_test_id("tabbar-item-releases").click()
+        page.locator("[data-testid='view-releases']").wait_for(timeout=30_000)
+        rows = page.locator("[data-testid^='registry-run-']")
+        rows.first.wait_for(timeout=30_000)
+        rows.first.click()
+        # the new run awaits triage at M-STORY (attention state carries the
+        # gate; active/attention are the live pointer — §1l.1 five-state)
+        active = page.locator(
+            "[data-testid^='timeline-node-'][data-state='active'],"
+            "[data-testid^='timeline-node-'][data-state='attention']"
+        )
+        expect(active.first).to_be_visible(timeout=30_000)
         assert "M-STORY" in page.get_by_test_id("timeline").inner_text(), (
             "the new release must enter M-STORY visibly"
         )
@@ -175,11 +189,13 @@ def test_hotfix_entry_anchored_proceeds(trac, tmp_path, page):
         expect(proceed).to_be_visible()
         proceed.click()
         # the anchored entry proceeds: the hotfix run's face presents
+        # (the fix branch lands via the run's dispatch — allow 120s for
+        # the entry to drive through triage to the branch creation)
         expect(page.get_by_test_id("main-area")).to_be_visible()
-        deadline = time.time() + 60
+        deadline = time.time() + 120
         seen_fix = False
         while time.time() < deadline and not seen_fix:
             seen_fix = "fix/42" in page.content()
             if not seen_fix:
-                time.sleep(0.5)
+                time.sleep(1.0)
         assert seen_fix, "the anchored hotfix must proceed to its fix branch"

@@ -631,7 +631,7 @@ _APPLY = {
     # automaton events (SPEC-006 SM-01). Reducer signatures are frozen as
     # (State, payload) by the scaffold; wrap to the (State, payload, envelope)
     # dispatch shape used by apply().
-    "hotfix.requested": lambda s, p, ev: _on_hotfix_requested(s, p),
+    "hotfix.requested": lambda s, p, ev: _on_hotfix_requested(s, p, ev),
     "triage.prechecked": lambda s, p, ev: _on_triage_prechecked(s, p),
     "anchor.validated": lambda s, p, ev: _on_anchor_validated(s, p),
     "human.anchor": lambda s, p, ev: _on_human_anchor(s, p),
