@@ -214,7 +214,20 @@ def test_contract_bindings_declared_and_registry_anchored():
             f"the expect template binds the release version: {binding!r}"
         )
 
-    architecture = _REPO_ROOT / ".tracks" / "projects" / "v0.10" / "architecture.md"
+    projects_dir = _REPO_ROOT / ".tracks" / "projects"
+    candidates = []
+    for child in projects_dir.iterdir():
+        if not child.is_dir() or not child.name.startswith("v"):
+            continue
+        rest = child.name[1:]
+        if rest.count(".") != 1:
+            continue
+        major_s, minor_s = rest.split(".")
+        if major_s.isdigit() and minor_s.isdigit():
+            candidates.append(((int(major_s), int(minor_s)), child))
+    assert candidates, f"no version dirs under {projects_dir}"
+    newest_dir = max(candidates, key=lambda item: item[0])[1]
+    architecture = newest_dir / "architecture.md"
     registry = load_guard_registry(architecture)
     errors = validate_guard_registry(registry, _REPO_ROOT)
     assert errors == (), f"guard registry must be anchored with zero drift: {errors!r}"

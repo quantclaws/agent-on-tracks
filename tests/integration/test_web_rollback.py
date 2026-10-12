@@ -153,9 +153,21 @@ def test_pushed_release_survives_rollback(tmp_path: Path):
     )
     assert receipt.command_id
 
-    # a rollback is not a history rewrite: the published release stays
-    # addressable in the run plane after the return is accepted
-    assert _run_history(repo, "run-1") == before
+    # a rollback is not a history rewrite: the seeded history stays an exact
+    # prefix and the published release stays addressable, while the confirmed
+    # return appends its governance events synchronously in the accept chain
+    # (§1m: escape.barrier_established, evidence.staled, human.return,
+    # stage.rolled_back — same as the CLI twin).
+    after = _run_history(repo, "run-1")
+    assert after[: len(before)] == before, (
+        "the seeded history must stay an exact prefix after the return"
+    )
+    assert "publish.executed" in [event_type for _, event_type in after], (
+        "the published release must stay addressable after the return"
+    )
+    assert len(after) > len(before), (
+        "the confirmed return must append its governance events"
+    )
     # the audited return names the stage it goes back to
     row = sdb.ServiceDB(home).get_command(receipt.command_id)
     assert json.loads(row["params_json"])["to"] == "M-SPEC"

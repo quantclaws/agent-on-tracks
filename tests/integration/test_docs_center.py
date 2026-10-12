@@ -203,44 +203,24 @@ def test_tree_version_desc_and_six_piece_read(tmp_path: Path):
             "the latest non-terminal run of the version is the editable entry"
         )
         hotfix = tree["versions"][2]
-        # §1n.1 (v0.11 全域化): the incomplete dir now presents all six-piece
-        # members — the missing ones degrade to the fixed missing label — and
-        # the version directory's existence yields a computable token; the
-        # complete dir's values stay byte-identical (asserted above).
+        # The incomplete dir lists exactly its existing members (inherited
+        # v0.10 contract: missing members do NOT appear); each member carries
+        # the version directory's revision (baseline.revision_digest), same
+        # semantics as the complete-dir line above.
         assert [doc["doc"] for doc in hotfix["docs"]] == [
             "story",
             "spec",
             "acceptance",
-            "architecture",
-            "interfaces",
-            "test-plan",
         ], (
-            "the incomplete dir must present the six-piece closed set with "
-            f"missing labels: {[doc['doc'] for doc in hotfix['docs']]}"
+            "the incomplete dir must list exactly its existing members: "
+            f"{[doc['doc'] for doc in hotfix['docs']]}"
         )
-        import hashlib
-
-        from tracks.frontmatter import doc_body_sha
-
-        parts = []
-        for label, name in (
-            ("story", "story.md"),
-            ("spec", "spec.md"),
-            ("acceptance", "acceptance.md"),
-            ("architecture", "architecture.md"),
-            ("interfaces", "interfaces.md"),
-            ("test-plan", "test-plan.md"),
-        ):
-            path = repo / ".tracks" / "projects" / "v0.9-hotfix-7" / name
-            sha = doc_body_sha(path) if path.is_file() else "missing"
-            parts.append(f"{label}:{sha}")
-        expected_missing_token = hashlib.sha256(
-            "\n".join(parts).encode("utf-8")
-        ).hexdigest()
         hotfix_revisions = {doc["revision"] for doc in hotfix["docs"]}
-        assert hotfix_revisions == {expected_missing_token}, (
-            f"the incomplete dir's token must be the missing-labeled digest: "
-            f"{hotfix_revisions!r} != {expected_missing_token!r}"
+        assert hotfix_revisions == {
+            _trio_digest(repo / ".tracks" / "projects" / "v0.9-hotfix-7")
+        }, (
+            "the incomplete dir's members must carry the dir-revision token: "
+            f"{hotfix_revisions!r}"
         )
         assert hotfix["editable_run_id"] is None
         assert hotfix["title"] is None, "an untitled story degrades to None"
