@@ -1,12 +1,21 @@
---- /dev/null
-+++ b/tracks/server/static/app/releases.js
-@@ -0,0 +1,9 @@
-+// counterexample AC-FR0333-02: archived entries render inside the backlog
-+// fold-over group — the distinct archive query group is removed
-+export function renderGroups(payload) {
-+  return {
-+    registry: payload.versions,
-+    backlog: [...payload.backlog.entries, ...payload.archive],
-+    archive: [],
-+  };
-+}
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..3f419e3 100644
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -1000,15 +1000,7 @@ async def releases(request: Any) -> Any:
+     if project is None:
+         return _not_found("project", pid or "")
+     repo_path = str(project["repo_path"])
+-    archive = [
+-        {"intake_id": row[0], "content": row[1], "decided_ts": row[2]}
+-        for row in _read_rows(
+-            _service_db_path(home),
+-            "SELECT intake_id, content, decided_at FROM intakes"
+-            " WHERE project_id = ? AND decision = 'archive' ORDER BY decided_at",
+-            (str(project["project_id"]),),
+-        )
+-    ]
++    archive: list = []
+     payload = {
+         "summary": {
+             "project_id": project["project_id"],

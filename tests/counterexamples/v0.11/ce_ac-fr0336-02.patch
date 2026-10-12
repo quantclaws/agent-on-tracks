@@ -1,15 +1,13 @@
---- /dev/null
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 14af81d..6bfba0b 100644
+--- a/tracks/server/projections.py
 +++ b/tracks/server/projections.py
-@@ -0,0 +1,8 @@
-+# counterexample AC-FR0336-02 (projection-face deviation): the run detail
-+# projection invents node facts for a data-less run — a non-null gate for a
-+# run at no boundary and a rollback entry for a run with nothing executed,
-+# instead of the closed degradation forms (awaiting_gate null §1k.1,
-+# allowed=false/targets=[] §1m.1)
-+def _fabricate_degradation(detail, run_events):
-+    detail["awaiting_gate"] = {"type": "review", "reason": "invented"}
-+    detail["return_options"] = {
-+        "allowed": True,
-+        "targets": [{"stage": "M-STORY", "already_executed": []}],
-+    }
-+    return detail
+@@ -629,7 +629,7 @@ def _return_options(repo_path: str, run_id: str) -> dict:
+     view = _RunStoreView(repo_path)
+     _state, allowed, _error = _return_gate(view, run_id)
+     if not allowed:
+-        return {"allowed": False, "targets": []}
++        return {"allowed": True, "targets": [{"stage": "M-STORY", "already_executed": []}]}
+     executed = _already_executed_ops(view, run_id)
+     return {"allowed": True,
+         "targets": [ {"stage": stage, "already_executed": executed} for stage in allowed ],}

@@ -1,11 +1,13 @@
---- /dev/null
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..321cc5d 100644
+--- a/tracks/supervisor/service.py
 +++ b/tracks/supervisor/service.py
-@@ -0,0 +1,8 @@
-+
-+# counterexample AC-FR0341-02: the unanchored hotfix entry creates the fix
-+# branch before the anchoring check rejects (a half-built branch survives)
-+def hotfix_create_deviation(issue, scenario):
-+    create_fix_branch(issue)
-+    if not anchoring_ok(issue, scenario):
-+        return rejected("unanchored")  # deviation: branch already built
-+    return accepted()
+@@ -555,6 +555,8 @@ class CommandService:
+                 f"project {request.get('project_id')!r} is not registered on this service")
+         repo = Path(str(project["repo_path"]))
+         try:
++            subprocess.run(["git", "branch", f"fix/{_issue_number(request.get('issue'))}"],
++                cwd=str(repo), capture_output=True, check=False)
+             report = _hotfix_precheck(repo, _issue_number(request.get("issue")), scenario)
+         except (OSError, sqlite3.Error, ValueError) as error:
+             self._deny_hotfix_precheck(store, request, actor, actor_class,

@@ -1,14 +1,18 @@
---- /dev/null
-+++ b/tracks/server/static/app/releases.js
-@@ -0,0 +1,11 @@
-+// counterexample AC-FR0333-01: the sidebar renders one flat run list —
-+// the version-grouped registry and the backlog fold-over group are dropped
-+export function renderSidebar(payload) {
-+  const rows = [];
-+  for (const version of payload.versions) {
-+    for (const run of version.runs) {
-+      rows.push({ run_id: run.run_id, label: run.stage });
-+    }
-+  }
-+  return rows;
-+}
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..d196cd8 100644
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -950,10 +950,9 @@ def _registry_versions(repo_path: str) -> list[dict]:
+             {key: run[key] for key in ("run_id", "stage", "status", "awaiting", "updated_ts")}
+         )
+     named = [name for name in groups if projections._version_sort_key(name)]
+-    return [
+-        {"version": version, "runs": groups[version]}
+-        for version in sorted(named, key=projections._version_sort_key)
+-    ]
++    flat = [run for version in sorted(named, key=projections._version_sort_key)
++        for run in groups[version]]
++    return [{"version": "all", "runs": flat}]
+ 
+ 
+ def _backlog_group(repo_path: str) -> dict:

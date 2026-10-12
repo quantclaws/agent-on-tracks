@@ -1,13 +1,13 @@
---- /dev/null
-+++ b/tracks/server/static/app/releases.js
-@@ -0,0 +1,10 @@
-+// counterexample AC-NFR0158-01: when the aggregation request fails the
-+// window renders a canned registry instead of the failure feedback
-+export async function loadReleases(projectId) {
-+  try {
-+    return await apiGet(`/api/projects/${projectId}/releases`);
-+  } catch (error) {
-+    return { summary: {}, versions: [{ version: "v0.0", runs: [] }],
-+             backlog: { count: 0, entries: [] }, archive: [] };  // deviation
-+  }
-+}
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..aca0353 100644
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -581,7 +581,7 @@ async def timeline(request: Any) -> Any:
+     home = _home(request)
+     run_id = str(request.path_params.get("run_id", ""))
+     if projections.project_run_detail(home, run_id) is None:
+-        return _not_found("run", run_id)
++        return _response(200, request, {"events": [], "cursor": "", "stage_order": []})
+     query = request.query_params
+     payload = projections.project_timeline(
+         home,

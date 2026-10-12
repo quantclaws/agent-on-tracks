@@ -1,10 +1,15 @@
---- /dev/null
-+++ b/tracks/supervisor/serve_cmd.py
-@@ -0,0 +1,7 @@
-+
-+# counterexample AC-FR0342-02: the supervisor tick skips the gate-command
-+# claim (accepted approvals never execute; no human.approval ever lands)
-+def tick_deviation(self):
-+    self._drive_accepted()
-+    # gate-command claim removed — deviation
-+    return
+diff --git a/tracks/supervisor/worker_main.py b/tracks/supervisor/worker_main.py
+index 42748cf..c87fc83 100644
+--- a/tracks/supervisor/worker_main.py
++++ b/tracks/supervisor/worker_main.py
+@@ -142,7 +142,9 @@ def _execute(db: Any, row: dict) -> tuple[dict | None, dict | None]:
+     is non-None and ``failure`` carries the closed failure_class vocabulary."""
+     kind = row.get("kind")
+     if kind in gate_exec.GATE_KINDS:
+-        return _execute_gate(db, row)
++        return None, _unrecoverable(
++            f"worker does not handle command kind {row.get('kind')!r} yet"
++        )
+     if kind != _DRIVE_KIND:
+         return None, _unrecoverable(
+             f"worker does not handle command kind {row.get('kind')!r} yet"

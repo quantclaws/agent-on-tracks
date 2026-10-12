@@ -1,10 +1,37 @@
+diff --git a/tracks/effects/opencode_review.py b/tracks/effects/opencode_review.py
+index 8dbbe95..c6f6618 100644
 --- a/tracks/effects/opencode_review.py
 +++ b/tracks/effects/opencode_review.py
-@@ -5,4 +5,4 @@
--                    # v0.11 §1p.2: revise only for the reviewer's own pending
--                    # findings threads; non-self threads are not a basis.
--                    if pending:
-+                    # counterexample AC-FR0347-02: any unresolved non-Human
-+                    # thread flips the pass to revise again (pre-v0.11 form)
-+                    if True:
-                         result["verdict"] = "revise"
+@@ -91,6 +91,23 @@ def _reviewer_own_pending_threads(doc_paths: list[Path], reviewer: str) -> bool:
+     return False
+ 
+ 
++def _any_non_self_pending_threads(doc_paths: list[Path], reviewer: str) -> bool:
++    """Whether any unresolved thread was initiated by anyone but ``reviewer``
++    (counterexample AC-FR0347-02: the pre-v0.11 form — any non-self thread
++    flips a pass to revise again)."""
++    own_key = speaker_key(reviewer)
++    for path in doc_paths:
++        if not path.exists():
++            continue
++        text = path.read_text(encoding="utf-8")
++        for thread in parse_threads(text):
++            if thread.status == "resolved":
++                continue
++            if speaker_key(thread.initiator) != own_key:
++                return True
++    return False
++
++
+ def _lex_review_verdict(doc_paths: list[Path]) -> tuple[str, list[dict] | None]:
+     """The LEX_REVIEW exit verdict (FR-0332 §1s.1 + IF-REVIEW-002 §1p.2).
+ 
+@@ -105,6 +122,8 @@ def _lex_review_verdict(doc_paths: list[Path]) -> tuple[str, list[dict] | None]:
+         return _PARK_VERDICT, pending
+     if _reviewer_own_pending_threads(doc_paths, _LEX_SPEAKER):
+         return "revise", None
++    if _any_non_self_pending_threads(doc_paths, _LEX_SPEAKER):
++        return "revise", None
+     return "pass", None
+ 
+ 

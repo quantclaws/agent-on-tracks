@@ -1,10 +1,20 @@
+diff --git a/tracks/server/pages.py b/tracks/server/pages.py
+index 8d90b6a..2e1f500 100644
 --- a/tracks/server/pages.py
 +++ b/tracks/server/pages.py
-@@ -36,6 +36,7 @@ PAGES = (
-     "login",
-     "releases",
-     "run_detail",
-+    "review",
-     "todos",
-     "release",
+@@ -59,6 +59,7 @@ _TABBAR_ITEMS = (
+     ("releases", "/"),
+     ("docs", "/docs"),
+     ("todos", "/todos"),
++    ("review", "/review"),
+     ("settings", None),
+     ("account", None),
  )
+@@ -72,6 +73,7 @@ _TABBAR_ICONS = {
+     ),
+     "docs": '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+     "todos": '<path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/>',
++    "review": '<path d="M4 5h16v12H4z"/><path d="M4 9h16"/>',
+     "settings": (
+         '<path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h16"/>'
+         '<circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/>'

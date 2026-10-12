@@ -1,9 +1,23 @@
---- /dev/null
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..497275f 100644
+--- a/tracks/supervisor/service.py
 +++ b/tracks/supervisor/service.py
-@@ -0,0 +1,6 @@
-+
-+# counterexample AC-FR0344-02: base_revision null is always rejected, even
-+# when the trio digest is structurally unavailable (pre-approval blocked)
-+def _edit_revision_kind_deviation(request, deny):
-+    if request.get("base_revision") is None:
-+        deny("stale_revision", "null base refused")  # deviation
+@@ -284,16 +284,8 @@ def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project:
+         deny("not_found", f"material {request.get('doc')!r} has no editable document")
+     current_fn = _docs_revision_or_none if kind == "docs" else _current_revision
+     if request.get("base_revision") is None:
+-        if doc_file.is_file():
+-            deny("stale_revision",
+-                "edit rejected: base_revision is null but the document already"
+-                    " exists and must be bound (the pre-approval window covers" " creation only)")
+-        current = current_fn(repo, version)
+-        if current is not None:
+-            deny("stale_revision",
+-                f"edit rejected: base_revision is null but the face revision"
+-                    f" {current} is derivable and must be bound")
+-        return  # creation window open: the apply step writes the document
++        deny("stale_revision",
++            "edit rejected: base_revision is null")
+     _require_reviewed_revision(repo, version, request.get("base_revision"), deny, "edit",
+         current_fn)
+ 

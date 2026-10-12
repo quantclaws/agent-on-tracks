@@ -1,12 +1,14 @@
---- /dev/null
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 14af81d..d683f2c 100644
+--- a/tracks/server/projections.py
 +++ b/tracks/server/projections.py
-@@ -0,0 +1,8 @@
-+# counterexample AC-FR0335-02 (projection-face deviation): the run detail
-+# projection synthesizes a second source — it fabricates an awaiting gate
-+# and a rollback entry for a run whose event stream holds no awaiting
-+# boundary and no executed ops, instead of projecting awaiting_gate=null
-+# (§1k.1) and the contracted return_options shape (§1m.1)
-+def _fabricate_field_groups(detail, run_events):
-+    detail["awaiting_gate"] = {"type": "triage"}  # deviation: not derived
-+    detail["return_options"] = {"allowed": True, "targets": "M-STORY"}
-+    return detail
+@@ -589,7 +589,8 @@ def _awaiting_gate(state: State) -> dict | None:
+     """The run-detail ``awaiting_gate`` field group (§1k.1) or None."""
+     gate_type = _awaiting_type(state)
+     if gate_type is None:
+-        return None
++        return {"type": "triage", "reason": "pending triage",
++            "impact": "run awaiting triage", "primary_action": "triage"}
+     stage = state.stage or "run"
+     reason = f"{stage} 到达人工门：{_AWAITING_REASON_LABELS[gate_type]}"
+     failure = state.last_failure if isinstance(state.last_failure, dict) else {}

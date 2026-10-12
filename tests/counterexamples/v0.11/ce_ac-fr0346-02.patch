@@ -1,11 +1,13 @@
---- /dev/null
-+++ b/tracks/supervisor/intake.py
-@@ -0,0 +1,8 @@
-+
-+# counterexample AC-FR0346-02: a flagged duplicate/conflict report now
-+# auto-rejects the intake (runtime interception — the report-columns-only
-+# boundary broken)
-+def evaluate_deviation(report):
-+    if report["duplicates"]["found"] or report["conflicts"]["found"]:
-+        return rejected("auto_no_go")  # deviation
-+    return evaluated(report)
+diff --git a/.tracks/wiki/flow.md b/.tracks/wiki/flow.md
+index f91f483..0be9fdc 100644
+--- a/.tracks/wiki/flow.md
++++ b/.tracks/wiki/flow.md
+@@ -227,7 +227,7 @@ Scribe 撰写任一新 story 的 TRIAGE 报告时，报告必须含两个固定
+ 
+ 1. **重复检测**：story 所述功能已存在时，以跨版本引用指认既有 FR/AC（如 `FR-0316@v0.10`），并给出建议——NO-GO（纯重复）或改写为增强（在既有 FR 上叠加增量）。
+ 2. **冲突检测**：列出新需求 vs 既有 FR 的冲突对（新需求条目 ↔ 既有 FR 引用），破坏性/抵触需求不阻塞 GO，但 GO 需显式确认已知晓冲突。
+-3. 触发规则：两栏目对每次 TRIAGE 均适用（无发现时栏目显式记「无」）；检测只落报告栏目，不做运行时拦截或自动 NO-GO——Human 依据栏目自行裁定。
++3. 触发规则：两栏目对每次 TRIAGE 均适用（无发现时栏目显式记「无」）；检测只落报告栏目——Human 依据栏目自行裁定。
+ 
+ ## 5. M-SPEC
+ 

@@ -1,13 +1,14 @@
---- /dev/null
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 5f5e18a..ab0beac 100644
+--- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,10 @@
-+// counterexample AC-FR0335-01: retried attempts collapse into a single
-+// stage node (the per-attempt independent node contract broken)
-+export function foldAttempts(nodes) {
-+  const seen = new Set();
-+  return nodes.filter((node) => {
-+    if (seen.has(node.stage)) return false;
-+    seen.add(node.stage);
-+    return true;
-+  });
-+}
+@@ -250,8 +250,7 @@ function nodeStateOf(stage, detail, facts) {
+   if (facts.invalidated.has(stage)) return "void";
+   const activeStage = detail && detail.stage;
+   if (stage === activeStage) {
+-    const gate = detail && detail.awaiting_gate;
+-    return gate ? "attention" : "active";
++    return facts.entered.has(stage) ? "done" : "pending";
+   }
+   return facts.entered.has(stage) ? "done" : "pending";
+ }

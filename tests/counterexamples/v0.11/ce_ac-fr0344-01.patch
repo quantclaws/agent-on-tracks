@@ -1,8 +1,16 @@
---- /dev/null
-+++ b/tracks/server/api_command.py
-@@ -0,0 +1,5 @@
-+
-+# counterexample AC-FR0344-01: anchor_line clarifications mutate the
-+# /discussions path directly (the v0.10 §1p.3 no-write boundary broken)
-+async def submit_clarification_deviation(request):
-+    return discussions_write(request)  # deviation
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..f7e88e7 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -719,10 +719,7 @@ class CommandService:
+                 if thread is None:
+                     return text  # v0.9 reply semantics: deferred, never a refusal
+                 return writer.reply(text, str(token), token_for(thread), actor, body)
+-            line_no = _resolve_anchor(text, anchor)
+-            if line_no is None:
+-                return text  # unreachable: the binding refused unresolvable text
+-            return writer.start(text, line_no, actor, body)
++            return text
+ 
+         self._locked_write(doc_file, transform)
+

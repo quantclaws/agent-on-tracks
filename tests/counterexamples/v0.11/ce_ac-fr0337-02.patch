@@ -1,8 +1,17 @@
---- /dev/null
-+++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,5 @@
-+// counterexample AC-FR0337-02: the return fires without the explicit
-+// confirmation and hides the already-executed consequences
-+export function submitReturn(runId, to) {
-+  return apiPost(`/api/runs/${runId}/return`, { to });  // no confirm flag
-+}
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..39c4469 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -867,12 +867,6 @@ class CommandService:
+                 deny("validation_failed",
+                     f"invalid to {target!r}: must be one of {'|'.join(allowed)}")
+             executed = _already_executed_ops(run_store, run_id)
+-            if executed and not request.get("confirm"):
+-                summary = "; ".join(
+-                    f"{op['operation_kind']} {op['target']} ({op['type']})" for op in executed)
+-                deny("validation_failed",
+-                    "already_executed operations this return would cross"
+-                        f" (re-submit with confirm=true): {summary}")
+         finally:
+             run_store.close()
+ 

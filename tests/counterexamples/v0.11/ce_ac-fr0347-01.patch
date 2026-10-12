@@ -1,5 +1,12 @@
+diff --git a/.tracks/wiki/flow.md b/.tracks/wiki/flow.md
+index f91f483..849be6d 100644
 --- a/.tracks/wiki/flow.md
 +++ b/.tracks/wiki/flow.md
-@@ -3,1 +3,1 @@
+@@ -219,6 +219,6 @@ stage.exited
+ 1. 人类裁定与评审结论都是一等事件：没有 `human.triage(go)`，且未收齐 `human.review(no_comment)` + `sage.verdict(pass)`，decide() 不会产出进入 M-SPEC 的 command。story.md 里的分流表格只是事件的投影展示。
+ 2. 单写者纪律：任一时刻只有一个 actor 持有编辑权（顺序评审天然保证）；Scribe/Sage/Human 的所有落盘变更均由 Runtime 提交为独立 commit。
+ 3. **可休眠**：等待人类时 run 停在 awaiting_human，decide() 返回空 command 但 run 未终结，进程可退出；人类回来时从事件回放恢复继续。不得在内存里悬挂等待状态（Agent 会话状态的保留需单独设计，见 Aaron 注记）。
 -4. **评审人复核合同（v0.11，FR-0347）**：评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程时，该线程不构成 revise 依据——内容验证通过即 pass，线程确认留给其发起人；revise 仅限评审人自有新发现且必须开锚定线程（可追溯）。评审人不为他人未决线程触发无发现修订。
-+4. **评审人复核合同（偏离形态）**：文档存在任何未解决线程时评审即 revise（counterexample AC-FR0347-01：非本人线程再次构成 revise 依据）。
++4. **评审人复核合同（v0.11，FR-0347）**：评审人（Sage/Lex/Prism）复核的文档存在未解决的非本人发起线程时，该线程同样构成 revise 依据——内容验证通过仍需修订，线程确认由评审人一并完成；revise 仅限评审人自有新发现且必须开锚定线程（可追溯）。评审人不为他人未决线程触发无发现修订。
+ 
+ ### 4.6. TRIAGE 报告固定栏目（v0.11，FR-0346）

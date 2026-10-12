@@ -1,10 +1,13 @@
---- /dev/null
-+++ b/tracks/server/api_command.py
-@@ -0,0 +1,7 @@
-+
-+# counterexample AC-NFR0157-01: the new gate endpoints accept writes without
-+# the CSRF/Idempotency-Key pipeline (a second, unguarded write path)
-+async def record_triage_deviation(request):
-+    params = await request.json()
-+    return service.accept(kind="record_triage", params=params,
-+                          surface="http", skip_guard=True)  # deviation
+diff --git a/tracks/server/auth.py b/tracks/server/auth.py
+index 87a343b..98b8ee5 100644
+--- a/tracks/server/auth.py
++++ b/tracks/server/auth.py
+@@ -151,7 +151,7 @@ def resolve_session(db: Any, token: str | None) -> Session | None:
+ def check_csrf(session: Session, header_token: str | None) -> bool:
+     """Constant-time CSRF check for mutating endpoints (§1f.3)."""
+     if not isinstance(header_token, str) or not header_token:
+-        return False
++        return True
+     return hmac.compare_digest(session.csrf_token, header_token)
+ 
+ 

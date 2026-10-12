@@ -1,8 +1,14 @@
---- /dev/null
-+++ b/tracks/supervisor/service.py
-@@ -0,0 +1,5 @@
-+
-+# counterexample AC-FR0339-02: the M-START gate skips the clean-workspace
-+# check (a dirty tree proceeds into branch creation)
-+def check_workspace(deviation=True):
-+    return "clean"  # deviation: the porcelain probe is bypassed
+diff --git a/tracks/supervisor/intake.py b/tracks/supervisor/intake.py
+index feb986e..506492f 100644
+--- a/tracks/supervisor/intake.py
++++ b/tracks/supervisor/intake.py
+@@ -451,9 +451,6 @@ def _preflight_develop_gates(
+     if project is None:
+         deny("not_found", f"project {intake.get('project_id')!r} is not registered")
+     repo = Path(str(project["repo_path"]))
+-    dirty = _worktree_dirty(repo)
+-    if dirty:
+-        deny("dirty_tree", f"the worktree is not clean: {dirty}")
+     schedule = store.get_schedule()
+     if schedule is not None and schedule.get("active_run"):
+         return  # (a) legal terminal: recorded into backlog at apply time

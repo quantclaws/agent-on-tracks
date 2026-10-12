@@ -1,8 +1,13 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 14af81d..81fed61 100644
 --- a/tracks/server/projections.py
 +++ b/tracks/server/projections.py
-@@ -2,5 +2,3 @@
-     detail = {
-         "run_id": run_id,
--        "awaiting_gate": awaiting_gate,
--        "return_options": return_options,
-     }
+@@ -945,7 +945,7 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
+             "control_state": _control_state(
+                 state, events, pause_label, wait, _is_queued(conn, run_id)
+             ),
+-            "pause": pause, "wait": wait, "awaiting_gate": _awaiting_gate(state),
++            "pause": pause, "wait": wait,
+             "return_options": _return_options(repo_path, run_id),
+             "progress": {
+                 "tasks_done": state.tasks_completed, "tasks_total": state.tasks_total,

@@ -1,7 +1,13 @@
---- /dev/null
-+++ b/tracks/server/static/app/intake.js
-@@ -0,0 +1,4 @@
-+// counterexample AC-FR0338-01: the suggestion panel adds a hotfix routing
-+// recommendation (the unified entry must never recommend hotfix) and drops
-+// the archive action
-+export const ACTIONS = ["backlog", "remove", "develop", "hotfix"];
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..adb454b 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -76,7 +76,7 @@ _CREATE_RUN_JOURNEYS = frozenset({"feature", "hotfix_post", "hotfix_dev"})
+ 
+ # v0.11 closed enums (interfaces §1b #14-18 params columns).
+ _INTAKE_SOURCES = frozenset({"text", "issue", "backlog"})
+-_INTAKE_ACTIONS = frozenset({"backlog", "archive", "remove_backlog", "develop"})
++_INTAKE_ACTIONS = frozenset({"backlog", "remove_backlog", "develop"})
+ _BACKLOG_DISPOSITIONS = frozenset({"removed", "promoted"})
+ _TRIAGE_DECISIONS = frozenset({"go", "no_go", "park"})
+ _REVIEW_ACTIONS = frozenset({"comment", "no_comment"})

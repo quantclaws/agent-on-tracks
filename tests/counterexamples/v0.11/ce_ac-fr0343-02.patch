@@ -1,8 +1,13 @@
---- /dev/null
-+++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,5 @@
-+// counterexample AC-FR0343-02: every selected node shows a gate action
-+// entry, even when awaiting_gate is null (a dangling review surface)
-+export function panelFor(node) {
-+  return { action: "review" };  // deviation: rendered unconditionally
-+}
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..2708f0a 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -846,7 +846,7 @@ class CommandService:
+         if project is None:
+             deny("not_found", f"run {request.get('run_id')!r} is not registered on this service")
+         state = self._run_state(store, request.get("run_id"))
+-        if state is None or state.awaiting not in values:
++        if state is None:
+             deny("awaiting_mismatch",
+                 f"run {request.get('run_id')!r} is not awaiting {'|'.join(sorted(values))}")
+

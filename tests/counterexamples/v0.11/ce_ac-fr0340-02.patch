@@ -1,8 +1,13 @@
---- /dev/null
-+++ b/tracks/server/projections.py
-@@ -0,0 +1,5 @@
-+
-+# counterexample AC-FR0340-02: the backlog projection keeps disposed entries
-+# listed as open rows (the removal + queryable destination never surfaces)
-+def _keep_disposed_entries(entries, dispositions):
-+    return entries  # deviation: dispositions ignored
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..c6d2038 100644
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -984,7 +984,7 @@ def _backlog_group(repo_path: str) -> dict:
+             }
+     for entry_id, marker in dispositions.items():
+         if entry_id in entries:
+-            entries[entry_id].update(marker)
++            entries[entry_id]["to"] = marker.get("to")
+     backlog_rows = sorted(entries.values(), key=lambda row: str(row["recorded_ts"] or ""))
+     return {
+         "count": sum(1 for row in backlog_rows if row["disposition"] is None),

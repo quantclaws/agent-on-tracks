@@ -1,10 +1,12 @@
---- /dev/null
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..492f159 100644
+--- a/tracks/server/api_query.py
 +++ b/tracks/server/api_query.py
-@@ -0,0 +1,7 @@
-+
-+# counterexample AC-FR0341-01: the hotfix-preview projection omits the
-+# anchoring block (the precheck is shown but the AC anchor result is hidden)
-+def hotfix_preview_deviation(issue, scenario):
-+    report = precheck_hotfix_report(issue, scenario)
-+    report.pop("anchoring", None)  # deviation
-+    return report
+@@ -1173,7 +1173,6 @@ async def hotfix_preview(request: Any) -> Any:
+             "title": issue.title if issue is not None else None,
+         },
+         "precheck": precheck,
+-        "anchoring": _hotfix_anchoring(repo_path, report),
+     }
+     return _response(200, request, payload)
+

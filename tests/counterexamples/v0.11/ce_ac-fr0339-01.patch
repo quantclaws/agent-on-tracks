@@ -1,8 +1,13 @@
---- /dev/null
-+++ b/tracks/supervisor/service.py
-@@ -0,0 +1,5 @@
-+
-+# counterexample AC-FR0339-01: the version derivation reuses the max existing
-+# release minor instead of minor + 1 (releases/v1.0 -> releases/v1.0 collision)
-+def derive_release_version(existing_max_minor: int) -> int:
-+    return existing_max_minor  # deviation: missing +1
+diff --git a/tracks/supervisor/intake.py b/tracks/supervisor/intake.py
+index feb986e..7bb747c 100644
+--- a/tracks/supervisor/intake.py
++++ b/tracks/supervisor/intake.py
+@@ -353,7 +353,7 @@ def _next_release_version(repo: Path) -> str:
+         return "v0.1"
+     major = max(number for number, _ in versions)
+     if major > 0:
+-        return f"v{major + 1}.0"
++        return f"v{major}.0"
+     return f"v0.{max(minor for _, minor in versions) + 1}"
+ 
+ 

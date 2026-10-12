@@ -1,8 +1,17 @@
---- /dev/null
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 5f5e18a..57a12ea 100644
+--- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,5 @@
-+// counterexample AC-FR0336-01: node selection opens the floating overlay
-+// again (the fixed detail pane below the main area is bypassed)
-+export function openNodeDetail(node) {
-+  showOverlay("timeline-node-overlay", node);
-+}
+@@ -342,6 +342,12 @@ function acChainList(acChain) {
+ function selectNode(node, stage, detail, events) {
+   const view = node.closest(".view") || node.parentElement;
+   if (!view) return;
++  const overlay = element("div", {
++    class: "timeline-node-overlay",
++    "data-testid": "timeline-node-overlay",
++    text: nodeDetail(stage, detail, events).innerText || stage,
++  });
++  view.append(overlay);
+   const host = view.querySelector('[data-testid="detail-pane"]');
+   for (const other of view.querySelectorAll("[data-selected]") || []) {
+     other.removeAttribute("data-selected");

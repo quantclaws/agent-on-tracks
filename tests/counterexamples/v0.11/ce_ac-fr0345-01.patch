@@ -1,8 +1,35 @@
---- /dev/null
-+++ b/tracks/supervisor/serve_cmd.py
-@@ -0,0 +1,5 @@
+diff --git a/tracks/cli/serve_cmd.py b/tracks/cli/serve_cmd.py
+index a442eed..17a7054 100644
+--- a/tracks/cli/serve_cmd.py
++++ b/tracks/cli/serve_cmd.py
+@@ -352,6 +352,21 @@ class _DriveState:
+     intake_cooldown: dict[str, float] = field(default_factory=dict)
+ 
+ 
++def _run_had_gate_event(db: ServiceDB, run_id: str) -> bool:
++    """True once any human gate command was accepted for the run
++    (counterexample AC-FR0345-01: the post-gate drive half reads this flag —
++    after a gate command executes the supervisor parks the run)."""
++    with contextlib.closing(_connect_store(db.home, readonly=True)) as conn:
++        rows = conn.execute(
++            "SELECT 1 FROM commands WHERE run_id = ? AND kind IN "
++            "('record_triage', 'record_review', 'record_stage_approval',"
++            " 'record_release_decision') AND status IN ('accepted', 'completed')"
++            " LIMIT 1",
++            (run_id,),
++        ).fetchall()
++    return bool(rows)
 +
-+# counterexample AC-FR0345-01: after a gate command executes the supervisor
-+# parks the run (the next tick no longer drives to the next boundary)
-+def post_gate_drive_deviation(self, run_id):
-+    return  # deviation: self-drive loop broken
++
+ def _supervisor_tick(
+     db: ServiceDB, service: CommandService, scheduler: Scheduler,
+     worker: WorkerManager, worker_id: str, ttl: int, interval: float,
+@@ -363,6 +378,8 @@ def _supervisor_tick(
+     now = time.monotonic()
+     _drive_accepted(db, worker, worker_id, ttl, interval, state, now)
+     runnable = scheduler.next_runnable()
++    if runnable and _run_had_gate_event(db, runnable):
++        state.cooldown[runnable] = now + 3600.0
+     throttled = (
+         not runnable
+         or runnable in state.in_flight

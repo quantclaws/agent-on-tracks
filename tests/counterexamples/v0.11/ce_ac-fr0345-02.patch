@@ -1,10 +1,33 @@
---- /dev/null
+diff --git a/tracks/supervisor/scheduler.py b/tracks/supervisor/scheduler.py
+index b622863..7314739 100644
+--- a/tracks/supervisor/scheduler.py
 +++ b/tracks/supervisor/scheduler.py
-@@ -0,0 +1,7 @@
+@@ -76,6 +76,8 @@ class Scheduler:
+         """The run_id the supervisor may drive now (active, not paused)."""
+         active = self._state()["active_run"]
+         if active and not self._pause_blocks(active):
++            if self._gate_command_open(active):
++                return None
+             return active
+         return None
+ 
+@@ -148,6 +150,19 @@ class Scheduler:
+                 latest = event
+         return latest is not None and latest.get("type") in _PAUSE_BLOCKING
+ 
++    def _gate_command_open(self, run_id: str) -> bool:
++        """True once a human gate command was accepted for the run
++        (counterexample AC-FR0345-02: the scheduler refuses to re-drive a
++        run after a human gate event unless a client dispatch arrives)."""
++        for event in self._db.read_events(run_id=run_id):
++            payload = event.get("payload") or {}
++            if event.get("type") == "command.accepted" and str(
++                payload.get("kind") or ""
++            ) in ("record_triage", "record_review", "record_stage_approval",
++                    "record_release_decision"):
++                return True
++        return False
 +
-+# counterexample AC-FR0345-02: the scheduler refuses to re-drive a run whose
-+# last event was a human gate event unless a client dispatch arrives
-+def _should_drive_deviation(self, state):
-+    if state.last_gate_event:
-+        return False  # deviation: manual dispatch required
-+    return True
+     def _preempted(self, run_id: str) -> bool:
+         """True when run_id took the active slot via a hotfix preemption."""
+         for event in self._db.read_events():

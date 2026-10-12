@@ -1,9 +1,13 @@
---- /dev/null
-+++ b/tracks/supervisor/service.py
-@@ -0,0 +1,6 @@
-+
-+# counterexample AC-FR0340-01: dispose_backlog records the disposition in a
-+# service-plane side table instead of landing the backlog.dispositioned event
-+# (a second storage — the event-sequence derivation contract §1h.1 broken)
-+def _record_disposition_deviation(store, entry_id, disposition, to):
-+    store.write_side_table("backlog_dispositions", entry_id, disposition, to)
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+index c4816cc..ae61294 100644
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -963,7 +963,7 @@ def _backlog_group(repo_path: str) -> dict:
+     rows = _read_rows(
+         _tracks_db_path(repo_path),
+         "SELECT run_id, ts, version, type, payload FROM events"
+-        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
++        " WHERE type IN ('backlog.dispositioned') ORDER BY seq",
+     )
+     for run_id, ts, version, event_type, raw in rows:
+         payload = _load_payload(raw, repo_path)

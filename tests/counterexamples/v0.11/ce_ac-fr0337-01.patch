@@ -1,8 +1,14 @@
---- /dev/null
-+++ b/tracks/server/static/app/timeline.js
-@@ -0,0 +1,5 @@
-+// counterexample AC-FR0337-01: the return pointer renders on every node,
-+// ignoring return_options.allowed (illegal rollbacks gain an entry)
-+export function renderReturnPointer(node, options) {
-+  return true; // deviation: legality ignored
-+}
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 14af81d..a03078b 100644
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -628,8 +628,7 @@ def _return_options(repo_path: str, run_id: str) -> dict:
+ 
+     view = _RunStoreView(repo_path)
+     _state, allowed, _error = _return_gate(view, run_id)
+-    if not allowed:
+-        return {"allowed": False, "targets": []}
++    allowed = ("M-STORY", "M-SPEC") if not allowed else allowed
+     executed = _already_executed_ops(view, run_id)
+     return {"allowed": True,
+         "targets": [ {"stage": stage, "already_executed": executed} for stage in allowed ],}

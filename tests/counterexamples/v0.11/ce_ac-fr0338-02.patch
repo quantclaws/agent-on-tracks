@@ -1,10 +1,14 @@
---- /dev/null
+diff --git a/tracks/templating.py b/tracks/templating.py
+index 98c0613..90b43ad 100644
+--- a/tracks/templating.py
 +++ b/tracks/templating.py
-@@ -0,0 +1,7 @@
-+
-+# counterexample AC-FR0338-02: complete stories are wrapped into the §1
-+# skeleton instead of being adopted verbatim
-+def adopt_story(content, form):
-+    if form == "complete":
-+        return render_skeleton(content)  # deviation: re-wrapped
-+    return render_skeleton(content)
+@@ -112,8 +112,6 @@ def render_story_capture(
+     """The §1g.2 story capture render: raw seeds enter the skeleton verbatim,
+     complete stories are adopted as-is (never wrapped into §1, never
+     rewritten or reordered)."""
+-    if classify_story_input(content) == "complete":
+-        return content
+     return render_story_skeleton(content, created, story_id, title=title)
+ 
+ 
+  

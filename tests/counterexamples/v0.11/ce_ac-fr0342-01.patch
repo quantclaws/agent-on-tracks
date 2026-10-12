@@ -1,9 +1,14 @@
---- /dev/null
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index c297fa8..234e5f8 100644
+--- a/tracks/supervisor/service.py
 +++ b/tracks/supervisor/service.py
-@@ -0,0 +1,6 @@
-+
-+# counterexample AC-FR0342-01: record_triage accepts without the awaiting
-+# match (replays after the gate has passed re-land human.triage events)
-+def record_triage_deviation(run_id, decision):
-+    return accept(kind="record_triage", params={"run_id": run_id, "decision": decision},
-+                  skip_awaiting_precondition=True)  # deviation
+@@ -846,6 +846,9 @@ class CommandService:
+         if project is None:
+             deny("not_found", f"run {request.get('run_id')!r} is not registered on this service")
+         state = self._run_state(store, request.get("run_id"))
++        if state is not None and state.awaiting in values:
++            deny("awaiting_mismatch",
++                f"run {request.get('run_id')!r} unexpectedly awaits {'|'.join(sorted(values))}")
+         if state is None or state.awaiting not in values:
+             deny("awaiting_mismatch",
+                 f"run {request.get('run_id')!r} is not awaiting {'|'.join(sorted(values))}")
