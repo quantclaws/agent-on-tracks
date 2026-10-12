@@ -295,7 +295,7 @@ def _git_branch_lines(repo: Path) -> list[str]:
     """``git branch --list`` lines; [] when the repo cannot be probed."""
     try:
         proc = subprocess.run(["git", "branch", "--list"], cwd=str(repo), capture_output=True,
-            text=True, check=False,)
+            text=True, check=False)
     except OSError:
         return []
     return proc.stdout.splitlines() if proc.returncode == 0 else []
@@ -310,7 +310,7 @@ def _worktree_dirty(repo: Path) -> str | None:
     """``git status --porcelain`` output §1g.1.b"""
     try:
         proc = subprocess.run(["git", "status", "--porcelain"], cwd=str(repo), capture_output=True,
-            text=True, check=False,)
+            text=True, check=False)
     except OSError:
         return "worktree not probeable"
     if proc.returncode != 0:
@@ -361,7 +361,7 @@ def _unmerged_release_branches(repo: Path) -> list[str]:
     """``releases/*`` branches not fully merged into main (§1g.1.c)."""
     try:
         proc = subprocess.run(["git", "branch", "--list", "releases/*", "--no-merged", "main"],
-            cwd=str(repo), capture_output=True, text=True, check=False,)
+            cwd=str(repo), capture_output=True, text=True, check=False)
     except OSError:
         return []
     if proc.returncode != 0:
@@ -400,7 +400,7 @@ def _backlog_entry_exists(repo: Path, entry_id: str) -> bool:
 def _entry_disposed(repo: Path, entry_id: str) -> bool:
     """A backlog entry is disposed iff a backlog.dispositioned points at it."""
     return any(payload.get("entry") == entry_id for _run_id,
-        payload in _backlog_events( repo, "backlog.dispositioned" ))
+        payload in _backlog_events(repo, "backlog.dispositioned"))
 
 
 def _append_backlog_event(
@@ -440,7 +440,7 @@ def _hotfix_precheck(repo: Path, issue_number: int | None, scenario: str) -> Any
             store.close()
         return report
     return precheck_hotfix(_hotfix_issue(repo, issue_number), scenario, _git_branch_lines(repo),
-        None, paths.projects_dir(tracks_home), set(),)
+        None, paths.projects_dir(tracks_home), set())
 
 
 def _preflight_develop_gates(
@@ -462,7 +462,7 @@ def _preflight_develop_gates(
         deny("unmerged_release_branches",
                 "local release branches are not fully merged into main:"
                     f" {', '.join(unmerged)}; confirm=true continues, cancelling"
-                " leaves nothing behind",)
+                " leaves nothing behind")
 
 
 def _apply_intake_submitted(store: ServiceDB, request: dict, actor: str, command_id: str
@@ -485,7 +485,7 @@ def _apply_intake_submitted(store: ServiceDB, request: dict, actor: str, command
             "issue": row["issue"], "origin_entry": request.get("origin_entry"), "actor": actor,
             "command_id": command_id,
         },
-        project_id=request.get("project_id"), command_id=command_id,)
+        project_id=request.get("project_id"), command_id=command_id)
     return row
 
 
@@ -502,4 +502,4 @@ def _apply_backlog_disposed(store: ServiceDB, request: dict, actor: str, command
             "disposition": request.get("disposition"), "to": request.get("to") or None,
             "reason": request.get("reason"),
         },
-        new_ulid(),)
+        new_ulid())

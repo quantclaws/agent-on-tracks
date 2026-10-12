@@ -206,7 +206,7 @@ def _run_events(repo_path: str, run_id: str) -> list[EventEnvelope]:
         rows = _rows(conn,
             "SELECT run_id, seq, ts, version, type, schema_version, command_id, task_id, payload "
                 "FROM events WHERE run_id = ? ORDER BY seq",
-            (run_id,),)
+            (run_id,))
     finally:
         if conn is not None:
             conn.close()
@@ -285,7 +285,7 @@ def _project_runs(repo_path: str) -> list[dict]:
     try:
         rows = _rows(conn,
             "SELECT run_id, version, status, stage, substate, awaiting, updated_ts FROM runs "
-                "ORDER BY updated_ts",)
+                "ORDER BY updated_ts")
     finally:
         if conn is not None:
             conn.close()
@@ -497,7 +497,7 @@ def _pause_state(
     rows = _rows(conn,
         "SELECT type FROM service_events WHERE run_id = ? AND type IN (?, ?) "
             "ORDER BY seq DESC LIMIT 1",
-        (run_id, _PAUSE_REQUESTED, _PAUSED),)
+        (run_id, _PAUSE_REQUESTED, _PAUSED))
     if not rows:
         return {"requested": False, "effective": False}, None
     if rows[0][0] == _PAUSED:
@@ -509,7 +509,7 @@ def _wait_spec(conn: sqlite3.Connection | None, run_id: str) -> dict | None:
     rows = _rows(conn,
         "SELECT wait_class, reason, retry_at, known_reset, backoff_json FROM waits "
             "WHERE run_id = ?",
-        (run_id,),)
+        (run_id,))
     if not rows:
         return None
     wait_class, reason, retry_at, known_reset, backoff_json = rows[0]
@@ -996,7 +996,7 @@ def _timeline_rows(
     service = _rows(conn,
         "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
             "WHERE run_id = ? ORDER BY seq",
-        (run_id,),)
+        (run_id,))
     for seq, ts, type_, run, command, payload in service:
         rows.append(
             {

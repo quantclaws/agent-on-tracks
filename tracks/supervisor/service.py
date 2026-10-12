@@ -168,7 +168,7 @@ def _current_revision(repo: Path, version: str | None) -> str | None:
 # plus the `design` alias; the trio subset is the approval-bound set.
 _DOCS_MATERIALS = (("story", "story.md"), ("spec", "spec.md"), ("acc", "acceptance.md"),
     ("architecture", "architecture.md"), ("interfaces", "interfaces.md"),
-    ("test_plan", "test-plan.md"),)
+    ("test_plan", "test-plan.md"))
 _DOCS_MATERIAL_FILES = dict(_DOCS_MATERIALS, design="architecture.md")
 _TRIO_MATERIAL_FILES = {"story": "story.md", "spec": "spec.md", "acceptance": "acceptance.md"}
 
@@ -234,12 +234,12 @@ def _commit_material(repo: Path, doc_file: Path, doc: str, actor: str) -> None:
     except ValueError:
         return
     added = subprocess.run(["git", "add", "--", relative], cwd=str(repo), capture_output=True,
-        text=True, check=False,)
+        text=True, check=False)
     if added.returncode != 0:
         return
     subprocess.run(
         ["git", "commit", "--only", "-m", f"material edit ({doc}) by {actor}", "--", relative],
-        cwd=str(repo), capture_output=True, text=True, check=False,)
+        cwd=str(repo), capture_output=True, text=True, check=False)
 
 
 def _run_material_version(repo: Path, run_id: str, project: dict) -> str | None:
@@ -256,7 +256,7 @@ def _require_reviewed_revision(
     if current is None or submitted != current:
         deny("stale_revision",
             f"{label} rejected: the reviewed revision is stale; "
-                f"current revision is {current or 'unavailable'}",)
+                f"current revision is {current or 'unavailable'}")
 
 
 def _bind_approval(
@@ -287,12 +287,12 @@ def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: 
         if doc_file.is_file():
             deny("stale_revision",
                 "edit rejected: base_revision is null but the document already"
-                    " exists and must be bound (the pre-approval window covers" " creation only)",)
+                    " exists and must be bound (the pre-approval window covers" " creation only)")
         current = current_fn(repo, version)
         if current is not None:
             deny("stale_revision",
                 f"edit rejected: base_revision is null but the face revision"
-                    f" {current} is derivable and must be bound",)
+                    f" {current} is derivable and must be bound")
         return  # creation window open: the apply step writes the document
     _require_reviewed_revision(repo, version, request.get("base_revision"), deny, "edit",
         current_fn)
@@ -320,11 +320,11 @@ def _bind_clarification(request: dict, deny: RejectFn) -> None:
     if (token is None) == (anchor is None):
         deny("validation_failed",
             "submit_clarification takes thread_token XOR anchor_line:"
-                " exactly one is required (interfaces §1n.3)",)
+                " exactly one is required (interfaces §1n.3)")
 
 
 def _latest_preview(events: list[EventEnvelope]) -> EventEnvelope | None:
-    return next((event for event in reversed(events) if event.type == "release.previewed"), None,)
+    return next((event for event in reversed(events) if event.type == "release.previewed"), None)
 
 
 def _deny_stale_preview(deny: RejectFn, detail: str) -> None:
@@ -346,17 +346,17 @@ def _bind_release(
     if request.get("preview_digest") != preview.get("preview_digest"):
         _deny_stale_preview(deny,
             "release decision rejected: the submitted digest does not match "
-                "the bound release preview",)
+                "the bound release preview")
     try:
         authorization = assess_release(repo, paths.tracks_home(repo), events, preview_event,
             version)
     except (OSError, ValueError) as error:
         _deny_stale_preview(deny,
-            f"release decision rejected: release preview could not be verified: {error}",)
+            f"release decision rejected: release preview could not be verified: {error}")
     if authorization.preview_stale:
         _deny_stale_preview(deny,
             "release decision rejected: release preview is stale: "
-                f"{authorization.stale_reason}",)
+                f"{authorization.stale_reason}")
     ok, err = validate_authorization(str(request.get("action")), authorization, preview)
     if not ok:
         deny("validation_failed", f"release decision rejected: {err}")
@@ -454,11 +454,11 @@ class CommandService:
                 "kind": kind, "reason": reason, "detail": detail, "actor": actor,
                 "actor_class": actor_class,
             },
-            project_id=request.get("project_id"), run_id=request.get("run_id"),)
+            project_id=request.get("project_id"), run_id=request.get("run_id"))
         if access_denied:
             store.append_event("access.denied",
                 { "surface": kind, "reason": reason, "actor": actor, "actor_class": actor_class, },
-                project_id=request.get("project_id"), run_id=request.get("run_id"),)
+                project_id=request.get("project_id"), run_id=request.get("run_id"))
         raise Rejection(reason=reason, detail=detail, status=status)
 
     def _check_duplicate(
@@ -476,9 +476,9 @@ class CommandService:
                     "command_id": original,
                 },
                 project_id=request.get("project_id"), run_id=request.get("run_id"),
-                command_id=original,)
+                command_id=original)
             return CommandReceipt(command_id=original, deduplicated=True,
-                status=existing.get("status") or "accepted",)
+                status=existing.get("status") or "accepted")
         return "conflict"
 
     def _preflight_register_project(
@@ -496,7 +496,7 @@ class CommandService:
             check_registration_scope(Path(repo_path), roots)
         except GuardRejection as rejection:
             store.append_event("project.registration_rejected",
-                {"repo_path": repo_path, "reason": rejection.reason, "actor": actor},)
+                {"repo_path": repo_path, "reason": rejection.reason, "actor": actor})
             raise Rejection(reason=rejection.reason, detail=rejection.detail) from None
 
     @staticmethod
@@ -525,11 +525,11 @@ class CommandService:
         # active run — the schedule no-ops it (IF-SCHED-001).
         if active and not request.get("preempt") and active != create_run_id(request):
             self._deny(store, "create_run", request, actor, actor_class, "active_run_exists",
-                f"active run {active!r} exists and preempt is false", access_denied=False,)
+                f"active run {active!r} exists and preempt is false", access_denied=False)
         if self._readiness_failed(store, request.get("project_id")):
             self._deny(store, "create_run", request, actor, actor_class, "validation_failed",
                 "project readiness checks are failing; resolve them before creating a run",
-                access_denied=False,)
+                access_denied=False)
         self._preflight_hotfix_journey(store, request, actor, actor_class)
 
     def _deny_hotfix_precheck(
@@ -540,7 +540,7 @@ class CommandService:
     ) -> None:
         """FR-0292 rejection: the precheck's concrete reason rides the detail §1a#8 SM-01.5"""
         self._deny(store, "create_run", request, actor, actor_class, "validation_failed",
-            f"hotfix precheck rejected: {detail}", access_denied=False, status=status,)
+            f"hotfix precheck rejected: {detail}", access_denied=False, status=status)
 
     def _preflight_hotfix_journey(
         self, store: ServiceDB, request: dict, actor: str, actor_class: str
@@ -552,17 +552,17 @@ class CommandService:
         project = store.get_project(request.get("project_id"))
         if project is None:
             self._deny_hotfix_precheck(store, request, actor, actor_class,
-                f"project {request.get('project_id')!r} is not registered on this service",)
+                f"project {request.get('project_id')!r} is not registered on this service")
         repo = Path(str(project["repo_path"]))
         try:
-            report = _hotfix_precheck(repo, _issue_number(request.get("issue")), scenario,)
+            report = _hotfix_precheck(repo, _issue_number(request.get("issue")), scenario)
         except (OSError, sqlite3.Error, ValueError) as error:
             self._deny_hotfix_precheck(store, request, actor, actor_class,
-                f"preconditions could not be verified: {error}",)
+                f"preconditions could not be verified: {error}")
             return
         if report.status == "rejected":
             self._deny_hotfix_precheck(store, request, actor, actor_class,
-                f"{report.reason}: {report.next}",)
+                f"{report.reason}: {report.next}")
         self._deny_hotfix_unanchored(store, request, actor, actor_class, repo, report)
 
     def _deny_hotfix_unanchored(
@@ -583,7 +583,7 @@ class CommandService:
                     f" {target if target else '<none>'} baseline is missing"
                     f" {', '.join(missing)}; approve/complete the target version"
                 " baseline first (interfaces §1i.2)",
-            status=422,)
+            status=422)
 
     def _reconcile_terminal_drive(
         self, store: ServiceDB, request: dict, deny: RejectFn
@@ -600,7 +600,7 @@ class CommandService:
         self._schedule().on_run_terminal(str(run_id))
         deny("validation_failed",
             f"run {run_id!r} already reached terminal state {terminal!r}; "
-                "the schedule released its active slot",)
+                "the schedule released its active slot")
 
     def _preflight_webgate(
         self,
@@ -638,18 +638,18 @@ class CommandService:
                 "params_digest": digest, "actor": actor, "actor_class": actor_class,
                 "surface": surface, "project_id": project_id, "run_id": run_id,
             },
-            project_id=project_id, run_id=run_id, command_id=command_id,)
+            project_id=project_id, run_id=run_id, command_id=command_id)
         if kind == "pause_run":
             store.append_event("run.pause_requested",
                 {"run_id": run_id, "actor": actor, "command_id": command_id}, run_id=run_id,
-                command_id=command_id,)
+                command_id=command_id)
         elif kind == "resume_run":
             store.append_event("run.resumed",
                 {
                     "run_id": run_id, "actor": actor, "command_id": command_id,
                     "from_stage": self._resume_stage(store, run_id),
                 },
-                run_id=run_id, command_id=command_id,)
+                run_id=run_id, command_id=command_id)
         elif kind == "edit_material":
             self._apply_edit(store, request, actor, surface, command_id)
         elif kind == "submit_clarification":
@@ -694,7 +694,7 @@ class CommandService:
                 "run_id": run_id, "doc": request.get("doc"), "from_revision": from_revision,
                 "to_revision": to_revision, "actor": actor, "surface": surface,
             },
-            run_id=run_id, command_id=command_id,)
+            run_id=run_id, command_id=command_id)
 
     def _apply_clarification(
         self, store: ServiceDB, request: dict, actor: str, command_id: str
@@ -745,14 +745,14 @@ class CommandService:
             deny("validation_failed",
                     f"anchor_line {str(anchor)[:80]!r} matches no line of"
                         f" {request.get('doc')!r}; the inline comment must anchor on an"
-                    " existing line (interfaces §1n.3)",)
+                    " existing line (interfaces §1n.3)")
 
     def _preflight_submit_intake(self, store: ServiceDB, request: dict, deny: RejectFn) -> None:
         """§1b #14: the unified-entry admission — registered project, closed IF-HOTFIX-011"""
         source = str(request.get("source") or "")
         if source not in _INTAKE_SOURCES:
             deny("validation_failed",
-                f"unknown source {source!r}; closed set is text|issue|backlog",)
+                f"unknown source {source!r}; closed set is text|issue|backlog")
         project = store.get_project(request.get("project_id"))
         if project is None:
             deny("not_found", f"project {request.get('project_id')!r} is not registered")
@@ -790,11 +790,11 @@ class CommandService:
         except GithubIssuesError as exc:
             classification = getattr(exc, "classification", "") or "network"
             deny("issue_fetch_failed",
-                f"issue {number} could not be fetched ({classification}): {exc}",)
+                f"issue {number} could not be fetched ({classification}): {exc}")
         if issue is None:
             deny("issue_fetch_failed",
                 f"issue {number} could not be fetched (not_found):"
-                    " the host confirms no such issue",)
+                    " the host confirms no such issue")
         return issue
 
     def _preflight_decide_intake(self, store: ServiceDB, request: dict, deny: RejectFn) -> None:
@@ -802,14 +802,14 @@ class CommandService:
         action = str(request.get("action") or "")
         if action not in _INTAKE_ACTIONS:
             deny("validation_failed",
-                f"unknown action {action!r}; closed set is backlog|archive|remove_backlog|develop",)
+                f"unknown action {action!r}; closed set is backlog|archive|remove_backlog|develop")
         intake = store.get_intake(request.get("intake_id"))
         if intake is None or intake.get("status") != "evaluated":
             deny("intake_not_ready",
-                f"intake {request.get('intake_id')!r} is not in the evaluated state",)
+                f"intake {request.get('intake_id')!r} is not in the evaluated state")
         if action == "remove_backlog" and str(intake.get("source") or "") != "backlog":
             deny("validation_failed",
-                "remove_backlog is only legal for a backlog-sourced intake (SM-01.5)",)
+                "remove_backlog is only legal for a backlog-sourced intake (SM-01.5)")
         if action == "develop":
             _preflight_develop_gates(store, intake, request, deny)
 
@@ -818,7 +818,7 @@ class CommandService:
         disposition = str(request.get("disposition") or "")
         if disposition not in _BACKLOG_DISPOSITIONS:
             deny("validation_failed",
-                f"unknown disposition {disposition!r}; closed set is removed|promoted",)
+                f"unknown disposition {disposition!r}; closed set is removed|promoted")
         project = store.get_project(request.get("project_id"))
         if project is None:
             deny("not_found", f"project {request.get('project_id')!r} is not registered")
@@ -841,14 +841,14 @@ class CommandService:
         value = str(request.get(field) or "")
         if value not in allowed:
             deny("validation_failed",
-                f"unknown {field} {value!r}; closed set is {'|'.join(sorted(allowed))}",)
+                f"unknown {field} {value!r}; closed set is {'|'.join(sorted(allowed))}")
         project = self._project_for_run(store, request.get("run_id"))
         if project is None:
             deny("not_found", f"run {request.get('run_id')!r} is not registered on this service")
         state = self._run_state(store, request.get("run_id"))
         if state is None or state.awaiting not in values:
             deny("awaiting_mismatch",
-                f"run {request.get('run_id')!r} is not awaiting {'|'.join(sorted(values))}",)
+                f"run {request.get('run_id')!r} is not awaiting {'|'.join(sorted(values))}")
 
     def _preflight_return_stage(self, store: ServiceDB, request: dict, deny: RejectFn) -> None:
         """v0.9 §1b#11 as revised by v0.11 PLANNING round 1 IF-RETURN-001"""
@@ -865,14 +865,14 @@ class CommandService:
             target = str(request.get("to") or "")
             if target not in allowed:
                 deny("validation_failed",
-                    f"invalid to {target!r}: must be one of {'|'.join(allowed)}",)
+                    f"invalid to {target!r}: must be one of {'|'.join(allowed)}")
             executed = _already_executed_ops(run_store, run_id)
             if executed and not request.get("confirm"):
                 summary = "; ".join(
                     f"{op['operation_kind']} {op['target']} ({op['type']})" for op in executed)
                 deny("validation_failed",
                     "already_executed operations this return would cross"
-                        f" (re-submit with confirm=true): {summary}",)
+                        f" (re-submit with confirm=true): {summary}")
         finally:
             run_store.close()
 
@@ -894,26 +894,26 @@ class CommandService:
             _append_backlog_event(repo, str(project.get("version") or "v0.1"), "backlog.recorded",
                 {
                     "source": source, "content": content, "intake_id": intake.get("intake_id")
-                }, entry,)
+                }, entry)
             outcome = {"backlog_entry_id": entry}
         elif action == "remove_backlog" and repo is not None:
             entry = str(intake.get("origin_entry") or "")
             _append_backlog_event(repo, str(project.get("version") or "v0.1"),
                 "backlog.dispositioned", {"entry": entry, "disposition": "removed", "to": None},
-                new_ulid(),)
+                new_ulid())
             outcome = {"backlog_entry_id": entry, "disposition": "removed"}
         elif action == "develop":
             outcome = self._apply_develop(store, intake, project, actor)
         else:
             outcome = "archive"
         store.update_intake(str(intake.get("intake_id")), status="decided", decision=action,
-            decided_at=_now_iso(),)
+            decided_at=_now_iso())
         store.append_event("intake.decided",
             {
                 "intake_id": intake.get("intake_id"), "action": action, "outcome": outcome,
                 "actor": actor, "command_id": command_id,
             },
-            project_id=intake.get("project_id"), command_id=command_id,)
+            project_id=intake.get("project_id"), command_id=command_id)
         return outcome if isinstance(outcome, dict) else {"outcome": outcome}
 
     def _apply_develop(
@@ -935,7 +935,7 @@ class CommandService:
                     "reason": "active_run", "source": intake.get("source"), "content": content,
                     "intake_id": intake.get("intake_id"),
                 },
-                active,)
+                active)
             return {"outcome": "backlog_recorded", "active_run": active, "backlog_entry_id": active}
         report: dict = {}
         with contextlib.suppress(TypeError, ValueError):
@@ -948,7 +948,7 @@ class CommandService:
             "story_form": templating.classify_story_input(content), "issue": None, "target": None,
             "preempt": False,}
         self.accept("create_run", params, actor=actor, actor_class="human", surface="cli",
-            idempotency_key=f"intake-develop-{intake.get('intake_id')}",)
+            idempotency_key=f"intake-develop-{intake.get('intake_id')}")
         # T-008 (AC-FR0338/FR-0339, §1f.3/§1d.3): a successful develop
         # promotes the origin entry — the SAME backlog.dispositioned event
         # dispose_backlog lands (合同唯一); a denied create_run raises above,
@@ -958,7 +958,7 @@ class CommandService:
             _append_backlog_event(repo, str(project.get("version") or "v0.1"),
                 "backlog.dispositioned",
                 { "entry": origin_entry, "disposition": "promoted", "to": params["version"], },
-                new_ulid(),)
+                new_ulid())
         return {"outcome": "develop", "run_id": create_run_id(params), "version": params["version"],
             "branch": f"releases/{params['version']}",}
 
@@ -989,7 +989,7 @@ class CommandService:
                 {
                     "from_stage": state.stage, "to_stage": target, "reason": "human_return",
                     "quarantined": [],
-                },)
+                })
         finally:
             run_store.close()
 
@@ -1036,25 +1036,25 @@ class CommandService:
                 # RULING R1 (seq 10924): the missing-credential refusal is 400
                 # on EVERY kind — the explicit status outranks the per-endpoint
                 # shape overrides (422) here and in the HTTP accept path.
-                deny("validation_failed", "idempotency key required for HTTP changes", status=400,)
+                deny("validation_failed", "idempotency key required for HTTP changes", status=400)
             idempotency_key = uuid.uuid4().hex
         digest = _params_digest(request)
         extras: dict[str, Any] = {}
         duplicate = self._check_duplicate(store, request, idempotency_key, digest)
         if duplicate == "conflict":
             deny("idempotency_conflict",
-                f"idempotency key {idempotency_key!r} was used with different params",)
+                f"idempotency key {idempotency_key!r} was used with different params")
         if duplicate is not None:
             return duplicate
         self._preflights(store, kind, request, actor, actor_class, deny)
         command_id = uuid.uuid4().hex
         recorded_run_id = self._register_accepted(store, kind, request, command_id, idempotency_key,
-            digest, actor, actor_class, surface,)
+            digest, actor, actor_class, surface)
         self._record_acceptance(store, kind, request, actor, actor_class, surface, idempotency_key,
-            digest, command_id, run_id=recorded_run_id, extras=extras,)
+            digest, command_id, run_id=recorded_run_id, extras=extras)
         self._on_accepted(store, kind, request, actor)
         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted",
-            intake_id=extras.get("intake_id"), intake_outcome=extras.get("intake_outcome"),)
+            intake_id=extras.get("intake_id"), intake_outcome=extras.get("intake_outcome"))
 
     def _require_params(self, kind: str, request: dict, deny: RejectFn) -> None:
         missing = [key for key in _REQUIRED_PARAMS[kind] if key not in request]
@@ -1083,10 +1083,10 @@ class CommandService:
         """Actor-class partition (interfaces §1f.5)"""
         if kind in HUMAN_ONLY_KINDS and actor_class != "human":
             deny("forbidden_actor", f"kind {kind!r} requires actor_class 'human'",
-                access_denied=True,)
+                access_denied=True)
         if kind in SYSTEM_ONLY_KINDS and actor_class != "system":
             deny("forbidden_actor", f"kind {kind!r} requires actor_class 'system'",
-                access_denied=True,)
+                access_denied=True)
 
     def _preflights(
         self,
