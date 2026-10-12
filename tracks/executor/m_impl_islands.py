@@ -216,7 +216,12 @@ class MImplIslandsMixin:
             elif any(value == "FIXED" for value in ledger.values()):
                 self._prove_fixed_ledger_entries(cmd, state, ledger)
                 return
-            elif any(value == "OPEN" for value in ledger.values()):
+            elif any(value in ("OPEN", "CLASSIFIED") for value in ledger.values()):
+                # R3: an all-CLASSIFIED ledger (no OPEN/FIXED) is settleable
+                # on an all-green round via settle_stale_identities
+                # (CLASSIFIED→FIXED) + the fallback proof (FIXED→PROVEN).
+                # Routing it to the else branch parks contract_error even
+                # when the round is green. STALE-only stays fail-closed below.
                 self._settle_stale_island_2_open(cmd, state, ledger)
                 return
             else:

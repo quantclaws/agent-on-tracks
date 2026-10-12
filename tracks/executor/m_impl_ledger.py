@@ -934,8 +934,47 @@ class MImplLedgerMixin:
             command_id=cmd.command_id,
         )
 
+    @staticmethod
+    def _flip_completion_pending(events, state, tid) -> bool:
+        """R2: the repair-family flip must not swallow the task's completion.
+
+        True when the flip branch should land ``task.completed`` once: a
+        real task id, not retained, with no same-generation completion on
+        the WAL yet. Retained and already-landed completions stay quiet."""
+        if tid is None or tid in (state.retained_completed_task_ids or []):
+            return False
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        return not any(
+            ev.type == "task.completed"
+            and ev.payload.get("task_id") == tid
+            and ev.seq > latest_taskgraph_seq
+            for ev in events
+        )
+
+    @staticmethod
+    def _completed_this_generation(events, state, tid) -> bool:
+        """B83: generation-aware completion check. A task.completed event
+        from a prior generation (before the latest taskgraph.committed)
+        must not block re-completion of a redefined task."""
+        if tid in (state.retained_completed_task_ids or []):
+            return True
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        return any(
+            ev.type == "task.completed"
+            and ev.payload.get("task_id") == tid
+            and ev.seq > latest_taskgraph_seq
+            for ev in events
+        )
+
     def _do_complete_task(self, cmd, state, task_id, reconcile):
         tid = cmd.params.get("task_id") or state.current_task_id
+        events = list(self.store.events(self.run_id))
         if state.full_chain_round is not None and self._transition_full_ledger(
             cmd,
             "CLASSIFIED",
@@ -943,27 +982,16 @@ class MImplLedgerMixin:
             "Devon repair task completed",
             "devon",
         ):
+            if self._flip_completion_pending(events, state, tid):
+                self._emit("task.completed", {"task_id": tid}, command_id=cmd.command_id)
             if state.writelock_held:
                 self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
             self._rebuild_task_log_projection()
             return
-        events = list(self.store.events(self.run_id))
         # B83: generation-aware completion check. A task.completed event
         # from a prior generation (before the latest taskgraph.committed)
         # must not block re-completion of a redefined task.
-        if tid not in (state.retained_completed_task_ids or []):
-            latest_taskgraph_seq = max(
-                (e.seq for e in events if e.type == "taskgraph.committed"),
-                default=0,
-            )
-            already_completed = any(
-                ev.type == "task.completed"
-                and ev.payload.get("task_id") == tid
-                and ev.seq > latest_taskgraph_seq
-                for ev in events
-            )
-        else:
-            already_completed = True
+        already_completed = self._completed_this_generation(events, state, tid)
         if already_completed:
             released = any(
                 ev.type == "writelock.released" and ev.payload.get("task_id") == tid

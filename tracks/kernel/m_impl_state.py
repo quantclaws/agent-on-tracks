@@ -166,9 +166,22 @@ def _on_task_completed(s: State, p: dict, ev: EventEnvelope) -> None:
     """TASK_DONE: task.completed -> TASK_DISPATCH (more tasks) or ISLAND_GATE_2.
 
     Skips increment for tasks already counted in retained_completed_task_ids
-    (B83 generation-aware projection)."""
+    (B83 generation-aware projection) but still advances the machine and
+    clears residency so re-acceptance of a retained verification task
+    converges instead of re-issuing verify_task forever."""
     task_id = p.get("task_id")
     if task_id is not None and task_id in s.retained_completed_task_ids:
+        s.green_committed = False
+        s.refactor_done = False
+        s.r_tree_identity = None
+        s.current_task_id = None
+        s.current_task_metadata = None
+        s.current_manifest = None
+        _reset_doc(s)
+        if s.tasks_completed >= s.tasks_total:
+            s.substate = "ISLAND_GATE_2"
+        else:
+            s.substate = "TASK_DISPATCH"
         return
     s.tasks_completed += 1
     s.green_committed = False
