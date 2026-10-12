@@ -80,6 +80,20 @@ class _TaskSelectionEvidence:
     snapshot: dict
 
 
+def _basis_selection_id(payload: dict):
+    """Selection id from dict-shaped ``identity_basis``.
+
+    Selection-identity events (test.selected / verdict.passed /
+    green.committed) carry ``identity_basis`` as a dict, while
+    ``full.executed`` carries the FULL identity basis as a list. Only the
+    dict shape carries a ``selection_id`` key.
+    """
+    basis = payload.get("identity_basis")
+    if isinstance(basis, dict):
+        return basis.get("selection_id")
+    return None
+
+
 class MImplDispatchMixin:
     """M-IMPL RGR dispatch mixin."""
 
@@ -861,7 +875,7 @@ class MImplDispatchMixin:
             str(ref)
             for ev in self.store.events(self.run_id)
             if ev.payload.get("selection_id") == previous_id
-            or (ev.payload.get("identity_basis") or {}).get("selection_id") == previous_id
+            or _basis_selection_id(ev.payload) == previous_id
             for ref in (ev.payload.get("evidence_ids") or [])
             if ref
         }

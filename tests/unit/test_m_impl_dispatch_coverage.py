@@ -407,3 +407,35 @@ def test_stale_prior_task_selection_changes(tmp_path):
         _Cmd(), host._task, ["tests/unit/x.py::t"], "r-new", "new"
     )
     assert emitted and emitted[0][4] == "selection_identity_changed"
+
+
+def test_stale_prior_task_selection_tolerates_list_identity_basis(tmp_path):
+    """full.executed carries list-shaped identity_basis; the scan must not raise."""
+    previous = SimpleNamespace(
+        type="test.selected",
+        payload={
+            "scope": "task_if",
+            "task_id": "T-001",
+            "selection_id": "old",
+            "task_ifs": ["IF-IMPL-001"],
+            "baseline": "r-old",
+            "nodes": ["tests/unit/x.py::t"],
+            "evidence_ids": ["ev-1"],
+        },
+    )
+    full_executed = SimpleNamespace(
+        type="full.executed",
+        payload={
+            "selection_id": "other",
+            "identity_basis": ["tree-sha", ["cmd"], "env", "other"],
+            "evidence_ids": ["ev-full"],
+        },
+    )
+    host = _Host(tmp_path, events=[full_executed, previous])
+    emitted: list = []
+    host._emit_stale_refs = lambda *a: emitted.append(a)
+
+    host._stale_prior_task_selection(
+        _Cmd(), host._task, ["tests/unit/x.py::t"], "r-new", "new"
+    )
+    assert emitted and emitted[0][4] == "baseline_changed"
