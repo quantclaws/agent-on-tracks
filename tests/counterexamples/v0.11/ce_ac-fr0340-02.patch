@@ -1,8 +1,6 @@
-diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
-index c4816cc..c6d2038 100644
---- a/tracks/server/api_query.py
-+++ b/tracks/server/api_query.py
-@@ -984,7 +984,7 @@ def _backlog_group(repo_path: str) -> dict:
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index f94c1f6..8c3d12d 100644
+@@ -926,7 +926,7 @@
              }
      for entry_id, marker in dispositions.items():
          if entry_id in entries:

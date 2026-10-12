@@ -1,9 +1,10 @@
 diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
-index 8ec42ef..069035f 100644
-@@ -988,10 +988,9 @@
+index b706b19..6b9ea6c 100644
+@@ -979,11 +979,9 @@
+         for row in groups[version]:
              row["title"] = title or row["run_id"]
              row["version"] = version
-     named = [name for name in groups if projections._version_sort_key(name)]
+-    named = [name for name in groups if projections._version_sort_key(name)]
 -    return [
 -        {"version": version, "runs": groups[version]}
 -        for version in sorted(named, key=projections._version_sort_key)
@@ -13,4 +14,4 @@ index 8ec42ef..069035f 100644
 +    return [{"version": "all", "runs": flat}]
  
  
- def _backlog_group(repo_path: str) -> dict:
+ async def releases(request: Any) -> Any:

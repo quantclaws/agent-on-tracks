@@ -898,6 +898,42 @@ def _stage_order() -> list[str]:
 # -- public projections -----------------------------------------------------
 
 
+def _backlog_group(repo_path: str) -> dict:
+    """§1e.2/§1d.3 backlog: entries by ULID, dispositions folded in; count excludes."""
+    entries: dict[str, dict] = {}
+    dispositions: dict[str, dict] = {}
+    rows = _rows(
+        _tracks_db(repo_path),
+        "SELECT run_id, ts, version, type, payload FROM events"
+        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
+    )
+    for run_id, ts, version, event_type, raw in rows:
+        payload = _load_payload(raw, repo_path)
+        if event_type == "backlog.recorded":
+            entries[run_id] = {
+                "entry_id": run_id,
+                "version": version,
+                "source": payload.get("source"),
+                "content": payload.get("content"),
+                "recorded_ts": ts,
+                "disposition": None,
+                "to": None,
+            }
+        elif isinstance(payload.get("entry"), str):
+            dispositions[payload["entry"]] = {
+                "disposition": payload.get("disposition"),
+                "to": payload.get("to"),
+            }
+    for entry_id, marker in dispositions.items():
+        if entry_id in entries:
+            entries[entry_id].update(marker)
+    backlog_rows = sorted(entries.values(), key=lambda row: str(row["recorded_ts"] or ""))
+    return {
+        "count": sum(1 for row in backlog_rows if row["disposition"] is None),
+        "entries": backlog_rows,
+    }
+
+
 def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | None:
     """One overview run row, or None when the row is not a run.
 

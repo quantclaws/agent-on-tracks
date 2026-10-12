@@ -345,30 +345,25 @@ def _doc_file(project: dict, doc: str) -> Path | None:
 def _doc_context(home: Path, run_id: str, doc: str) -> tuple[Path, Path, str | None] | None:
     """(repo, doc file, current trio revision digest or None) for a run/doc.
 
-    The version resolves from the RUN's own version first — a run lives in
-    its version's material dir, the same resolution the write face uses
-    (``_material_context``); the registered project's version is only the
-    fallback. The revision token is the TRIO digest the run-domain edit face
-    (#17, trio-only) validates against; None when the digest is structurally
-    unavailable (the §1n.2 pre-approval window — spec/acceptance not yet
-    written), never a crash."""
+    The version resolves from the RUN's own version first (a run lives in its
+    version's material dir — the write face's ``_material_context``
+    resolution); the registered project's version is the fallback. The
+    revision is the TRIO digest the run-domain face (#17) validates against;
+    None when it is structurally unavailable (§1n.2 pre-approval window)."""
     project = _project_for_run(home, run_id)
-    if project is None:
-        return None
     name = _DOC_FILES.get(doc)
-    if not name:
+    if project is None or not name:
         return None
+    repo = Path(project["repo_path"])
     state = projections._state_of(project["repo_path"], run_id)
-    version = state.version or project.get("version")
-    vdir = Path(project["repo_path"]) / ".tracks" / "projects" / str(version)
+    vdir = repo / ".tracks" / "projects" / str(state.version or project.get("version"))
     doc_file = vdir / name
     if not doc_file.exists():
         return None
     try:
-        revision = revision_digest(vdir)
+        return repo, doc_file, revision_digest(vdir)
     except (OSError, UnicodeDecodeError):
-        revision = None
-    return Path(project["repo_path"]), doc_file, revision
+        return repo, doc_file, None
 
 
 def _body_sha(text: str) -> str:
@@ -961,11 +956,8 @@ def _registered_project(request: Any, pid: str) -> dict | None:
 def _registry_versions(repo_path: str) -> list[dict]:
     """§1e.2 registry: runs grouped per version, numeric-descending order.
 
-    #224/#227 (v0.10 rulings, NFR-0158-02): each run row carries the
-    human-friendly story title of its version (story.md frontmatter
-    ``title:``), falling back to the raw run id (the hotfix case) — the
-    frontend ``runRowLabel`` truncates the combined label at 20 chars.
-    """
+    #224/#227 (NFR-0158-02): each run row carries its version's story.md
+    frontmatter title, falling back to the raw run id (the hotfix case)."""
     import re
 
     groups: dict[str, list[dict]] = {}
@@ -994,42 +986,6 @@ def _registry_versions(repo_path: str) -> list[dict]:
     ]
 
 
-def _backlog_group(repo_path: str) -> dict:
-    """§1e.2/§1d.3 backlog: entries by ULID, dispositions folded in; count excludes."""
-    entries: dict[str, dict] = {}
-    dispositions: dict[str, dict] = {}
-    rows = _read_rows(
-        _tracks_db_path(repo_path),
-        "SELECT run_id, ts, version, type, payload FROM events"
-        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
-    )
-    for run_id, ts, version, event_type, raw in rows:
-        payload = _load_payload(raw, repo_path)
-        if event_type == "backlog.recorded":
-            entries[run_id] = {
-                "entry_id": run_id,
-                "version": version,
-                "source": payload.get("source"),
-                "content": payload.get("content"),
-                "recorded_ts": ts,
-                "disposition": None,
-                "to": None,
-            }
-        elif isinstance(payload.get("entry"), str):
-            dispositions[payload["entry"]] = {
-                "disposition": payload.get("disposition"),
-                "to": payload.get("to"),
-            }
-    for entry_id, marker in dispositions.items():
-        if entry_id in entries:
-            entries[entry_id].update(marker)
-    backlog_rows = sorted(entries.values(), key=lambda row: str(row["recorded_ts"] or ""))
-    return {
-        "count": sum(1 for row in backlog_rows if row["disposition"] is None),
-        "entries": backlog_rows,
-    }
-
-
 async def releases(request: Any) -> Any:
     """GET /api/projects/{pid}/releases: §1e.2 aggregation (#36)."""
     home = _home(request)
@@ -1054,7 +1010,7 @@ async def releases(request: Any) -> Any:
             "repo_name": Path(repo_path).name,
         },
         "versions": _registry_versions(repo_path),
-        "backlog": _backlog_group(repo_path),
+        "backlog": projections._backlog_group(repo_path),
         "archive": archive,
     }
     return _response(200, request, payload)

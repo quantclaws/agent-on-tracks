@@ -1,10 +1,8 @@
-diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
-index c4816cc..ae61294 100644
---- a/tracks/server/api_query.py
-+++ b/tracks/server/api_query.py
-@@ -963,7 +963,7 @@ def _backlog_group(repo_path: str) -> dict:
-     rows = _read_rows(
-         _tracks_db_path(repo_path),
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index f94c1f6..0a50be6 100644
+@@ -905,7 +905,7 @@
+     rows = _rows(
+         _tracks_db(repo_path),
          "SELECT run_id, ts, version, type, payload FROM events"
 -        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
 +        " WHERE type IN ('backlog.dispositioned') ORDER BY seq",
