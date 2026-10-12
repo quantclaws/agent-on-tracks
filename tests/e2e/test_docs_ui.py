@@ -459,7 +459,6 @@ def test_no_discussion_write_controls(ui_serve, page):
     review face — while the /discussions path itself still exposes no write
     endpoint (the v0.10 §1p.3 boundary holds)."""
     import json
-    import time
 
     from tests._support.v09_web import http_post, login_session
 
