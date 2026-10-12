@@ -27,6 +27,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from tracks import paths
 from tracks.executor.drive import DriveConfig, DriveResult, drive_once
 from tracks.supervisor import gate_exec
 from tracks.supervisor.db import ServiceDB
@@ -243,7 +244,6 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
     left untouched.
     """
 
-    from tracks import paths
     from tracks.cli.common import writer_lock
     from tracks.kernel.events import Command
     from tracks.store import Store
@@ -291,7 +291,6 @@ def _bootstrap_hotfix_run_plane(repo: Path, run_id: str, params: dict, journey: 
     then hotfix.requested + stage.entered(M-HOTFIX-TRIAGE). Idempotent: a
     run the run plane already knows is left untouched.
     """
-    from tracks import paths
     from tracks.cli.common import writer_lock
     from tracks.executor.executor import precheck_hotfix_report  # noqa: PLC0415
     from tracks.kernel.hotfix import HOTFIX_TRIAGE_STAGE
@@ -356,7 +355,7 @@ def _capture_story(
     pre-v0.11 behavior for existing create_run callers)."""
     import datetime
 
-    from tracks import paths, templating
+    from tracks import templating
     from tracks.executor.helpers import git as _git
 
     vdir = paths.version_dir(home, version)
