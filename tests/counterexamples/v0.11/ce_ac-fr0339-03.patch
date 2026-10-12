@@ -1,18 +1,15 @@
-diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
-index c297fa8..81dfdb6 100644
 --- a/tracks/supervisor/service.py
 +++ b/tracks/supervisor/service.py
-@@ -896,6 +896,13 @@ class CommandService:
+@@ -894,6 +894,12 @@
+             _append_backlog_event(repo, str(project.get("version") or "v0.1"), "backlog.recorded",
+                 {
                      "source": source, "content": content, "intake_id": intake.get("intake_id")
                  }, entry)
              outcome = {"backlog_entry_id": entry}
-+            self.accept("create_run",
-+                {"project_id": intake.get("project_id"), "journey": "feature",
-+                    "version": str(project.get("version") or "v0.1"),
-+                    "story": content, "title": None, "story_form": "raw",
-+                    "issue": None, "target": None, "preempt": False},
-+                actor=actor, actor_class="human", surface="internal",
-+                idempotency_key=f"intake-terminal-{intake.get('intake_id')}")
++            # counterexample AC-FR0339-03: the backlog terminal action also
++            # creates a release branch (terminal-state discipline broken)
++            subprocess.run(
++                ["git", "branch", "releases/terminal-deviation"],
++                cwd=str(repo), check=False, capture_output=True,
++            )
          elif action == "remove_backlog" and repo is not None:
-             entry = str(intake.get("origin_entry") or "")
-             _append_backlog_event(repo, str(project.get("version") or "v0.1"),

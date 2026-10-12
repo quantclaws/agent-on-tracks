@@ -140,7 +140,7 @@
    {
     "ac": "AC-FR0339-03",
     "if_ref": "IF-MSTART-001",
-    "mutation": "the backlog terminal action also opens a run (the terminal-state discipline broken)",
+    "mutation": "the backlog terminal action also creates a branch (the terminal-state discipline broken)",
     "patch": "ce_ac-fr0339-03.patch",
     "test": "tests/integration/test_mstart_gate.py::test_nondevelop_actions_no_run_branch",
     "result": "killed"
