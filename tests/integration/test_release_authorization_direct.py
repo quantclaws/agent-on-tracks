@@ -225,6 +225,10 @@ def test_same_candidate_complete_chain_authorizes(host_repo, trac, tmp_path):
         "reason": "authorization acceptance premise",
         "target": None,
         "actor": "human",
+        # v0.10 §1m.3 (web decisions audit the display name) + IF-PUBLISH-001:
+        # the decision carries its actor class so the publish approval can
+        # read the human kind for the named (non-CLI) actor case.
+        "actor_kind": "human",
     }
 
 
