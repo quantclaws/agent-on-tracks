@@ -1425,6 +1425,14 @@ textarea {
 
 /* -- eval human-readable result ---------------------------------------------- */
 
+.wizard-page-eval > .eval-result {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
 .eval-result {
   display: flex;
   flex-direction: column;
