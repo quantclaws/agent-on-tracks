@@ -66,12 +66,18 @@ export function renderSidebar(model = {}, root = document) {
   (model.groups || []).forEach((group, index) => {
     const children = element("div", { class: "sidebar-group-items" });
     for (const node of group.children || []) {
+      const selected =
+        (node.attrs && node.attrs["data-selected"] === "true") ||
+        node.selected === true;
       children.append(
         element("a", {
-          class: "sidebar-node",
+          class: `sidebar-node${selected ? " sidebar-node-selected" : ""}`,
           href: node.href || "#",
           "data-testid": node.testid || "sidebar-node",
           ...(node.attrs || {}),
+          ...(selected
+            ? { "data-selected": "true", "aria-current": "true" }
+            : {}),
           text: node.label || "unknown",
         })
       );

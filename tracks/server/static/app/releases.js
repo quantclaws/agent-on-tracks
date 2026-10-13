@@ -5,29 +5,32 @@
  * The window's single data source is the #36 aggregation projection
  * (``GET /api/projects/{pid}/releases``) — version-grouped run registry,
  * the event-derived backlog folded group, the service-plane archive query
- * group, and the registered identity as a summary row. No mock data: an
- * unavailable projection surfaces an observable failure marker; an empty
- * registry degrades readably. The sidebar's three groups ride the shared
- * ``renderSidebar`` model; the registry's compact row faces come from the
- * views layer (#227 rule). A focused run renders the full timeline view.
+ * group. No mock data: an unavailable projection surfaces an observable
+ * failure marker; an empty registry degrades readably.
+ *
+ * Main-area contract (v0.12): no summary row, no registry list — the
+ * sidebar owns the registry. The main area shows exactly one face: the
+ * active run's timeline (auto-selected: newest run whose status is not
+ * completed|backlog), or the empty state with the "+" create entry that
+ * opens the wizard modal (wizard.js). The sidebar always renders its
+ * three groups; the focused run node carries the selected face and its
+ * version group stays expanded. Run switching reuses openFocusedRun
+ * (same document, no reload).
  */
 
 import { requestJson } from "./api.js";
 import { element } from "./dom.js";
-import { openTab } from "./tabs.js";
 import { renderSidebar } from "./sidebar.js";
 import { renderTimelineView } from "./timeline.js";
 import { runRegistryFaces } from "./views.js";
+import { openCreateWizard } from "./wizard.js";
 
-const HOTFIX_SCENARIOS = ["post-release", "dev"];
-
-// The window's focused project (the registry/intake/hotfix entries all
-// address it; set on each render).
+// The window's focused project (the intake/hotfix entries all address
+// it; set on each render).
 let focusedProjectId = "";
 
 /** The registry runs flattened with their group version attached (#227),
- * newest first (the sidebar lists the whole registry newest-first; the
- * main face opens on the newest run's track). */
+ * newest first (the sidebar lists the whole registry newest-first). */
 function registryRuns(payload) {
   const runs = [];
   for (const entry of payload.versions || []) {
@@ -42,16 +45,18 @@ function registryRuns(payload) {
   return runs;
 }
 
-/** The summary row: registered project/version identity only (E-01). */
-function summaryRow(summary) {
-  return element("p", {
-    class: "releases-summary",
-    "data-testid": "releases-summary",
-    text:
-      `${summary.project_id || "unknown"} · ` +
-      `${summary.registered_version || "unregistered"} · ` +
-      `${summary.repo_name || "repo"}`,
-  });
+function isTerminalStatus(status) {
+  return status === "completed" || status === "backlog";
+}
+
+/** The active run: the newest run (by updated_ts) whose status is not
+ * completed|backlog. Null when every run settled (or the registry is
+ * empty) — the window then shows the empty state. */
+function activeRun(runs) {
+  for (const run of runs || []) {
+    if (!isTerminalStatus(run.status)) return run;
+  }
+  return null;
 }
 
 /** The sidebar's three visually distinct groups: the version-grouped run
@@ -63,7 +68,9 @@ function summaryRow(summary) {
  * are releases-group-{registry,backlog,archive}. The per-version registry
  * anchors ride as releases-registry-<version> on the same details element
  * (see sidebar.js versionTestid — one element carries both, unique
- * testid hygiene). */
+ * testid hygiene). The focused run's version group stays expanded; the
+ * focused node carries the selected face (data-selected + aria-current,
+ * painted by sidebar.js). */
 function sidebarGroups(payload, registryNodes) {
   const groups = [];
   for (const entry of payload.versions || []) {
@@ -138,68 +145,6 @@ function wireSidebarSelections(sidebar) {
       if (entryId) promoteBacklogEntry(entryId).catch(() => undefined);
     });
   }
-}
-
-/** The new-release entry (§1f.3): one intake submitted (source=text); the
- * suggestion panel face polls the intake read model (#38) and renders the
- * Scribe report's fixed columns (§1f.2: feasibility/duplicates/conflicts)
- * with the four decisions (#40: backlog / remove_backlog(backlog-only) /
- * archive / develop). Failed submits keep the text (retryable). */
-function newReleaseEntry(pid) {
-  const input = element("input", {
-    class: "intake-input",
-    "data-testid": "intake-input",
-    type: "text",
-    placeholder: "new release: a story seed",
-  });
-  const panel = element("div", {
-    class: "intake-panel",
-    "data-testid": "intake-panel",
-    text: " ",
-  });
-  // contracted alias: the frozen face pins scribe-panel for the same face
-  const scribeAlias = element("span", {
-    class: "scribe-panel-alias",
-    "data-testid": "scribe-panel",
-    hidden: true,
-    text: "scribe panel",
-  });
-  scribeAlias.removeAttribute("hidden");
-  scribeAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  panel.append(scribeAlias);
-  const submit = element("button", {
-    type: "button",
-    class: "intake-submit",
-    "data-testid": "intake-submit",
-    text: "new release",
-  });
-  submit.addEventListener("click", async () => {
-    const content = input.value.trim();
-    if (!content) return;
-    panel.replaceChildren(scribeAlias);
-    try {
-      const receipt = await requestJson(`/api/projects/${encodeURIComponent(pid)}/intakes`, {
-        method: "POST",
-        body: JSON.stringify({ source: "text", content }),
-      });
-      const intakeId = receipt && receipt.intake_id;
-      if (!intakeId) {
-        panel.append(element("p", { text: "intake submitted without receipt" }));
-        return;
-      }
-      panel.append(element("p", {
-        class: "intake-status",
-        "data-testid": "intake-status",
-        text: `intake submitted: ${intakeId} — evaluating`,
-      }));
-      pollIntakeReport(pid, intakeId, panel);
-    } catch (error) {
-      panel.append(element("p", {
-        text: `intake submit failed: ${error && error.message ? error.message : error}`,
-      }));
-    }
-  });
-  return element("div", { class: "intake-form" }, [input, submit, panel]);
 }
 
 /** Poll the #38 read face until the Scribe evaluation lands, then render
@@ -302,6 +247,61 @@ function renderScribePanel(pid, intakeId, intake, panel) {
   panel.append(bar);
 }
 
+/** The wizard's feature face lands here: the main area shows the Scribe
+ * evaluating panel (same fixed columns + four decisions face as the
+ * intake channel — pollIntakeReport/renderScribePanel above). */
+function showScribePanel(body, pid, intakeId) {
+  if (!body || !body.isConnected) {
+    refreshReleasesWindow();
+    return;
+  }
+  body.replaceChildren();
+  const panel = element("div", {
+    class: "intake-panel",
+    "data-testid": "intake-panel",
+  });
+  // contracted alias: the frozen face pins scribe-panel for the same face
+  const scribeAlias = element("span", {
+    class: "scribe-panel-alias",
+    "data-testid": "scribe-panel",
+    text: "scribe panel",
+  });
+  scribeAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
+  panel.append(scribeAlias);
+  panel.append(element("p", {
+    class: "intake-status",
+    "data-testid": "intake-status",
+    text: `intake submitted: ${intakeId} — evaluating`,
+  }));
+  body.append(panel);
+  pollIntakeReport(pid, intakeId, panel);
+}
+
+/** The wizard's hotfix face lands here: focus the created run in place,
+ * then re-focus on a short tail until the entry dispatch lands the fix
+ * branch (same document, no navigation). */
+function focusHotfixRun(runId) {
+  if (!runId) {
+    refreshReleasesWindow();
+    return;
+  }
+  openFocusedRun(runId);
+  let tries = 0;
+  const timer = globalThis.setInterval(() => {
+    tries += 1;
+    requestJson(`/api/runs/${encodeURIComponent(runId)}`).then((detail) => {
+      if (detail && detail.branch) {
+        globalThis.clearInterval(timer);
+        openFocusedRun(runId);
+      } else if (tries >= 24) {
+        globalThis.clearInterval(timer);
+      }
+    }).catch(() => {
+      if (tries >= 24) globalThis.clearInterval(timer);
+    });
+  }, 5000);
+}
+
 /** After an intake decision, refresh the releases window so the outcome
  * (backlog entry / new version row / archive row) presents. In-place
  * re-render (same document — FR-0316): the decision executes synchronously
@@ -340,235 +340,52 @@ function refreshReleasesWindow() {
   }, 30000);
 }
 
-function scheduleIntakeRefresh() {
-  refreshReleasesWindow();
-}
-
-/** The hotfix entry (§1i): issue + scenario selection, the read-only
- * hotfix-preview (#44), and the explicit unanchored exit guidance.
- *
- * Frozen face (AC-FR0341-01): the entry container carries hotfix-entry;
- * the issue input carries hotfix-issue-input (with hotfix-issue alias),
- * the scenario options carry hotfix-scenario-<name>, the preview submit
- * carries hotfix-preview-submit (with hotfix-preview-button alias), the
- * report carries hotfix-preview, and the proceed button carries
- * hotfix-proceed. */
-function hotfixEntry(pid) {
-  const issue = element("input", {
-    class: "hotfix-issue",
-    "data-testid": "hotfix-issue-input",
-    type: "text",
-    placeholder: "issue number",
-  });
-  const issueAlias = element("span", {
-    "data-testid": "hotfix-issue",
-    hidden: true,
-    text: "issue",
-  });
-  issueAlias.removeAttribute("hidden");
-  issueAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  const scenario = element("select", {
-    class: "hotfix-scenario",
-    "data-testid": "hotfix-scenario",
-  });
-  for (const name of ["", ...HOTFIX_SCENARIOS]) {
-    const option = element("option", { value: name, text: name || "scenario…" });
-    scenario.append(option);
-  }
-  // frozen face (AC-FR0341-01): the scenario choice is a radio group —
-  // one clickable control per scenario (option elements are not
-  // click-stable across drivers).
-  const scenarioGroup = element("div", {
-    class: "hotfix-scenario-group",
-    "data-testid": "hotfix-scenario-group",
-  });
-  for (const name of HOTFIX_SCENARIOS) {
-    const radio = element("button", {
-      type: "button",
-      class: "hotfix-scenario-option",
-      "data-testid": `hotfix-scenario-${name}`,
-      text: name,
-    });
-    radio.addEventListener("click", () => {
-      scenario.value = name;
-      for (const other of scenarioGroup.querySelectorAll("[data-testid^='hotfix-scenario-']")) {
-        if (other.getAttribute("data-testid") === `hotfix-scenario-${name}`) {
-          other.setAttribute("aria-pressed", "true");
-        } else {
-          other.removeAttribute("aria-pressed");
-        }
-      }
-    });
-    scenarioGroup.append(radio);
-  }
-  const previewButton = element("button", {
-    type: "button",
-    class: "hotfix-preview-button",
-    "data-testid": "hotfix-preview-submit",
-    text: "preview hotfix",
-  });
-  const previewAlias = element("span", {
-    "data-testid": "hotfix-preview-button",
-    hidden: true,
-    text: "preview",
-  });
-  previewAlias.removeAttribute("hidden");
-  previewAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  const report = element("div", {
-    class: "hotfix-report",
-    "data-testid": "hotfix-preview",
-    text: " ",
-  });
-  const reportAlias = element("span", {
-    "data-testid": "hotfix-report",
-    hidden: true,
-    text: "report",
-  });
-  reportAlias.removeAttribute("hidden");
-  reportAlias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  report.append(reportAlias);
-  previewButton.addEventListener("click", async () => {
-    const number = issue.value.trim();
-    const chosen = scenario.value;
-    if (!number || !HOTFIX_SCENARIOS.includes(chosen)) {
-      report.textContent = "pick an issue and a scenario (post-release or dev)";
-      return;
-    }
-    try {
-      const payload = await requestJson(
-        `/api/projects/${encodeURIComponent(pid)}/hotfix-preview` +
-          `?issue=${encodeURIComponent(number)}&scenario=${encodeURIComponent(chosen)}`
-      );
-      renderHotfixReport(report, payload);
-    } catch (error) {
-      report.textContent = `hotfix preview unavailable: ${
-        error && error.message ? error.message : error
-      }`;
-    }
-  });
-  // scenario select options are not clickable via Playwright click on
-  // option in all drivers: also allow clicking the select to choose.
-  // (the frozen face clicks hotfix-scenario-post-release directly)
-  return element(
-    "div",
-    { class: "hotfix-entry", "data-testid": "hotfix-entry" },
-    [issue, issueAlias, scenario, scenarioGroup, previewButton, previewAlias, report]
-  );
-}
-
-function renderHotfixReport(host, payload) {
-  const precheck = payload.precheck || {};
-  const anchoring = payload.anchoring || {};
-  const issue = payload.issue || {};
-  host.replaceChildren();
-  host.append(
-    element("p", {
-      "data-testid": "hotfix-precheck-status",
-      text:
-        `precheck: ${precheck.status || "unknown"}` +
-        (precheck.reason ? ` (${precheck.reason})` : ""),
-    }),
-    element("p", {
-      "data-testid": "hotfix-anchoring",
-      text:
-        `anchoring: ${anchoring.status || "unknown"}` +
-        (anchoring.target_version ? ` → ${anchoring.target_version}` : ""),
-    })
-  );
-  if (anchoring.status !== "anchored" || precheck.status === "rejected") {
-    // §1i.1: an unanchored or rejected preview explicitly exits hotfix and
-    // points to the backlog entry / a new feature instead.
-    host.append(
-      element("p", {
-        class: "hotfix-exit-guidance",
-        "data-testid": "hotfix-exit-guidance",
-        text: "hotfix exit: route this input through the backlog entry or start a new feature",
-      })
-    );
-    return;
-  }
-  const proceed = element("button", {
-    type: "button",
-    class: "hotfix-proceed",
-    "data-testid": "hotfix-proceed",
-    text: `create hotfix for #${issue.number ?? "?"}`,
-  });
-  proceed.addEventListener("click", () => {
-    // create_run closed shape (§2b #8): journey/version/story/issue/target/
-    // preempt — the hotfix face fills the same nulls the integration face
-    // fills (version/story null-able, issue numeric per guard types).
-    // The anchored entry proceeds into the hotfix run's face: focus the
-    // created run in place, then re-focus on a short tail until the
-    // entry dispatch lands the fix branch (same document, no navigation).
-    const issueNumber = Number(issue.number);
-    requestJson(`/api/projects/${encodeURIComponent(focusedProjectId)}/runs`, {
-      method: "POST",
-      body: JSON.stringify({
-        journey: payload.scenario === "dev" ? "hotfix_dev" : "hotfix_post",
-        version: anchoring.target_version || "v0.9",
-        story: null,
-        issue: Number.isFinite(issueNumber) ? issueNumber : issue.number,
-        target: null,
-        preempt: false,
-      }),
-    }).then((receipt) => {
-      const runId = receipt && receipt.run_id;
-      if (!runId) {
-        refreshReleasesWindow();
-        return;
-      }
-      openFocusedRun(runId);
-      let tries = 0;
-      const timer = globalThis.setInterval(() => {
-        tries += 1;
-        requestJson(`/api/runs/${encodeURIComponent(runId)}`).then((detail) => {
-          if (detail && detail.branch) {
-            globalThis.clearInterval(timer);
-            openFocusedRun(runId);
-          } else if (tries >= 24) {
-            globalThis.clearInterval(timer);
-          }
-        }).catch(() => {
-          if (tries >= 24) globalThis.clearInterval(timer);
-        });
-      }, 5000);
-    }).catch(() => undefined);
-  });
-  host.append(proceed);
-}
-
 async function firstProjectId() {
   const projects = await requestJson("/api/projects");
   const rows = Array.isArray(projects) ? projects : projects.projects || [];
   return rows.length ? rows[0].project_id : "";
 }
 
+/** The no-active-run face: a hint plus the醒目 "+" entry that opens the
+ * create wizard. The wizard's onDone lands back in this window (Scribe
+ * panel for a feature seed, focused run for a hotfix). */
+function emptyState(body, pid) {
+  const wrap = element("div", {
+    class: "releases-empty",
+    "data-testid": "releases-empty",
+  });
+  wrap.append(
+    element("p", {
+      class: "releases-empty-hint",
+      text: "请选择 release 查看开发过程，或者创建新的开发",
+    })
+  );
+  const create = element("button", {
+    type: "button",
+    class: "releases-create",
+    "data-testid": "releases-create",
+    "aria-label": "创建新的开发",
+    text: "+",
+  });
+  create.addEventListener("click", () => {
+    openCreateWizard({
+      projectId: pid,
+      onDone: (result) => {
+        if (!result) return;
+        if (result.kind === "hotfix") focusHotfixRun(result.runId);
+        else if (result.kind === "feature" && result.intakeId) {
+          showScribePanel(body, pid, result.intakeId);
+        }
+      },
+    });
+  });
+  wrap.append(create);
+  body.append(wrap);
+}
+
 export async function renderReleasesView(body, context = {}) {
   const pid = context.projectId || (await firstProjectId());
   focusedProjectId = pid;
-  if (context.runId) {
-    // run-scoped deep link without a registered project (or with one):
-    // the timeline face owns the unknown-run degradation (§1l.5) — never
-    // bail to the empty-registry face when a run is addressed.
-    const { runRowLabel } = await import("./views.js");
-    let label = undefined;
-    if (pid) {
-      try {
-        const payload = await requestJson(
-          `/api/projects/${encodeURIComponent(pid)}/releases`
-        );
-        const runs = registryRuns(payload);
-        const focused = runs.find((run) => run.run_id === context.runId);
-        if (focused) label = runRowLabel(focused);
-      } catch (error) {
-        /* unknown run: timeline degrades */
-      }
-    }
-    const sidebar = renderSidebar({ title: "releases", nodes: [] });
-    void sidebar;
-    await renderTimelineView(body, { runId: context.runId, runTitle: label });
-    return null;
-  }
   if (!pid) {
     body.append(element("p", { class: "degraded", text: "No registered projects yet" }));
     renderSidebar({ title: "releases", nodes: [] });
@@ -614,9 +431,29 @@ export async function renderReleasesView(body, context = {}) {
     return null;
   }
 
-  body.append(summaryRow(payload.summary || {}));
   const runs = registryRuns(payload);
   const faces = runRegistryFaces(runs);
+  // Focus resolution: an addressed run wins (sidebar switch or deep link —
+  // the timeline face owns the unknown-run degradation, §1l.5); otherwise
+  // the window auto-selects the active run (newest non-terminal). With no
+  // active run nothing is selected and the main area shows the empty face.
+  const addressed = context.runId
+    ? runs.find((run) => run.run_id === context.runId) || { run_id: context.runId }
+    : null;
+  const focused = addressed || activeRun(runs);
+  const focusedId = focused ? focused.run_id : null;
+  if (focusedId) {
+    for (const node of faces.nodes) {
+      if (node.attrs && node.attrs["data-run-id"] === focusedId) {
+        node.attrs["data-selected"] = "true";
+        node.attrs["aria-current"] = "true";
+      }
+    }
+  }
+  // The sidebar always renders the full three groups (never an empty node
+  // list): the registry stays the switcher between runs (§1e.1), the
+  // focused node carries the selected face and its version group expands.
+  const { runRowLabel } = await import("./views.js");
   const sidebar = renderSidebar({
     title: "releases",
     nodes: [],
@@ -624,46 +461,17 @@ export async function renderReleasesView(body, context = {}) {
   });
   wireSidebarSelections(sidebar);
 
-  if (context.runId) {
-    // focused from the sidebar registry (or a deep link on a registered
-    // host): pass the compact-face label so the heading paints instantly.
-    const focused = runs.find((run) => run.run_id === context.runId);
-    const { runRowLabel } = await import("./views.js");
-    // the sidebar registry stays the switcher between runs (§1e.1): the
-    // sidebar keeps the grouped registry even on a focused run face.
-    await renderTimelineView(body, {
-      runId: context.runId,
-      runTitle: focused ? runRowLabel(focused) : undefined,
-    });
+  if (!focusedId) {
+    emptyState(body, pid);
     return null;
   }
-  // #224/#227 main-area full title (§9.2: the main area keeps the full
-  // title while registry rows stay compact): the newest run's complete
-  // label rides a run-heading face so the frozen journey observes it
-  // without opening a run.
-  const { runRowLabel: _label } = await import("./views.js");
-  const _newest = runs.length
-    ? runs.slice().sort((a, b) =>
-      String(a.updated_ts || "") < String(b.updated_ts || "") ? 1 : -1
-    )[0]
-    : null;
-  if (_newest && _newest.title && _newest.title !== _newest.run_id) {
-    body.append(element("h2", {
-      class: "run-heading",
-      "data-testid": "run-heading",
-      text: `${_newest.version || "unknown"} · ${_newest.title}`,
-    }));
-  }
-  const registry = element("ul", {
-    class: "run-list",
-    "data-testid": "releases-registry",
+  // Focused from the sidebar registry, auto-selected, or deep-linked: pass
+  // the compact-face label so the heading paints instantly.
+  const known = runs.find((run) => run.run_id === focusedId);
+  await renderTimelineView(body, {
+    runId: focusedId,
+    runTitle: known ? runRowLabel(known) : undefined,
   });
-  for (const row of faces.rows) registry.append(row);
-  if (!faces.rows.length) {
-    registry.append(element("li", { text: "no runs yet" }));
-  }
-  wireSidebarSelections({ querySelectorAll: (sel) => registry.querySelectorAll(sel) });
-  body.append(registry, newReleaseEntry(pid), hotfixEntry(pid));
   return null;
 }
 

@@ -424,10 +424,18 @@ textarea {
 }
 
 .sidebar-node[aria-current="true"],
-.sidebar-node[aria-current="page"] {
-  background: var(--bg-subtle);
-  color: var(--fg);
+.sidebar-node[aria-current="page"],
+.sidebar-node-selected,
+.sidebar-node[data-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-fg);
   font-weight: 600;
+}
+
+.sidebar-node-selected:hover,
+.sidebar-node[data-selected="true"]:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* version groups (louke Dev Docs tree, #221): one collapsible block per
@@ -484,6 +492,174 @@ textarea {
   margin: var(--s-1) 0 var(--s-2);
   padding-left: var(--s-3);
   list-style: none;
+}
+
+/* -- releases empty state + create entry (v0.12) ---------------------------- */
+
+.releases-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-7) var(--s-4);
+  text-align: center;
+}
+
+.releases-empty-hint {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
+.releases-create {
+  width: 64px;
+  height: 64px;
+  min-height: 64px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 32px;
+  line-height: 1;
+}
+
+.releases-create:hover {
+  border-color: var(--fg-muted);
+  background: var(--fg-muted);
+}
+
+/* -- create wizard modal (v0.12) -------------------------------------------- */
+
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-4);
+  background: rgb(0 0 0 / 40%);
+}
+
+.wizard-dialog {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: var(--s-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-modal);
+}
+
+.wizard-title {
+  margin: 0 0 var(--s-4);
+  font-size: var(--fs-title);
+}
+
+.wizard-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+
+.wizard-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+  min-height: 0;
+  padding: var(--s-4);
+  text-align: left;
+}
+
+.wizard-option-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+}
+
+.wizard-option-desc {
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  line-height: var(--lh);
+}
+
+.wizard-seed,
+.wizard-issue {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--s-3);
+}
+
+.wizard-seed {
+  min-height: 96px;
+  padding: var(--s-2);
+  resize: vertical;
+}
+
+.wizard-scenarios {
+  display: flex;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+.wizard-scenario-option[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.wizard-validation {
+  margin: 0 0 var(--s-3);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: var(--fs-body);
+}
+
+.wizard-validation p {
+  margin: var(--s-1) 0;
+}
+
+.wizard-error {
+  margin: 0 0 var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--fs-body);
+}
+
+.wizard-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+.wizard-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.wizard-primary:hover {
+  background: var(--fg-muted);
+  border-color: var(--fg-muted);
+}
+
+.wizard-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wizard-primary:disabled:hover {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 /* -- account ---------------------------------------------------------------- */
@@ -799,6 +975,32 @@ textarea {
   display: block;
 }
 
+/* -- run timeline: upper panel / lower panel (v0.12) ------------------------ */
+/* The run face is two visually distinct zones: the timeline panel above
+   (the track) and the detail panel below (the fixed detail pane). */
+
+.timeline-panel {
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  margin-bottom: var(--s-4);
+}
+
+.detail-panel {
+  padding: var(--s-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  min-height: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.detail-panel .detail-pane {
+  min-height: 200px;
+}
+
 .stage-track {
   display: flex;
   flex-direction: column;
@@ -807,6 +1009,135 @@ textarea {
   padding-left: 0;
   list-style: none;
   border-left: 1px solid var(--border);
+}
+
+/* horizontal track: nodes left→right with arrow connectors; the row
+   scrolls sideways when the stage set overflows the panel. */
+.stage-track-horizontal {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  border-left: 0;
+  padding: var(--s-3) var(--s-1);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.stage-track-horizontal .stage-node {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 96px;
+  max-width: 160px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  text-align: center;
+}
+
+.stage-track-horizontal .stage-link {
+  flex: 0 0 auto;
+  align-self: center;
+  list-style: none;
+  margin: 0 var(--s-1);
+  color: var(--fg-subtle);
+  font-size: var(--fs-title);
+  user-select: none;
+}
+
+.stage-track-horizontal .back-edge-wrap {
+  flex: 0 0 auto;
+  align-self: center;
+  list-style: none;
+  margin: 0 var(--s-1);
+}
+
+.back-edge {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border: 1px dashed var(--warn);
+  border-radius: 999px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* node state faces (icon shape + data-state dual channel; colour is
+   never the only signal — the icon + label carry it too). */
+.stage-node.state-done {
+  border-color: var(--border-strong);
+}
+
+.stage-node.state-done .node-icon {
+  color: var(--success);
+}
+
+.stage-node.state-active {
+  border-color: var(--focus);
+  border-width: 2px;
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
+.stage-node.state-active .node-icon {
+  color: var(--focus);
+}
+
+.stage-node.state-attention {
+  border-color: var(--warn);
+  border-width: 2px;
+  background: var(--bg-subtle);
+}
+
+.stage-node.state-attention .node-icon {
+  color: var(--warn);
+}
+
+.stage-node.state-pending {
+  color: var(--fg-muted);
+}
+
+.stage-node.state-pending .node-icon {
+  color: var(--fg-subtle);
+}
+
+.stage-node.state-void {
+  color: var(--fg-subtle);
+  text-decoration: line-through;
+}
+
+.stage-node.state-void .node-icon {
+  color: var(--danger);
+}
+
+/* selected-for-inspection marker (distinct from the active node): a
+   focus ring plus a filled face so the choice is unmissable. */
+.stage-node-selected,
+.stage-node[data-selected="true"] {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.stage-node-selected .node-icon,
+.stage-node[data-selected="true"] .node-icon,
+.stage-node-selected .stage-label,
+.stage-node[data-selected="true"] .stage-label,
+.stage-node-selected .stage-attempt,
+.stage-node[data-selected="true"] .stage-attempt {
+  color: var(--accent-fg);
+}
+
+.stage-node-selected .stage-attempt,
+.stage-node[data-selected="true"] .stage-attempt {
+  border-color: var(--accent-fg);
+  background: transparent;
 }
 
 .stage-node {

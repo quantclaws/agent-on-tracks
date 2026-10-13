@@ -25,8 +25,6 @@ import { requestJson } from "./api.js";
 import { degradedMessage, element } from "./dom.js";
 import { connectEventStream } from "./sse.js";
 
-const CATCHUP_BOUND_MS = 1500;
-
 // §1l.1 five-state closed set (icon shape + data-state dual channel).
 const STATE_ICONS = {
   "done": "●",
@@ -73,13 +71,6 @@ export function groupAttempts(timeline) {
   return groups;
 }
 
-function bound(promise) {
-  return Promise.race([
-    promise,
-    new Promise((resolve) => globalThis.setTimeout(resolve, CATCHUP_BOUND_MS)),
-  ]);
-}
-
 export function renderTimelineView(body, context = {}) {
   const runId = context.runId;
   if (!runId) {
@@ -95,60 +86,46 @@ export function renderTimelineView(body, context = {}) {
     // trip before first paint): the releases-registry context title when
     // focused from the Releases window, else the version/run id. The
     // full story title upgrades the heading once the overview resolves
-    // (the releases face already proved titles at NFR-0158-02).
+    // (the releases face already proved titles at NFR-0158-02) — one
+    // cheap call, never blocking the first paint.
     const heading = element("h2", {
       class: "run-heading",
       "data-testid": "run-heading",
       text: context.runTitle || runId,
     });
     body.append(heading);
-    const timeline = await requestJson(`/api/runs/${encoded}/timeline`).catch(() => null);
-    if (!timeline) {
+    // The three initial faces load in parallel (no sequential awaits):
+    // the slim timeline (the unfiltered projection is ~99MB — always
+    // pass slim=1), the run detail, and the ac-chain.
+    const [timeline, detail, acChain] = await Promise.all([
+      requestJson(`/api/runs/${encoded}/timeline?slim=1`).catch(() => null),
+      requestJson(`/api/runs/${encoded}`).catch(() => null),
+      requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []),
+    ]);
+    if (!timeline || !detail) {
       // unknown run (404): readable degradation in place — no crash, no
       // blank tab (§1l.5). The releases window keeps its heading so the
       // face stays navigable.
       body.append(degradedMessage(`Unknown run: ${runId}`));
       return null;
     }
-    const events = (timeline && timeline.events) || [];
-    const detail = await requestJson(`/api/runs/${encoded}`).catch(() => null);
-    if (!detail) {
-      body.append(degradedMessage(`Unknown run: ${runId}`));
-      return null;
-    }
-    const acChain = await requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []);
-    heading.textContent =
-      context.runTitle ||
-      (await overviewRunTitle(runId)) ||
-      (detail && detail.version) ||
-      runId;
-    // #224 upgrade: the compact releases label truncates at 20 chars; when
-    // the overview resolves a story title, expand the heading to the FULL
-    // title (version + complete title, no ellipsis).
-    try {
-      const projects = await requestJson("/api/projects").catch(() => null);
-      const rows = projects
-        ? Array.isArray(projects) ? projects : projects.projects || []
-        : [];
-      if (rows.length) {
-        const overview = await requestJson(
-          `/api/projects/${encodeURIComponent(rows[0].project_id)}/overview`
-        ).catch(() => null);
-        const run = overview && (overview.runs || []).find(
-          (entry) => entry.run_id === runId
-        );
-        if (run && run.title && run.title !== run.run_id) {
-          heading.textContent = `${run.version || "unknown"} · ${run.title}`;
-        }
-      }
-    } catch (error) {
-      /* keep the compact label */
+    if (!context.runTitle && detail && detail.version) {
+      // No extra round trip on the upgrade path (zero calls, off first
+      // paint): the detail already carries the version, which paints
+      // synchronously. The full story title arrives via the releases
+      // registry label on the normal focused path.
+      heading.textContent = detail.version;
     }
 
-    const state = { last: events.length ? events[events.length - 1] : null };
+    const state = { last: null };
+    const events = eventsOf(timeline);
+    if (events.length) state.last = events[events.length - 1];
     for (const handle of detailStreams.values()) handle.close();
     detailStreams.clear();
     if (!isTerminalStatus(detail && detail.status)) {
+      // connect the event stream but never await its readiness on the
+      // first-paint path (the catch-up drain budget blocks up to 1500ms):
+      // the face paints now; the last-event line refreshes as frames land.
       const stream = connectEventStream({
         runId,
         event_cursor: (timeline && timeline.cursor) || null,
@@ -163,14 +140,22 @@ export function renderTimelineView(body, context = {}) {
         },
       });
       detailStreams.set(runId, stream);
-      await bound(stream.ready);
     }
 
-    body.append(currentCard(detail, events, state));
+    // Upper face: the timeline panel (heading stays above it) — the
+    // current-node card, the horizontal stage track, the ac-chain and the
+    // last-event line. Lower face: the detail panel wrapping the fixed
+    // detail pane (gate panel / node detail / return pointer / review
+    // write face ride inside untouched).
+    const upper = element("section", {
+      class: "timeline-panel",
+      "data-testid": "timeline-panel",
+    });
+    upper.append(currentCard(detail, events, state));
     if (detail && detail.branch) {
       // the hotfix run's branch identity (IF-HOTFIX-006): the entry
       // lands fix/{issue} async, so the run face carries it explicitly.
-      body.append(element("p", {
+      upper.append(element("p", {
         class: "run-branch",
         "data-testid": "run-branch",
         text: `branch: ${detail.branch}`,
@@ -179,17 +164,27 @@ export function renderTimelineView(body, context = {}) {
     const root = element("section", { class: "timeline", "data-testid": "timeline" });
     root.append(stageTrack(stageOrder(timeline), events, detail));
     root.append(acChainList(acChain));
-    body.append(root);
-    body.append(
+    upper.append(root);
+    upper.append(
       element("p", {
         class: "last-event",
         "data-testid": "timeline-last-event",
         text: lastEventText(state.last),
       })
     );
-    body.append(detailPane(detail, events));
+    body.append(upper);
+    const lower = element("section", {
+      class: "detail-panel",
+      "data-testid": "detail-panel",
+    });
+    lower.append(detailPane(detail, events));
+    body.append(lower);
     return null;
   })();
+}
+
+function eventsOf(timeline) {
+  return (timeline && timeline.events) || [];
 }
 
 function lastEventText(event) {
@@ -197,23 +192,6 @@ function lastEventText(event) {
   const type = event.type || "unknown";
   const summary = event.summary && event.summary !== type ? ` (${event.summary})` : "";
   return `${type}${summary}`;
-}
-
-async function overviewRunTitle(runId) {
-  try {
-    const projects = await requestJson("/api/projects");
-    const rows = Array.isArray(projects) ? projects : projects.projects || [];
-    if (!rows.length) return null;
-    const overview = await requestJson(
-      `/api/projects/${encodeURIComponent(rows[0].project_id)}/overview`
-    );
-    const run = (overview.runs || []).find((entry) => entry.run_id === runId);
-    if (!run) return null;
-    const version = run.version || "unknown";
-    return run.title && run.title !== run.run_id ? `${version} · ${run.title}` : version;
-  } catch (error) {
-    return null;
-  }
 }
 
 /** The project+version of a run (the docs-centre faces are project-domain:
@@ -330,12 +308,21 @@ function nodeStateOf(stage, detail, facts) {
 
 function stageTrack(stages, events, detail) {
   const track = element("ol", {
-    class: "stage-track",
+    class: "stage-track stage-track-horizontal",
     "data-testid": "timeline-stage-order",
   });
   const facts = foldStageFacts(events);
   const attempts = groupAttempts({ events });
-  for (const stage of stages) {
+  stages.forEach((stage, index) => {
+    if (index > 0) {
+      // the horizontal connector between neighbours (arrow, not a node —
+      // no testid, no click surface, ignored by node queries).
+      track.append(element("li", {
+        class: "stage-link",
+        "aria-hidden": "true",
+        text: "→",
+      }));
+    }
     const nodeState = nodeStateOf(stage, detail, facts);
     const node = element("li", {
       class: `stage-node state-${nodeState}`,
@@ -347,6 +334,7 @@ function stageTrack(stages, events, detail) {
         : {}),
       role: "button",
       tabindex: "0",
+      "aria-label": `${stage} (${nodeState})`,
     });
     node.append(
       element("span", { class: "node-icon", text: STATE_ICONS[nodeState] || "·" }),
@@ -365,20 +353,30 @@ function stageTrack(stages, events, detail) {
       );
     }
     node.addEventListener("click", () => selectNode(node, stage, detail, events));
+    node.addEventListener("keydown", (event) => {
+      if (event && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        selectNode(node, stage, detail, events);
+      }
+    });
     track.append(node);
-  }
+  });
   for (const edge of facts.backEdges) {
     if (edge.to) {
       track.append(
-        element("span", {
-          class: "back-edge",
-          "data-testid": `timeline-back-edge-${edge.from}-${edge.to}`,
-          text: `↩ ${edge.from} → ${edge.to}`,
-        })
+        element("li", {
+          class: "back-edge-wrap",
+        }, [
+          element("span", {
+            class: "back-edge",
+            "data-testid": `timeline-back-edge-${edge.from}-${edge.to}`,
+            text: `↩ ${edge.from} → ${edge.to}`,
+          }),
+        ])
       );
     }
   }
-  if (!track.children.length) {
+  if (!stages.length) {
     track.append(element("li", { class: "stage-node", text: "no stages" }));
   }
   // §1l.1: the initial view focuses the active node and keeps its
@@ -419,8 +417,14 @@ function selectNode(node, stage, detail, events) {
   const host = view.querySelector('[data-testid="detail-pane"]');
   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
     other.removeAttribute("data-state-selected");
+    other.removeAttribute("data-selected");
+    other.classList.remove("stage-node-selected");
   }
   node.setAttribute("data-state-selected", "true");
+  // the visible selection face (same marker triple as the sidebar focus):
+  // data-selected + class hook + an aria mark so the choice reads aloud.
+  node.setAttribute("data-selected", "true");
+  node.classList.add("stage-node-selected");
   // the active legibility marker (§1l.1 data-state channel): the node's
   // own data-state already names it; expose the frozen alias attribute
   // so the active mark is queryable without parsing data-state.

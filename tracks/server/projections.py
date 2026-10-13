@@ -1027,7 +1027,7 @@ def project_timeline(
     home: Path, run_id: str,
     *,
     command_id: str | None = None, task_id: str | None = None, ac_id: str | None = None,
-    after_seq: str | None = None,
+    after_seq: str | None = None, slim: bool = False,
 ) -> dict:
     """Merged tracks.db + service_events timeline with cursor + stage order (§1e)."""
     conn = _service_db(home)
@@ -1036,7 +1036,7 @@ def project_timeline(
         if project is None:
             return {"events": [], "cursor": "", "stage_order": _stage_order()}
         repo_path = project["repo_path"]
-        rows = _timeline_rows(conn, repo_path, run_id)
+        rows = _timeline_rows(conn, repo_path, run_id, slim=slim)
         rows = _filter_timeline(rows, command_id, task_id, ac_id)
         rows = _after_cursor(rows, after_seq)
         return {"events": rows, "cursor": _cursor_of(rows), "stage_order": _stage_order()}
@@ -1046,34 +1046,40 @@ def project_timeline(
 
 
 def _timeline_rows(
-    conn: sqlite3.Connection | None, repo_path: str, run_id: str
+    conn: sqlite3.Connection | None, repo_path: str, run_id: str, *, slim: bool = False
 ) -> list[dict]:
     rows = []
-    for event in _run_events(repo_path, run_id):
-        payload = dict(event.payload or {})
-        rows.append(
-            {
-                "source": "tracks", "seq": event.seq, "ts": event.ts, "type": event.type,
-                "run_id": event.run_id, "command_id": event.command_id, "task_id": event.task_id,
-                "ac_refs": _event_ac_refs(payload), "summary": event.type,
-                # §1l.1/§9.2 full timeline rendering: the client derives the
-                # five-state labels / attempt grouping / rollback edges from
-                # the event stream itself — the payload (stage, attempt, …)
-                # is the derivation input, never a second source. The
-                # response face redacts it (api_query._response), the SSE
-                # face redacts it too (api_events._redacted).
-                "payload": payload,
-                "stage": payload.get("stage"),
-                "attempt": payload.get("attempt"),
-                "payload_ref": "",
-            })
+    if slim:
+        rows.extend(_slim_track_rows(repo_path, run_id))
+    else:
+        for event in _run_events(repo_path, run_id):
+            payload = dict(event.payload or {})
+            rows.append(
+                {
+                    "source": "tracks", "seq": event.seq, "ts": event.ts, "type": event.type,
+                    "run_id": event.run_id, "command_id": event.command_id,
+                    "task_id": event.task_id,
+                    "ac_refs": _event_ac_refs(payload), "summary": event.type,
+                    # §1l.1/§9.2 full timeline rendering: the client derives the
+                    # five-state labels / attempt grouping / rollback edges from
+                    # the event stream itself — the payload (stage, attempt, …)
+                    # is the derivation input, never a second source. The
+                    # response face redacts it (api_query._response), the SSE
+                    # face redacts it too (api_events._redacted).
+                    "payload": payload,
+                    "stage": payload.get("stage"),
+                    "attempt": payload.get("attempt"),
+                    "payload_ref": "",
+                })
     service = _rows(conn,
         "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
             "WHERE run_id = ? ORDER BY seq",
         (run_id,))
-    for seq, ts, type_, run, command, payload in service:
-        parsed = _json(payload)
+    for seq, ts, type_, run, command, raw in service:
+        parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
+        if slim:
+            parsed = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
         rows.append(
             {
                 "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
@@ -1090,6 +1096,54 @@ def _timeline_rows(
 def _event_ac_refs(payload: dict) -> list[str]:
     refs = payload.get("ac_refs")
     return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
+
+
+# Timeline slim mode: the client (timeline.js foldStageFacts) needs only the
+# five stage-derivation keys; the 30KB–2.2MB evidence blobs never contribute
+# them (737 $ref rows in the reference run carry no stage, 8 carry attempt).
+_SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason"})
+
+
+def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
+    """Track-side timeline rows without touching blob files.
+
+    Reads raw payloads straight from the events table: ``{"$ref": ...}``
+    rows degrade to ``payload={}`` + ``payload_ref`` (their blobs carry no
+    stage facts); all other rows keep only the _SLIM_KEYS whitelist.
+    """
+    conn = _tracks_db(repo_path)
+    try:
+        rows = _rows(conn,
+            "SELECT run_id, seq, ts, type, command_id, task_id, payload "
+                "FROM events WHERE run_id = ? ORDER BY seq",
+            (run_id,))
+    finally:
+        if conn is not None:
+            conn.close()
+    slim_rows = []
+    for run, seq, ts, type_, command_id, task_id, raw in rows:
+        parsed = _json(raw)
+        parsed = parsed if isinstance(parsed, dict) else {}
+        if set(parsed) == {"$ref"}:
+            slim_rows.append(
+                {
+                    "source": "tracks", "seq": seq, "ts": ts, "type": type_,
+                    "run_id": run, "command_id": command_id, "task_id": task_id,
+                    "ac_refs": [], "summary": type_, "payload": {},
+                    "stage": None, "attempt": None,
+                    "payload_ref": str(parsed["$ref"]),
+                })
+            continue
+        slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+        slim_rows.append(
+            {
+                "source": "tracks", "seq": seq, "ts": ts, "type": type_,
+                "run_id": run, "command_id": command_id, "task_id": task_id,
+                "ac_refs": _event_ac_refs(parsed), "summary": type_, "payload": slim,
+                "stage": slim.get("stage"), "attempt": slim.get("attempt"),
+                "payload_ref": "",
+            })
+    return slim_rows
 
 
 def _filter_timeline(

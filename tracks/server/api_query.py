@@ -603,6 +603,7 @@ async def timeline(request: Any) -> Any:
         task_id=_param(query, "task_id"),
         ac_id=_param(query, "ac_id"),
         after_seq=_param(query, "after"),
+        slim=str(query.get("slim") or "").lower() in ("1", "true"),
     )
     return _response(200, request, payload)
 
