@@ -149,9 +149,6 @@ export function createIntakePanel({ projectId }) {
     for (const decision of DECISIONS) {
       decisionBar.append(decisionButton(decision));
     }
-    if (String(intake.source || "") === "backlog") {
-      decisionBar.append(decisionButton({ action: "remove_backlog", label: "移除 backlog 项" }));
-    }
     decisionBar.hidden = false;
   }
 

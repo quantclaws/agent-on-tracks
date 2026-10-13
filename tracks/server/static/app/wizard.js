@@ -24,7 +24,7 @@ const HOTFIX_SCENARIOS = ["post-release", "dev"];
 //   GET /api/projects/{pid}/intakes/{id} -> {status, source, report, ...}
 // Decision write face (#40):
 //   POST /api/intakes/{id}/decisions {action}
-// action closed set: backlog | archive | remove_backlog | develop.
+// action closed set: backlog | archive | develop.
 
 const EVAL_POLL_MS = 1500;
 const EVAL_MAX_ROUNDS = 360; // 9min budget; then a timeout hint keeps "继续" viable
@@ -36,11 +36,9 @@ const ACTION_LABELS = {
   develop: "进入开发",
   backlog: "进入 backlog",
   archive: "归档（不开发）",
-  remove_backlog: "从 backlog 删除",
 };
 const ACTION_SHORT = {
   backlog: "backlog",
-  remove_backlog: "remove",
   archive: "archive",
   develop: "develop",
 };
@@ -173,7 +171,6 @@ function buildEvalResult({ intake, report, onExecute }) {
   const conflicts = safe.conflicts || {};
   const recommendation = deriveRecommendation(safe);
   const refs = conflictRefs(safe);
-  const source = (intake && intake.source) || "";
 
   const root = element("section", {
     class: "eval-result",
@@ -293,13 +290,18 @@ function buildEvalResult({ intake, report, onExecute }) {
     role: "alert",
     hidden: true,
   });
-  const confirmHost = element("div", { class: "decision-confirm-host" });
+  const hintLine = element("p", {
+    class: "decision-hint",
+    "data-testid": "decision-hint",
+    role: "status",
+    hidden: true,
+  });
   const bar = element("div", {
     class: "panel-actions eval-actions",
     "data-testid": "panel-actions",
   });
   const buttons = [];
-  const order = ["develop", "backlog", "archive", "remove_backlog"];
+  const order = ["develop", "backlog", "archive"];
   for (const action of order) {
     const short = ACTION_SHORT[action];
     const btn = element("button", {
@@ -317,23 +319,18 @@ function buildEvalResult({ intake, report, onExecute }) {
         text: "建议",
       }));
     }
-    if (action === "remove_backlog" && source !== "backlog") {
-      btn.disabled = true;
-      btn.setAttribute("aria-disabled", "true");
-    }
     btn.addEventListener("click", () => onPick(action));
     buttons.push({ action, btn });
     bar.append(btn);
   }
-  root.append(errorLine, confirmHost, bar);
+  root.append(errorLine, bar, hintLine);
 
   let executing = false;
+  let pendingConfirmAction = null;
   function setExecuting(value) {
     executing = value;
-    for (const { action, btn } of buttons) {
-      if (value) btn.disabled = true;
-      else if (action === "remove_backlog" && source !== "backlog") btn.disabled = true;
-      else btn.disabled = false;
+    for (const { btn } of buttons) {
+      btn.disabled = value;
     }
   }
 
@@ -350,68 +347,62 @@ function buildEvalResult({ intake, report, onExecute }) {
     }
   }
 
-  function showConfirm({ text, confirmLabel, onConfirm, useSuggestion }) {
-    confirmHost.replaceChildren();
-    const face = element("div", {
-      class: "decision-confirm",
-      "data-testid": "decision-confirm",
-    });
-    face.append(element("p", { class: "decision-confirm-text", text }));
-    const row = element("div", { class: "decision-confirm-row" });
-    const useBtn = element("button", {
-      type: "button",
-      class: "decision-confirm-use",
-      "data-testid": "decision-confirm-use",
-      text: `按建议（${ACTION_LABELS[recommendation.action]}）`,
-    });
-    useBtn.addEventListener("click", () => {
-      confirmHost.replaceChildren();
-      void requestDecision(recommendation.action);
-    });
-    const keepBtn = element("button", {
-      type: "button",
-      class: "decision-confirm-keep",
-      "data-testid": "decision-confirm-keep",
-      text: confirmLabel,
-    });
-    keepBtn.addEventListener("click", () => {
-      confirmHost.replaceChildren();
-      onConfirm();
-    });
-    // When the pick already equals the recommendation the panel is a
-    // conflict gate, not a suggestion gate — one button only.
-    if (useSuggestion) row.append(useBtn);
-    row.append(keepBtn);
-    face.append(row);
-    confirmHost.append(face);
+  function needsConfirm(action) {
+    if (action !== recommendation.action) return true;
+    if (action === "develop" && hasConflicts(safe)) return true;
+    return false;
   }
 
-  function requestDecision(action) {
+  function hintTextFor(action) {
+    const parts = [];
+    if (action !== recommendation.action) {
+      parts.push(
+        `Scribe 建议「${ACTION_LABELS[recommendation.action]}」：${recommendation.reason}。若你仍要「${ACTION_LABELS[action]}」，请再点击一次该按钮。`
+      );
+    }
     if (action === "develop" && hasConflicts(safe)) {
       const refText = refs.length ? refs.join("、") : "既有内容";
-      showConfirm({
-        text: `Scribe 提示与 ${refText} 存在冲突/重叠，进入开发需确认已知晓。仍要进入开发？`,
-        confirmLabel: "仍然进入开发",
-        useSuggestion: false,
-        onConfirm: () => void runExecute("develop"),
-      });
-      return;
+      parts.push(
+        `与 ${refText} 存在冲突/重叠；进入开发需确认已知晓。若仍要进入开发，请再点击一次「进入开发」。`
+      );
     }
-    void runExecute(action);
+    return parts.join("");
+  }
+
+  function paintPending() {
+    for (const { action, btn } of buttons) {
+      if (action === pendingConfirmAction) btn.setAttribute("data-confirm-pending", "true");
+      else btn.removeAttribute("data-confirm-pending");
+    }
+  }
+
+  function clearHint() {
+    pendingConfirmAction = null;
+    hintLine.textContent = "";
+    hintLine.hidden = true;
+    paintPending();
+  }
+
+  function showHint(action) {
+    pendingConfirmAction = action;
+    hintLine.textContent = hintTextFor(action);
+    hintLine.hidden = false;
+    paintPending();
   }
 
   function onPick(action) {
     if (executing) return;
-    if (action === recommendation.action) {
-      requestDecision(action);
+    if (!needsConfirm(action)) {
+      clearHint();
+      void runExecute(action);
       return;
     }
-    showConfirm({
-      text: `Scribe 建议「${ACTION_LABELS[recommendation.action]}」：${recommendation.reason}。你选择「${ACTION_LABELS[action]}」——是否仍按你的选择执行？`,
-      confirmLabel: `仍然${ACTION_LABELS[action]}`,
-      useSuggestion: true,
-      onConfirm: () => requestDecision(action),
-    });
+    if (pendingConfirmAction === action) {
+      clearHint();
+      void runExecute(action);
+      return;
+    }
+    showHint(action);
   }
 
   return root;
@@ -515,14 +506,10 @@ function mountEvalFlow(page, { pid, intakeId, initial, onDone, closeModal, goBac
     if (typeof goBackToSeed === "function") {
       barChildren.push(backButton(() => goBackToSeed()));
     }
-    barChildren.push(cancelButton(() => closeModal(), () => false));
-    page.append(wizardBar(barChildren));
-    // Resubmit keeps the typed seed: relabel the back affordance; the
-    // dismiss affordance reads 关闭 (not 取消) on this terminal face.
+    if (barChildren.length) page.append(wizardBar(barChildren));
+    // Resubmit keeps the typed seed: relabel the back affordance.
     const back = page.querySelector('[data-testid="wizard-back"]');
     if (back) back.textContent = "重新提交";
-    const dismiss = page.querySelector('[data-testid="wizard-cancel"]');
-    if (dismiss) dismiss.textContent = "关闭";
   }
 
   function showDecided(intake) {
@@ -534,11 +521,8 @@ function mountEvalFlow(page, { pid, intakeId, initial, onDone, closeModal, goBac
         class: "wizard-decided",
         "data-testid": "wizard-decided",
         text: `该 intake 已决策（${(intake && intake.decision) || (intake && intake.status) || "decided"}），无需重复决策。`,
-      }),
-      wizardBar([cancelButton(() => closeModal(), () => false)])
+      })
     );
-    const cancel = page.querySelector('[data-testid="wizard-cancel"]');
-    if (cancel) cancel.textContent = "关闭";
   }
 
   function showResult(intake) {
@@ -561,16 +545,6 @@ function mountEvalFlow(page, { pid, intakeId, initial, onDone, closeModal, goBac
         }
       },
     }));
-    const bar = element("div", { class: "wizard-bar" });
-    const closeBtn = element("button", {
-      type: "button",
-      class: "wizard-cancel",
-      "data-testid": "wizard-cancel",
-      text: "关闭",
-    });
-    closeBtn.addEventListener("click", () => closeModal());
-    bar.append(closeBtn);
-    page.append(bar);
   }
 
   async function pollOnce() {
@@ -718,8 +692,7 @@ export function openCreateWizard({ projectId, onDone } = {}) {
         "Hotfix",
         "针对线上已发布产品或开发中版本的问题快速修复（从 GitHub issue 进入）。"
       ),
-    ]),
-    wizardBar([cancelButton(close, () => busy)])
+    ])
   );
 
   // -- page 2a: feature seed ----------------------------------------------
@@ -753,7 +726,6 @@ export function openCreateWizard({ projectId, onDone } = {}) {
     seedError,
     wizardBar([
       backButton(() => show(page1)),
-      cancelButton(close, () => busy),
       createRelease,
     ])
   );
@@ -882,7 +854,6 @@ export function openCreateWizard({ projectId, onDone } = {}) {
     hotfixError,
     wizardBar([
       backButton(() => show(page1)),
-      cancelButton(close, () => busy),
       createHotfix,
     ])
   );
@@ -1006,16 +977,18 @@ export function openCreateWizard({ projectId, onDone } = {}) {
     .addEventListener("click", () => show(pageHotfix));
 
   function show(page) {
-    // Single-page mount: only the active page lives in the dialog, so no
-    // testid (wizard-cancel / wizard-error / wizard-back) ever duplicates.
-    dialog.replaceChildren(page);
+    // Single-page mount: only the active page lives in the dialog (plus the
+    // persistent dialog-level ×), so no testid (wizard-error / wizard-back)
+    // ever duplicates.
+    dialog.replaceChildren(dialogClose, page);
     for (const candidate of [page1, pageFeature, pageHotfix, pageEval]) {
       if (candidate === page) candidate.removeAttribute("hidden");
       else candidate.setAttribute("hidden", "");
     }
   }
 
-  dialog.append(page1);
+  const dialogClose = closeButton(close, () => busy);
+  dialog.append(dialogClose, page1);
   document.body.append(overlay);
   return close;
 }
@@ -1043,11 +1016,12 @@ export function openDecisionModal({ projectId, intakeId, onDone } = {}) {
     "aria-label": "intake decision",
   });
   overlay.append(dialog);
+  const dialogClose = closeButton(() => forceClose(), () => false);
   const page = element("div", {
     class: "wizard-page wizard-page-eval",
     "data-testid": "wizard-page-eval",
   });
-  dialog.append(page);
+  dialog.append(dialogClose, page);
   document.body.append(overlay);
 
   function forceClose() {
@@ -1090,11 +1064,8 @@ export function openDecisionModal({ projectId, intakeId, onDone } = {}) {
             class: "wizard-decided",
             "data-testid": "wizard-decided",
             text: `该 intake 已决策（${intake.decision || "decided"}），无需重复决策。`,
-          }),
-          wizardBar([cancelButton(() => forceClose(), () => false)])
+          })
         );
-        const cancel = page.querySelector('[data-testid="wizard-cancel"]');
-        if (cancel) cancel.textContent = "关闭";
         return;
       }
       evalStop = mountEvalFlow(page, {
@@ -1160,12 +1131,13 @@ function wizardBar(children) {
   return element("div", { class: "wizard-bar" }, children);
 }
 
-function cancelButton(close, isBusy) {
+function closeButton(close, isBusy) {
   const btn = element("button", {
     type: "button",
-    class: "wizard-cancel",
-    "data-testid": "wizard-cancel",
-    text: "取消",
+    class: "wizard-close",
+    "data-testid": "wizard-close",
+    text: "×",
+    "aria-label": "关闭",
   });
   btn.addEventListener("click", () => {
     if (isBusy && isBusy()) return;

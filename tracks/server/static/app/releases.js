@@ -299,7 +299,6 @@ function renderScribePanel(pid, intakeId, intake, panel) {
   });
   const decisions = [
     ["backlog", "backlog"],
-    ["remove", "remove_backlog"],
     ["archive", "archive"],
     ["develop", "develop"],
   ];
@@ -310,10 +309,6 @@ function renderScribePanel(pid, intakeId, intake, panel) {
       "data-testid": `panel-action-${short}`,
       text: short,
     });
-    if (action === "remove_backlog" && String(intake.source || "") !== "backlog") {
-      btn.disabled = true;
-      btn.setAttribute("aria-disabled", "true");
-    }
     btn.addEventListener("click", () => {
       requestJson(`/api/intakes/${encodeURIComponent(intakeId)}/decisions`, {
         method: "POST",
