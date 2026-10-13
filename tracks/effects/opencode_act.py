@@ -569,6 +569,16 @@ class OpencodeActMixin:
                     "reason": diagnosis.get("reason") or "",
                     "evidence": diagnosis.get("evidence") or "",
                 }
+        if name == "Scribe" and substate == "INTAKE_EVAL":
+            # Live-only OOB: the real channel previously carried no
+            # intake_report, so the intake worker's _coerce_report always
+            # rejected the outcome ("outcome carried no conforming intake
+            # report"). The final reply text already holds the §1f.2 report
+            # JSON — extract and attach it; a miss leaves the result
+            # untouched (failed attempt downstream, never fabricated).
+            # Single call (branch lives in the helper) to keep this
+            # method's cognitive complexity at its pre-change level.
+            result = self._with_intake_report(result, proc)
         return self._enrich_discussion(
             result,
             doc_paths,
@@ -655,6 +665,31 @@ class OpencodeActMixin:
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
         return text if isinstance(text, str) else None
+
+    @classmethod
+    def _with_intake_report(
+        cls, result: dict, proc: subprocess.CompletedProcess
+    ) -> dict:
+        """Attach the extracted §1f.2 report, if present; else no-op."""
+        intake_report = cls._intake_report_from(proc)
+        if intake_report is not None:
+            result["intake_report"] = intake_report
+        return result
+
+    @classmethod
+    def _intake_report_from(cls, proc: subprocess.CompletedProcess) -> dict | None:
+        """The §1f.2 intake report out of the final reply text, if present.
+
+        Returns the extracted report dict, or None when the reply carries
+        no conforming report JSON (callers leave the result untouched so
+        the intake worker records a failed attempt, never a fabrication).
+        """
+        reply = cls._final_reply_text(proc)
+        if not reply:
+            return None
+        return cls._first_json_object(
+            reply, ("feasibility", "duplicates", "conflicts", "title")
+        )
 
     def _attach_raw_output(
         self,
