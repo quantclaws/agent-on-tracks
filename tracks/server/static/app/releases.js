@@ -23,7 +23,7 @@ import { element } from "./dom.js";
 import { renderSidebar } from "./sidebar.js";
 import { renderTimelineView } from "./timeline.js";
 import { runRegistryFaces } from "./views.js";
-import { openCreateWizard } from "./wizard.js";
+import { openCreateWizard, openDecisionModal } from "./wizard.js";
 
 // The window's focused project (the intake/hotfix entries all address
 // it; set on each render).
@@ -145,6 +145,94 @@ function wireSidebarSelections(sidebar) {
       if (entryId) promoteBacklogEntry(entryId).catch(() => undefined);
     });
   }
+}
+
+/** Pending intakes (submitted/evaluating/evaluated) that still need a
+ * human decision. Rendered at the top of the releases main area in both
+ * the empty and timeline states; each row offers a "继续" entry into
+ * openDecisionModal. Absent when nothing pends. */
+const PENDING_INTAKE_STATUSES = new Set(["submitted", "evaluating", "evaluated"]);
+
+function pendingStatusLabel(status) {
+  if (status === "evaluated") return "待决策";
+  return "评估中";
+}
+
+function truncate60(value) {
+  const chars = Array.from(String(value || ""));
+  if (chars.length <= 60) return chars.join("");
+  return `${chars.slice(0, 60).join("")}…`;
+}
+
+async function mountPendingIntakes(body, pid) {
+  let rows = [];
+  try {
+    const payload = await requestJson(
+      `/api/projects/${encodeURIComponent(pid)}/intakes`
+    );
+    rows = (payload && payload.intakes) || [];
+  } catch (error) {
+    return; // silent: the releases projection below still presents
+  }
+  const pending = (Array.isArray(rows) ? rows : []).filter(
+    (row) => row && PENDING_INTAKE_STATUSES.has(row.status)
+  );
+  if (!pending.length || !body || !body.isConnected) return;
+  // Resolve display titles via the #38 detail (report.title); the list
+  // face carries no content/title, so fall back to the intake id.
+  const titles = await Promise.all(
+    pending.map(async (row) => {
+      try {
+        const detail = await requestJson(
+          `/api/projects/${encodeURIComponent(pid)}/intakes/${encodeURIComponent(row.intake_id)}`
+        );
+        const report = detail && detail.report ? detail.report : null;
+        if (report && report.title) return String(report.title);
+      } catch (error) {
+        /* fall through to the id */
+      }
+      return String(row.intake_id || "");
+    })
+  );
+  if (!body.isConnected) return;
+  const bar = element("section", {
+    class: "pending-intakes",
+    "data-testid": "pending-intakes",
+    "aria-label": "待决策",
+  });
+  pending.forEach((row, index) => {
+    const intakeId = row.intake_id || "";
+    const item = element("div", {
+      class: "pending-intake",
+      "data-testid": `pending-intake-${intakeId}`,
+    });
+    item.append(
+      element("span", {
+        class: "pending-intake-title",
+        text: truncate60(titles[index] || intakeId),
+      }),
+      element("span", {
+        class: "pending-intake-status",
+        text: pendingStatusLabel(row.status),
+      })
+    );
+    const resume = element("button", {
+      type: "button",
+      class: "pending-intake-resume",
+      "data-testid": `pending-intake-resume-${intakeId}`,
+      text: "继续",
+    });
+    resume.addEventListener("click", () => {
+      openDecisionModal({
+        projectId: pid,
+        intakeId,
+        onDone: () => refreshReleasesWindow(),
+      });
+    });
+    item.append(resume);
+    bar.append(item);
+  });
+  body.prepend(bar);
 }
 
 /** Poll the #38 read face until the Scribe evaluation lands, then render
@@ -374,13 +462,22 @@ function emptyState(body, pid) {
         if (!result) return;
         if (result.kind === "hotfix") focusHotfixRun(result.runId);
         else if (result.kind === "feature" && result.intakeId) {
-          showScribePanel(body, pid, result.intakeId);
+          // The wizard third page already executed the decision before
+          // onDone: refresh so the outcome (backlog/version/archive)
+          // presents. The intakeId-only fallback keeps the legacy Scribe
+          // panel path (no decision yet) reachable.
+          if (result.action) refreshReleasesWindow();
+          else showScribePanel(body, pid, result.intakeId);
         }
       },
     });
   });
   wrap.append(create);
   body.append(wrap);
+  // Pending intakes ride above the empty face (fire-and-forget: the bar
+  // prepends itself when the list resolves; isConnected guards a stale
+  // mount after a fast re-render).
+  void mountPendingIntakes(body, pid);
 }
 
 export async function renderReleasesView(body, context = {}) {
@@ -468,6 +565,9 @@ export async function renderReleasesView(body, context = {}) {
   // Focused from the sidebar registry, auto-selected, or deep-linked: pass
   // the compact-face label so the heading paints instantly.
   const known = runs.find((run) => run.run_id === focusedId);
+  // The pending bar resolves async and prepends itself at the top
+  // (isConnected guards a stale mount mid-flight).
+  void mountPendingIntakes(body, pid);
   await renderTimelineView(body, {
     runId: focusedId,
     runTitle: known ? runRowLabel(known) : undefined,

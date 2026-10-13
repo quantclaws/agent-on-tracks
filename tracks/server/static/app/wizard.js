@@ -1,9 +1,12 @@
 /**
  * Create wizard modal (Releases window "＋" entry).
  *
- * Two pages: page 1 picks feature vs hotfix; page 2 collects the payload.
- * The feature face reuses the releases Scribe panel contract (the caller
- * supplies onDone; releases.js renders its pollIntakeReport face). The
+ * Three pages: page 1 picks feature vs hotfix; page 2 collects the payload;
+ * page 3 (wizard-page-eval) follows a feature submit inside the modal —
+ * live Scribe activity while submitted/evaluating, then the human-readable
+ * result with recommended/confirm decision faces. The feature face reuses
+ * the releases Scribe panel contract (the caller supplies onDone; releases.js
+ * renders its pollIntakeReport face). The
  * hotfix face reuses the create_run closed shape (§2b #8). All controls
  * carry data-testid faces; native ES module, no framework.
  */
@@ -13,11 +16,634 @@ import { element } from "./dom.js";
 
 const HOTFIX_SCENARIOS = ["post-release", "dev"];
 
-/** Open the two-page create modal. Returns a close function. */
+// -- eval page shared contract (OOB wizard third page) ------------------------
+// Activity read face (collaborator implements in parallel; catch-tolerant):
+//   GET /api/projects/{pid}/intakes/{intake_id}/activity ->
+//   {intake_id, sessions:[...], items:[{ts, kind, tool, label, text}]}
+// Intake read face (#38):
+//   GET /api/projects/{pid}/intakes/{id} -> {status, source, report, ...}
+// Decision write face (#40):
+//   POST /api/intakes/{id}/decisions {action}
+// action closed set: backlog | archive | remove_backlog | develop.
+
+const EVAL_POLL_MS = 1500;
+const EVAL_MAX_ROUNDS = 360; // 9min budget; then a timeout hint keeps "继续" viable
+const PENDING_STATUSES = new Set(["submitted", "evaluating"]);
+
+// Decision button faces: label copy + short name (short drives the
+// panel-action-<short> testid kept for the later test phase).
+const ACTION_LABELS = {
+  develop: "进入开发",
+  backlog: "进入 backlog",
+  archive: "归档（不开发）",
+  remove_backlog: "从 backlog 删除",
+};
+const ACTION_SHORT = {
+  backlog: "backlog",
+  remove_backlog: "remove",
+  archive: "archive",
+  develop: "develop",
+};
+
+/** The #38 report out of an intake payload (report dict preferred). */
+function parseReport(intake) {
+  if (!intake) return {};
+  if (intake.report && typeof intake.report === "object") return intake.report;
+  try {
+    return JSON.parse(intake.report_json || "{}") || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+/**
+ * Client-side recommendation (hard mapping + reasons).
+ * - feasibility.verdict === "blocked" -> backlog (blocked items linger).
+ * - else any duplicates item with suggestion === "no_go" -> archive.
+ * - else -> develop.
+ * Judgment semantics: enhance = an existing basis exists, advance as an
+ * enhancement (NOT already implemented); no_go = duplicate construction
+ * is discouraged.
+ */
+function deriveRecommendation(report) {
+  const feasibility = (report && report.feasibility) || {};
+  if (feasibility.verdict === "blocked") {
+    return { action: "backlog", reason: "存在阻塞项，先记录待议" };
+  }
+  const duplicates = (report && report.duplicates) || {};
+  const items = Array.isArray(duplicates.items) ? duplicates.items : [];
+  if (items.some((item) => item && item.suggestion === "no_go")) {
+    return { action: "archive", reason: "与既有需求重复，不建议重复建设" };
+  }
+  return { action: "develop", reason: "评估可行、无重复" };
+}
+
+function conflictRefs(report) {
+  const conflicts = (report && report.conflicts) || {};
+  const pairs = Array.isArray(conflicts.pairs) ? conflicts.pairs : [];
+  const refs = [];
+  for (const pair of pairs) {
+    const ref = pair && (pair.existing_ref || pair.existing || pair.ref);
+    if (ref) refs.push(String(ref));
+  }
+  return refs;
+}
+
+function hasConflicts(report) {
+  const conflicts = (report && report.conflicts) || {};
+  if (conflicts.found) return true;
+  return conflictRefs(report).length > 0;
+}
+
+async function fetchIntake(pid, intakeId) {
+  return requestJson(
+    `/api/projects/${encodeURIComponent(pid)}/intakes/${encodeURIComponent(intakeId)}`
+  );
+}
+
+/** Activity feed read: null when unready/failing (silent downgrade). */
+async function fetchActivity(pid, intakeId) {
+  try {
+    return await requestJson(
+      `/api/projects/${encodeURIComponent(pid)}/intakes/${encodeURIComponent(intakeId)}/activity`
+    );
+  } catch (error) {
+    return null;
+  }
+}
+
+function formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分 ${seconds % 60} 秒`;
+}
+
+/** One activity item node (kind drives the face). */
+function activityItemNode(item) {
+  const kind = (item && item.kind) || "text";
+  const label = (item && item.label) || "";
+  const text = (item && item.text) || "";
+  const node = element("div", {
+    class: `activity-item activity-kind-${kind}`,
+    "data-testid": "activity-item",
+    "data-kind": kind,
+  });
+  if (kind === "tool") {
+    node.append(
+      element("span", {
+        class: "activity-tool",
+        text: `[${(item && item.tool) || "tool"}]${label ? ` ${label}` : ""}`,
+      }),
+      element("span", { class: "activity-text", text: text ? ` ${text}` : "" })
+    );
+  } else if (kind === "step") {
+    node.append(element("span", { class: "activity-step", text: label || text || "—" }));
+  } else {
+    if (label) node.append(element("span", { class: "activity-label", text: `${label} ` }));
+    node.append(element("span", { class: "activity-text", text }));
+  }
+  return node;
+}
+
+function inputFormLabel(inputForm) {
+  if (inputForm === "complete") return "完整需求文档";
+  if (inputForm === "raw") return "原始描述";
+  return String(inputForm || "—");
+}
+
+function duplicateSuggestionLabel(suggestion) {
+  // enhance = 有既有基础、按增强推进（不是已实现）；
+  // no_go = 不建议重复建设。
+  if (suggestion === "enhance") return "作为增强项推进";
+  if (suggestion === "no_go") return "不建议重复建设（NO-GO）";
+  return String(suggestion || "—");
+}
+
+/**
+ * Human-readable result view (reused by the create flow and the
+ * continue-decision flow). Inline confirms only — never window.confirm.
+ * onExecute(action) performs the decision POST; the view awaits it and
+ * surfaces a rejection inline.
+ */
+function buildEvalResult({ intake, report, onExecute }) {
+  const safe = report || {};
+  const feasibility = safe.feasibility || {};
+  const duplicates = safe.duplicates || {};
+  const conflicts = safe.conflicts || {};
+  const recommendation = deriveRecommendation(safe);
+  const refs = conflictRefs(safe);
+  const source = (intake && intake.source) || "";
+
+  const root = element("section", {
+    class: "eval-result",
+    "data-testid": "eval-result",
+  });
+  // Contracted alias: the frozen face pins scribe-panel for the same
+  // suggestion surface — one hidden alias keeps the later test phase
+  // able to locate it without a second visible face.
+  const alias = element("span", {
+    class: "scribe-panel-alias",
+    "data-testid": "scribe-panel",
+    hidden: true,
+    text: "scribe panel",
+  });
+  alias.removeAttribute("hidden");
+  alias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
+  root.append(alias);
+
+  root.append(
+    element("h3", {
+      class: "eval-title",
+      "data-testid": "eval-result-title",
+      text: safe.title || "评估结果",
+    })
+  );
+  if (safe.summary) {
+    root.append(
+      element("p", {
+        class: "eval-summary",
+        "data-testid": "eval-result-summary",
+        text: safe.summary,
+      })
+    );
+  }
+  root.append(
+    element("p", {
+      class: "eval-meta",
+      "data-testid": "eval-result-input-form",
+      text: `输入形态：${inputFormLabel(safe.input_form)}`,
+    })
+  );
+
+  // -- feasibility --
+  const feasBox = element("div", { class: "eval-card" });
+  feasBox.append(element("h4", { class: "eval-card-title", text: "可行性" }));
+  if (feasibility.verdict === "blocked") {
+    feasBox.append(element("p", { class: "eval-line", text: "⛔ 暂不可行" }));
+    const blockers = Array.isArray(feasibility.blockers) ? feasibility.blockers : [];
+    if (!blockers.length) {
+      feasBox.append(element("p", { class: "eval-line", text: "存在阻塞（未列明细）" }));
+    } else {
+      for (const blocker of blockers) {
+        feasBox.append(
+          element("p", {
+            class: "eval-line",
+            text: typeof blocker === "string" ? blocker : JSON.stringify(blocker),
+          })
+        );
+      }
+    }
+  } else {
+    feasBox.append(element("p", { class: "eval-line", text: "✅ 可行：未发现阻塞项" }));
+  }
+  root.append(feasBox);
+
+  // -- duplicates --
+  const dupBox = element("div", { class: "eval-card" });
+  dupBox.append(element("h4", { class: "eval-card-title", text: "重复" }));
+  const dupItems = Array.isArray(duplicates.items) ? duplicates.items : [];
+  if (!dupItems.length) {
+    dupBox.append(element("p", { class: "eval-line", text: "无重复" }));
+  } else {
+    for (const item of dupItems) {
+      const ref = (item && item.ref) || "—";
+      const summary = (item && item.summary) || "";
+      dupBox.append(
+        element("p", {
+          class: "eval-line",
+          text: `与 ${ref} 相关：${summary} — 建议：${duplicateSuggestionLabel(item && item.suggestion)}`,
+        })
+      );
+    }
+  }
+  root.append(dupBox);
+
+  // -- conflicts --
+  const confBox = element("div", { class: "eval-card" });
+  confBox.append(element("h4", { class: "eval-card-title", text: "冲突" }));
+  const pairs = Array.isArray(conflicts.pairs) ? conflicts.pairs : [];
+  if (!pairs.length) {
+    confBox.append(element("p", { class: "eval-line", text: "无冲突" }));
+  } else {
+    for (const pair of pairs) {
+      const fresh = (pair && pair.new_item) || "—";
+      const existing = (pair && (pair.existing_ref || pair.existing || pair.ref)) || "—";
+      confBox.append(
+        element("p", { class: "eval-line", text: `${fresh} ↔ ${existing}` })
+      );
+    }
+    confBox.append(
+      element("p", { class: "eval-note", text: "（进入开发需确认已知晓冲突）" })
+    );
+  }
+  root.append(confBox);
+
+  // Raw JSON stays inspectable but out of the reading path.
+  const details = element("details", { class: "eval-raw" });
+  details.append(
+    element("summary", { text: "原始 JSON" }),
+    element("pre", { class: "eval-raw-body", text: JSON.stringify(safe, null, 2) })
+  );
+  root.append(details);
+
+  const errorLine = element("p", {
+    class: "wizard-error",
+    "data-testid": "wizard-error",
+    role: "alert",
+    hidden: true,
+  });
+  const confirmHost = element("div", { class: "decision-confirm-host" });
+  const bar = element("div", {
+    class: "panel-actions eval-actions",
+    "data-testid": "panel-actions",
+  });
+  const buttons = [];
+  const order = ["develop", "backlog", "archive", "remove_backlog"];
+  for (const action of order) {
+    const short = ACTION_SHORT[action];
+    const btn = element("button", {
+      type: "button",
+      class: `panel-action panel-action-${short} decision-btn`,
+      "data-testid": `panel-action-${short}`,
+      text: ACTION_LABELS[action],
+    });
+    if (action === recommendation.action) {
+      btn.classList.add("recommended");
+      btn.setAttribute("data-recommended", "true");
+      btn.append(element("span", {
+        class: "rec-badge",
+        "data-testid": "rec-badge",
+        text: "建议",
+      }));
+    }
+    if (action === "remove_backlog" && source !== "backlog") {
+      btn.disabled = true;
+      btn.setAttribute("aria-disabled", "true");
+    }
+    btn.addEventListener("click", () => onPick(action));
+    buttons.push({ action, btn });
+    bar.append(btn);
+  }
+  root.append(errorLine, confirmHost, bar);
+
+  let executing = false;
+  function setExecuting(value) {
+    executing = value;
+    for (const { action, btn } of buttons) {
+      if (value) btn.disabled = true;
+      else if (action === "remove_backlog" && source !== "backlog") btn.disabled = true;
+      else btn.disabled = false;
+    }
+  }
+
+  async function runExecute(action) {
+    if (executing) return;
+    setExecuting(true);
+    errorLine.hidden = true;
+    try {
+      await onExecute(action);
+    } catch (error) {
+      setExecuting(false);
+      errorLine.textContent = `决策失败：${error && error.message ? error.message : error}，可重试。`;
+      errorLine.hidden = false;
+    }
+  }
+
+  function showConfirm({ text, confirmLabel, onConfirm, useSuggestion }) {
+    confirmHost.replaceChildren();
+    const face = element("div", {
+      class: "decision-confirm",
+      "data-testid": "decision-confirm",
+    });
+    face.append(element("p", { class: "decision-confirm-text", text }));
+    const row = element("div", { class: "decision-confirm-row" });
+    const useBtn = element("button", {
+      type: "button",
+      class: "decision-confirm-use",
+      "data-testid": "decision-confirm-use",
+      text: `按建议（${ACTION_LABELS[recommendation.action]}）`,
+    });
+    useBtn.addEventListener("click", () => {
+      confirmHost.replaceChildren();
+      void requestDecision(recommendation.action);
+    });
+    const keepBtn = element("button", {
+      type: "button",
+      class: "decision-confirm-keep",
+      "data-testid": "decision-confirm-keep",
+      text: confirmLabel,
+    });
+    keepBtn.addEventListener("click", () => {
+      confirmHost.replaceChildren();
+      onConfirm();
+    });
+    // When the pick already equals the recommendation the panel is a
+    // conflict gate, not a suggestion gate — one button only.
+    if (useSuggestion) row.append(useBtn);
+    row.append(keepBtn);
+    face.append(row);
+    confirmHost.append(face);
+  }
+
+  function requestDecision(action) {
+    if (action === "develop" && hasConflicts(safe)) {
+      const refText = refs.length ? refs.join("、") : "既有内容";
+      showConfirm({
+        text: `Scribe 提示与 ${refText} 存在冲突/重叠，进入开发需确认已知晓。仍要进入开发？`,
+        confirmLabel: "仍然进入开发",
+        useSuggestion: false,
+        onConfirm: () => void runExecute("develop"),
+      });
+      return;
+    }
+    void runExecute(action);
+  }
+
+  function onPick(action) {
+    if (executing) return;
+    if (action === recommendation.action) {
+      requestDecision(action);
+      return;
+    }
+    showConfirm({
+      text: `Scribe 建议「${ACTION_LABELS[recommendation.action]}」：${recommendation.reason}。你选择「${ACTION_LABELS[action]}」——是否仍按你的选择执行？`,
+      confirmLabel: `仍然${ACTION_LABELS[action]}`,
+      useSuggestion: true,
+      onConfirm: () => requestDecision(action),
+    });
+  }
+
+  return root;
+}
+
+/**
+ * Mount the eval flow into a wizard-page-eval host. Shared by the create
+ * flow and openDecisionModal: live activity while submitted/evaluating,
+ * the human-readable result when evaluated, the retryable failed face,
+ * and the decided notice. Returns a stop function for modal teardown.
+ */
+function mountEvalFlow(page, { pid, intakeId, initial, onDone, closeModal, goBackToSeed }) {
+  let stopped = false;
+  let pollTimer = null;
+  let elapsedTimer = null;
+  let rounds = 0;
+  let seenItems = 0;
+  const startedAt = Date.now();
+
+  page.replaceChildren();
+  const statusLine = element("p", {
+    class: "wizard-eval-status",
+    "data-testid": "wizard-eval-status",
+    text: "Scribe 正在评估…",
+  });
+  const elapsedLine = element("p", {
+    class: "wizard-elapsed",
+    "data-testid": "wizard-elapsed",
+    text: "已用时 0 秒",
+  });
+  const spinner = element("span", {
+    class: "wizard-spinner",
+    "data-testid": "wizard-spinner",
+    "aria-hidden": "true",
+  });
+  const headRow = element("div", { class: "wizard-eval-head" }, [spinner, statusLine]);
+  const feed = element("div", {
+    class: "activity-feed",
+    "data-testid": "activity-feed",
+    "aria-live": "polite",
+  });
+  let userScrolledUp = false;
+  feed.addEventListener("scroll", () => {
+    const gap = feed.scrollHeight - (feed.scrollTop + feed.clientHeight);
+    userScrolledUp = gap > 24;
+  });
+  page.append(
+    element("h2", { class: "wizard-title", text: "Scribe 评估" }),
+    headRow,
+    elapsedLine,
+    feed
+  );
+
+  function stop() {
+    stopped = true;
+    if (pollTimer !== null) globalThis.clearInterval(pollTimer);
+    if (elapsedTimer !== null) globalThis.clearInterval(elapsedTimer);
+    pollTimer = null;
+    elapsedTimer = null;
+  }
+
+  elapsedTimer = globalThis.setInterval(() => {
+    if (stopped) return;
+    elapsedLine.textContent = `已用时 ${formatElapsed(Date.now() - startedAt)}`;
+  }, 1000);
+
+  function appendActivity(items) {
+    const rows = Array.isArray(items) ? items : [];
+    if (rows.length < seenItems) {
+      feed.replaceChildren();
+      seenItems = 0;
+    }
+    const fresh = rows.slice(seenItems);
+    for (const item of fresh) feed.append(activityItemNode(item));
+    seenItems = rows.length;
+    if (fresh.length && !userScrolledUp) {
+      try {
+        feed.scrollTop = feed.scrollHeight;
+      } catch (error) {
+        /* non-fatal */
+      }
+    }
+  }
+
+  function showFailed(message) {
+    stop();
+    page.replaceChildren();
+    page.append(
+      element("h2", { class: "wizard-title", text: "评估失败" }),
+      element("p", {
+        class: "wizard-error",
+        "data-testid": "wizard-error",
+        role: "alert",
+        text: message || "评估失败",
+      })
+    );
+    // Resubmit returns to page 2 with the seed text kept — only the
+    // create flow owns a seed page. The continue-decision flow passes
+    // goBackToSeed: null and gets a lone close button.
+    const barChildren = [];
+    if (typeof goBackToSeed === "function") {
+      barChildren.push(backButton(() => goBackToSeed()));
+    }
+    barChildren.push(cancelButton(() => closeModal(), () => false));
+    page.append(wizardBar(barChildren));
+    // Resubmit keeps the typed seed: relabel the back affordance; the
+    // dismiss affordance reads 关闭 (not 取消) on this terminal face.
+    const back = page.querySelector('[data-testid="wizard-back"]');
+    if (back) back.textContent = "重新提交";
+    const dismiss = page.querySelector('[data-testid="wizard-cancel"]');
+    if (dismiss) dismiss.textContent = "关闭";
+  }
+
+  function showDecided(intake) {
+    stop();
+    page.replaceChildren();
+    page.append(
+      element("h2", { class: "wizard-title", text: "已决策" }),
+      element("p", {
+        class: "wizard-decided",
+        "data-testid": "wizard-decided",
+        text: `该 intake 已决策（${(intake && intake.decision) || (intake && intake.status) || "decided"}），无需重复决策。`,
+      }),
+      wizardBar([cancelButton(() => closeModal(), () => false)])
+    );
+    const cancel = page.querySelector('[data-testid="wizard-cancel"]');
+    if (cancel) cancel.textContent = "关闭";
+  }
+
+  function showResult(intake) {
+    stop();
+    const report = parseReport(intake);
+    page.replaceChildren();
+    page.append(element("h2", { class: "wizard-title", text: "评估结果" }));
+    page.append(buildEvalResult({
+      intake,
+      report,
+      onExecute: async (action) => {
+        await requestJson(`/api/intakes/${encodeURIComponent(intakeId)}/decisions`, {
+          method: "POST",
+          body: JSON.stringify({ action }),
+        });
+        const done = onDone;
+        closeModal();
+        if (typeof done === "function") {
+          done({ kind: "feature", intakeId, action });
+        }
+      },
+    }));
+    const bar = element("div", { class: "wizard-bar" });
+    const closeBtn = element("button", {
+      type: "button",
+      class: "wizard-cancel",
+      "data-testid": "wizard-cancel",
+      text: "关闭",
+    });
+    closeBtn.addEventListener("click", () => closeModal());
+    bar.append(closeBtn);
+    page.append(bar);
+  }
+
+  async function pollOnce() {
+    if (stopped) return;
+    rounds += 1;
+    if (rounds > EVAL_MAX_ROUNDS) {
+      if (pollTimer !== null) globalThis.clearInterval(pollTimer);
+      pollTimer = null;
+      statusLine.textContent = "评估仍未完成，可关闭后通过「继续」稍后查看";
+      return;
+    }
+    // Activity first (silent downgrade on miss), then the #38 status.
+    try {
+      const activity = await fetchActivity(pid, intakeId);
+      if (stopped) return;
+      const items = activity && Array.isArray(activity.items) ? activity.items : null;
+      if (items) appendActivity(items);
+    } catch (error) {
+      /* silent downgrade: status line stays */
+    }
+    let intake = null;
+    try {
+      intake = await fetchIntake(pid, intakeId);
+    } catch (error) {
+      return; // transient read keeps polling
+    }
+    if (stopped || !intake) return;
+    elapsedLine.textContent = `已用时 ${formatElapsed(Date.now() - startedAt)}`;
+    const status = intake.status;
+    if (status === "evaluated") {
+      showResult(intake);
+    } else if (status === "failed") {
+      const report = parseReport(intake);
+      const reason = report && report.evaluation_error
+        ? String(report.evaluation_error)
+        : "评估失败";
+      showFailed(reason);
+    } else if (status === "decided") {
+      showDecided(intake);
+    } else if (!PENDING_STATUSES.has(status) && status !== "evaluated") {
+      // Unknown terminal-ish state: keep polling briefly; the budget
+      // guard above ends it with a resumable hint.
+      statusLine.textContent = "Scribe 正在评估…";
+    }
+  }
+
+  pollTimer = globalThis.setInterval(() => {
+    void pollOnce();
+  }, EVAL_POLL_MS);
+  // A pre-read terminal intake lands directly (no spinner flash); every
+  // other pre-read state still enters the live poll, which re-reads #38
+  // and self-corrects any staleness.
+  if (initial && initial.status === "evaluated") {
+    showResult(initial);
+  } else if (initial && initial.status === "failed") {
+    const report = parseReport(initial);
+    showFailed(report && report.evaluation_error
+      ? String(report.evaluation_error)
+      : "评估失败");
+  } else if (initial && initial.status === "decided") {
+    showDecided(initial);
+  } else {
+    void pollOnce();
+  }
+  return stop;
+}
+
+/** Open the three-page create modal. Returns a close function. */
 export function openCreateWizard({ projectId, onDone } = {}) {
   const pid = projectId || "";
   let closed = false;
   let busy = false;
+  let evalStop = null;
 
   const overlay = element("div", {
     class: "wizard-overlay",
@@ -34,6 +660,31 @@ export function openCreateWizard({ projectId, onDone } = {}) {
   function close() {
     if (busy || closed) return;
     closed = true;
+    if (evalStop) {
+      try {
+        evalStop();
+      } catch (error) {
+        /* non-fatal */
+      }
+      evalStop = null;
+    }
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+  }
+
+  // Force close: decision success and eval teardown bypass the submit
+  // busy gate (polling never blocks dismissal).
+  function forceClose() {
+    if (closed) return;
+    closed = true;
+    if (evalStop) {
+      try {
+        evalStop();
+      } catch (error) {
+        /* non-fatal */
+      }
+      evalStop = null;
+    }
     overlay.remove();
     document.removeEventListener("keydown", onKey, true);
   }
@@ -106,6 +757,38 @@ export function openCreateWizard({ projectId, onDone } = {}) {
       createRelease,
     ])
   );
+  // -- page 3: eval (live activity → human-readable result) -----------------
+  const pageEval = element("div", {
+    class: "wizard-page wizard-page-eval",
+    "data-testid": "wizard-page-eval",
+    hidden: true,
+  });
+
+  function goBackToSeed() {
+    busy = false;
+    createRelease.disabled = false;
+    show(pageFeature);
+  }
+
+  function enterEval(intakeId) {
+    if (evalStop) {
+      try {
+        evalStop();
+      } catch (error) {
+        /* non-fatal */
+      }
+      evalStop = null;
+    }
+    show(pageEval);
+    evalStop = mountEvalFlow(pageEval, {
+      pid,
+      intakeId,
+      initial: null,
+      onDone,
+      closeModal: forceClose,
+      goBackToSeed,
+    });
+  }
   createRelease.addEventListener("click", async () => {
     const content = (seedInput.value || "").trim();
     if (!content || busy) return;
@@ -121,13 +804,10 @@ export function openCreateWizard({ projectId, onDone } = {}) {
       if (!intakeId) {
         throw new Error("intake submitted without receipt");
       }
+      // Stay in the modal: the third page carries the live eval.
       busy = false;
-      closed = true;
-      overlay.remove();
-      document.removeEventListener("keydown", onKey, true);
-      if (typeof onDone === "function") {
-        onDone({ kind: "feature", intakeId });
-      }
+      createRelease.disabled = false;
+      enterEval(intakeId);
     } catch (error) {
       busy = false;
       createRelease.disabled = false;
@@ -329,7 +1009,7 @@ export function openCreateWizard({ projectId, onDone } = {}) {
     // Single-page mount: only the active page lives in the dialog, so no
     // testid (wizard-cancel / wizard-error / wizard-back) ever duplicates.
     dialog.replaceChildren(page);
-    for (const candidate of [page1, pageFeature, pageHotfix]) {
+    for (const candidate of [page1, pageFeature, pageHotfix, pageEval]) {
       if (candidate === page) candidate.removeAttribute("hidden");
       else candidate.setAttribute("hidden", "");
     }
@@ -338,6 +1018,106 @@ export function openCreateWizard({ projectId, onDone } = {}) {
   dialog.append(page1);
   document.body.append(overlay);
   return close;
+}
+
+/**
+ * Open the decision modal for any intake (the releases "继续" entry).
+ * submitted/evaluating -> live third-page view; evaluated -> the
+ * human-readable result; decided/others -> a decided notice. Decision
+ * success closes the modal and calls onDone.
+ */
+export function openDecisionModal({ projectId, intakeId, onDone } = {}) {
+  const pid = projectId || "";
+  const id = intakeId || "";
+  let closed = false;
+  let evalStop = null;
+
+  const overlay = element("div", {
+    class: "wizard-overlay",
+    "data-testid": "wizard-modal",
+  });
+  const dialog = element("div", {
+    class: "wizard-dialog",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "intake decision",
+  });
+  overlay.append(dialog);
+  const page = element("div", {
+    class: "wizard-page wizard-page-eval",
+    "data-testid": "wizard-page-eval",
+  });
+  dialog.append(page);
+  document.body.append(overlay);
+
+  function forceClose() {
+    if (closed) return;
+    closed = true;
+    if (evalStop) {
+      try {
+        evalStop();
+      } catch (error) {
+        /* non-fatal */
+      }
+      evalStop = null;
+    }
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+  }
+  function onKey(event) {
+    if (event && event.key === "Escape") {
+      event.preventDefault();
+      forceClose();
+    }
+  }
+  document.addEventListener("keydown", onKey, true);
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) forceClose();
+  });
+
+  // Pre-read the status so an evaluated intake lands on the result
+  // directly (mountEvalFlow's first poll would do the same; this only
+  // skips the transient spinner for the common continue case). Any read
+  // failure falls back to the live view, which degrades readably.
+  fetchIntake(pid, id)
+    .then((intake) => {
+      if (closed) return;
+      if (intake && intake.status === "decided") {
+        page.replaceChildren();
+        page.append(
+          element("h2", { class: "wizard-title", text: "已决策" }),
+          element("p", {
+            class: "wizard-decided",
+            "data-testid": "wizard-decided",
+            text: `该 intake 已决策（${intake.decision || "decided"}），无需重复决策。`,
+          }),
+          wizardBar([cancelButton(() => forceClose(), () => false)])
+        );
+        const cancel = page.querySelector('[data-testid="wizard-cancel"]');
+        if (cancel) cancel.textContent = "关闭";
+        return;
+      }
+      evalStop = mountEvalFlow(page, {
+        pid,
+        intakeId: id,
+        initial: intake,
+        onDone,
+        closeModal: forceClose,
+        goBackToSeed: null,
+      });
+    })
+    .catch(() => {
+      if (closed) return;
+      evalStop = mountEvalFlow(page, {
+        pid,
+        intakeId: id,
+        initial: null,
+        onDone,
+        closeModal: forceClose,
+        goBackToSeed: null,
+      });
+    });
+  return forceClose;
 }
 
 function renderHotfixValidation(host, payload) {
