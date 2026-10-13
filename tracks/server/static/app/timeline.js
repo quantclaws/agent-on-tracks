@@ -54,6 +54,28 @@ function isTerminalStatus(status) {
   return status === "completed" || status === "backlog";
 }
 
+/** Local-time ``YYYY-MM-DD HH:mm:ss`` (24h, zero-padded); invalid/empty
+ * input degrades to the original value (or "-"). The timeline's raw ISO
+ * stamps carry UTC offsets — the readable face shows the viewer's own
+ * clock, seconds precision, no zone suffix. */
+export function fmtTs(iso) {
+  if (!iso) return "-";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/** Local-time ``HH:mm:ss`` for feed rows; invalid/empty degrades to "--:--:--". */
+function fmtClock(iso) {
+  if (!iso) return "--:--:--";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "--:--:--";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 export function stageOrder(timeline) {
   return timeline && Array.isArray(timeline.stage_order) ? timeline.stage_order : [];
 }
@@ -432,6 +454,15 @@ function selectNode(node, stage, detail, events) {
     candidate.setAttribute("data-state-active", "true");
   }
   if (host) {
+    const previous = host.querySelector('[data-testid="node-detail"] [data-testid="node-agent-session"]');
+    if (previous && typeof previous._stopAgentPoll === "function") {
+      try {
+        previous._stopAgentPoll();
+      } catch (error) {
+        /* non-fatal */
+      }
+    }
+    stopAgentSessionPoll();
     host.replaceChildren(nodeDetail(stage, detail, events));
   }
 }
@@ -460,7 +491,7 @@ function nodeDetail(stage, detail, events) {
     box.append(
       element("p", {
         class: "detail-line",
-        text: `start/end: ${ofStage[0].ts || "-"} → ${ofStage[ofStage.length - 1].ts || "-"}`,
+        text: `start/end: ${fmtTs(ofStage[0].ts)} → ${fmtTs(ofStage[ofStage.length - 1].ts)}`,
       })
     );
     const failure = ofStage.find((event) => event.type === "verdict.failed");
@@ -478,6 +509,173 @@ function nodeDetail(stage, detail, events) {
     element("p", { class: "detail-line", text: `owner: ${owner}` }),
     owningSurfaceEntry()
   );
+  const facts = foldStageFacts(events);
+  // the working-agent block rides the run's current stage node while it is
+  // being worked (active) or parked at its human gate (attention — the
+  // agent's session is still the relevant one; the poll flips the block to
+  // the awaiting face on its first answer). Awaiting is decided by the
+  // response's `awaiting` field, not pre-empted here, so the pre-restart
+  // degraded face (route 404) shows the same way in both states.
+  const nodeState = nodeStateOf(stage, detail, facts);
+  if (
+    detail &&
+    detail.run_id &&
+    detail.stage === stage &&
+    (nodeState === "active" || nodeState === "attention")
+  ) {
+    box.append(agentSessionBlock(detail));
+  }
+  return box;
+}
+
+/** The working-agent session block: who is doing the current stage's work
+ * and what it has done lately (``GET /api/runs/{run_id}/activity``, 2s
+ * poll). Renders only for the run's current working stage (active, no
+ * gate) — a gated stage shows the gate action panel instead. The fetch
+ * degrades silently: before the route ships (serve restart) the block
+ * keeps its waiting face and never throws. */
+let agentSessionTimer = null;
+
+function stopAgentSessionPoll() {
+  if (agentSessionTimer !== null) {
+    globalThis.clearTimeout(agentSessionTimer);
+    agentSessionTimer = null;
+  }
+}
+
+function shortSessionId(session) {
+  const text = String(session || "");
+  if (text.length <= 20) return text;
+  return `${text.slice(0, 8)}…${text.slice(-8)}`;
+}
+
+function agentSessionFeedItem(item) {
+  const kind = (item && item.kind) || "text";
+  const row = element("div", {
+    class: `activity-item activity-kind-${kind} node-agent-feed-item`,
+    "data-testid": "node-agent-feed-item",
+    "data-kind": kind,
+  });
+  row.append(element("span", { class: "node-agent-feed-ts", text: fmtClock(item && item.ts) }));
+  const label = (item && item.label) || "";
+  const tool = (item && item.tool) || "";
+  if (kind === "tool") {
+    row.append(element("span", {
+      class: "activity-tool",
+      text: `[${tool || "tool"}]${label ? ` ${label}` : ""}`,
+    }));
+  } else if (label) {
+    row.append(element("span", { class: "activity-label", text: ` ${label}` }));
+  }
+  const body = (item && item.text) || "";
+  if (body && kind !== "step") {
+    row.append(element("span", { class: "activity-text", text: ` ${body}` }));
+  } else if (kind === "step" && !label) {
+    row.append(element("span", { class: "activity-step", text: body || "—" }));
+  }
+  return row;
+}
+
+function agentSessionBlock(detail) {
+  const runId = detail.run_id;
+  const box = element("div", {
+    class: "node-agent-session",
+    "data-testid": "node-agent-session",
+  });
+  const status = element("p", {
+    class: "node-agent-session-status",
+    "data-testid": "node-agent-session-status",
+    role: "status",
+    text: "等待 Agent 启动…",
+  });
+  const sessionId = element("p", {
+    class: "node-agent-session-id",
+    "data-testid": "node-agent-session-id",
+    text: "",
+  });
+  sessionId.hidden = true;
+  const feed = element("div", {
+    class: "activity-feed node-agent-feed",
+    "data-testid": "node-agent-feed",
+    "aria-live": "polite",
+  });
+  box.append(status, sessionId, feed);
+  stopAgentSessionPoll();
+  const state = { stopped: false, backoff: false, seen: 0 };
+  box._stopAgentPoll = () => {
+    state.stopped = true;
+  };
+  async function pollOnce() {
+    if (state.stopped || !document.contains(box)) return;
+    const url = `/api/runs/${encodeURIComponent(runId)}/activity`;
+    let payload = null;
+    try {
+      payload = await requestJson(url);
+    } catch (error) {
+      payload = null;
+    }
+    if (state.stopped || !document.contains(box)) return;
+    if (payload === null) {
+      status.textContent = "（会话流不可用，稍后重试）";
+      schedule(true);
+      return;
+    }
+    // every answered poll renders first (the awaiting face still shows the
+    // finished session's items for human review); only the status line and
+    // the stop/continue decision differ per branch.
+    const rendered = render(payload);
+    if (payload.stage !== detail.stage) {
+      state.stopped = true;
+      status.textContent = "该阶段已结束";
+      return;
+    }
+    if (payload.awaiting) {
+      state.stopped = true;
+      status.textContent = "等待人工确认";
+      return;
+    }
+    state.backoff = false;
+    if (!rendered) {
+      status.textContent = "等待 Agent 启动…";
+    }
+    schedule(false);
+  }
+  // Render one answered payload's sessions + feed tail; returns true when a
+  // session was present (the status line is the caller's per-branch face).
+  function render(payload) {
+    const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    const role = payload.role || "";
+    const roleName = role ? role.charAt(0).toUpperCase() + role.slice(1) : "Agent";
+    if (!sessions.length) {
+      return false;
+    }
+    status.textContent = `${roleName} 正在工作 · ${items.length} 条动态`;
+    sessionId.textContent = shortSessionId(sessions[0]);
+    sessionId.hidden = false;
+    const latest = items.slice(-30);
+    if (latest.length < state.seen) {
+      feed.replaceChildren();
+      state.seen = 0;
+    }
+    for (const item of latest.slice(state.seen)) {
+      feed.append(agentSessionFeedItem(item));
+    }
+    state.seen = latest.length;
+    try {
+      feed.scrollTop = feed.scrollHeight;
+    } catch (error) {
+      /* non-fatal */
+    }
+    return true;
+  }
+  function schedule(failed) {
+    if (state.stopped) return;
+    agentSessionTimer = globalThis.setTimeout(
+      pollOnce, failed ? 5000 : 2000
+    );
+  }
+  schedule(false);
   return box;
 }
 
@@ -568,6 +766,12 @@ function detailPane(detail, events) {
   const gate = detail && detail.awaiting_gate;
   if (gate) {
     pane.append(gateActionPanel(detail, gate));
+    // the awaiting stage is still the run's current working stage: its
+    // agent session block rides below the gate panel (the poll flips it to
+    // the awaiting face on its first answer).
+    if (detail && detail.run_id && detail.stage) {
+      pane.append(agentSessionBlock(detail));
+    }
   } else {
     const stage = (detail && detail.stage) || "";
     pane.append(nodeDetail(stage, detail, events));

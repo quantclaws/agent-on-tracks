@@ -1423,6 +1423,56 @@ textarea {
   font-size: var(--fs-caption);
 }
 
+/* -- run timeline: working-agent session block (node detail) ------------------ */
+/* Reuses the wizard activity face (activity-feed / activity-item kinds);
+   only the session container, status row and feed row layout are local. */
+
+.node-agent-session {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
+}
+
+.node-agent-session-status {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.node-agent-session-id {
+  margin: 0 0 var(--s-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
+.node-agent-feed {
+  max-height: 180px;
+  margin-bottom: 0;
+}
+
+.node-agent-feed-item {
+  display: flex;
+  gap: var(--s-2);
+  align-items: baseline;
+}
+
+.node-agent-feed-ts {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-subtle);
+}
+
+.node-agent-feed-item .activity-text {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* -- eval human-readable result ---------------------------------------------- */
 
 .wizard-page-eval > .eval-result {

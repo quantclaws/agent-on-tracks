@@ -46,6 +46,7 @@ from typing import Any
 from tracks import __version__
 from tracks.server import api_command, api_events, api_query, auth, pages, redaction
 from tracks.server.intake_activity import intake_activity
+from tracks.server.run_activity import run_activity
 
 SESSION_COOKIE = "trac_session"
 _SESSION_MAX_AGE_S = 7 * 24 * 3600  # rolling 7-day sessions (§1f.2)
@@ -85,6 +86,7 @@ _ROUTES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
     ("/api/runs/{run_id}/retry", api_command.retry_run, ("POST",)),
     ("/api/commands/{command_id}", api_query.command_status, ("GET",)),
     ("/api/runs/{run_id}/events", api_events.stream_events, ("GET",)),
+    ("/api/runs/{run_id}/activity", run_activity, ("GET",)),
     ("/api/projects/{pid}/intakes/{intake_id}/activity", intake_activity, ("GET",)),
 )
 

@@ -32,6 +32,7 @@ _MAX_THINKING = 30  # thinking-item tail quota inside the response
 _MAX_TEXT = 1200  # per-item text quota (chars)
 _MAX_BYTES = 400 * 1024  # response serialization ceiling
 _INTAKE_RE = re.compile(r"intakes/([A-Za-z0-9][A-Za-z0-9_-]*)")
+_RUN_RE = re.compile(r"\.tracks/projects/([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
 @dataclass
@@ -43,6 +44,7 @@ class _FileState:
     partial: str = ""
     items: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     intakes: dict[str, set[str]] = field(default_factory=dict)
+    runs: dict[str, set[str]] = field(default_factory=dict)
 
 
 _CACHE: dict[str, _FileState] = {}
@@ -157,10 +159,14 @@ def _envelope(line: str) -> tuple[str, dict[str, Any], Any] | None:
 
 def _mark_intakes(line: str, session: str, state: _FileState) -> None:
     """Record intake→session association from any line mentioning intakes/."""
-    if "intakes/" not in line:
+    if "intakes/" not in line and ".tracks/projects/" not in line:
         return
-    for match in _INTAKE_RE.finditer(line):
-        state.intakes.setdefault(match.group(1), set()).add(session)
+    if "intakes/" in line:
+        for match in _INTAKE_RE.finditer(line):
+            state.intakes.setdefault(match.group(1), set()).add(session)
+    if ".tracks/projects/" in line:
+        for match in _RUN_RE.finditer(line):
+            state.runs.setdefault(match.group(1), set()).add(session)
 
 
 def _fold_part(
@@ -184,7 +190,11 @@ def _fold_part(
 
 def _parse_line(line: str, state: _FileState) -> None:
     """Fold one log line into the file state (session mark and/or item)."""
-    if "message.part.updated" not in line and "intakes/" not in line:
+    if (
+        "message.part.updated" not in line
+        and "intakes/" not in line
+        and ".tracks/projects/" not in line
+    ):
         return
     found = _envelope(line)
     if found is None:
@@ -203,6 +213,7 @@ def _reset_state(state: _FileState) -> None:
     state.partial = ""
     state.items.clear()
     state.intakes.clear()
+    state.runs.clear()
 
 
 def _read_new(path: Path, state: _FileState, size: int) -> None:
