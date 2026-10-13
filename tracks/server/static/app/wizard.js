@@ -213,28 +213,71 @@ function buildEvalResult({ intake, report, onExecute }) {
     })
   );
 
-  // -- feasibility --
-  const feasBox = element("div", { class: "eval-card" });
-  feasBox.append(element("h4", { class: "eval-card-title", text: "可行性" }));
-  if (feasibility.verdict === "blocked") {
-    feasBox.append(element("p", { class: "eval-line", text: "⛔ 暂不可行" }));
+  // -- status row: feasibility + conflicts on one line (chip + note each) --
+  const statusRow = element("div", {
+    class: "eval-status-row",
+    "data-testid": "eval-status-row",
+  });
+  const feasStatus = element("div", { class: "eval-status" });
+  const feasBlocked = feasibility.verdict === "blocked";
+  feasStatus.append(
+    element("span", {
+      class: "eval-chip",
+      "data-testid": "eval-feasibility-chip",
+      text: feasBlocked ? "⛔ 暂不可行" : "✅ 可行",
+    })
+  );
+  let feasNote;
+  if (!feasBlocked) {
+    feasNote = "未发现阻塞项";
+  } else {
     const blockers = Array.isArray(feasibility.blockers) ? feasibility.blockers : [];
     if (!blockers.length) {
-      feasBox.append(element("p", { class: "eval-line", text: "存在阻塞（未列明细）" }));
+      feasNote = "存在阻塞（未列明细）";
     } else {
-      for (const blocker of blockers) {
-        feasBox.append(
-          element("p", {
-            class: "eval-line",
-            text: typeof blocker === "string" ? blocker : JSON.stringify(blocker),
-          })
-        );
-      }
+      feasNote = blockers
+        .map((blocker) => (typeof blocker === "string" ? blocker : JSON.stringify(blocker)))
+        .join("；");
     }
-  } else {
-    feasBox.append(element("p", { class: "eval-line", text: "✅ 可行：未发现阻塞项" }));
   }
-  root.append(feasBox);
+  feasStatus.append(
+    element("span", {
+      class: "eval-status-note",
+      "data-testid": "eval-feasibility-note",
+      text: feasNote,
+    })
+  );
+  const confPairs = Array.isArray(conflicts.pairs) ? conflicts.pairs : [];
+  const confStatus = element("div", { class: "eval-status" });
+  confStatus.append(
+    element("span", {
+      class: "eval-chip",
+      "data-testid": "eval-conflicts-chip",
+      text: confPairs.length ? "⚠ 存在冲突/重叠" : "✅ 无冲突",
+    })
+  );
+  let confNote;
+  if (!confPairs.length) {
+    confNote = "与既有需求无冲突对";
+  } else {
+    confNote =
+      confPairs
+        .map((pair) => {
+          const fresh = (pair && pair.new_item) || "—";
+          const existing = (pair && (pair.existing_ref || pair.existing || pair.ref)) || "—";
+          return `${fresh} ↔ ${existing}`;
+        })
+        .join("; ") + "（进入开发需确认已知晓冲突）";
+  }
+  confStatus.append(
+    element("span", {
+      class: "eval-status-note",
+      "data-testid": "eval-conflicts-note",
+      text: confNote,
+    })
+  );
+  statusRow.append(feasStatus, confStatus);
+  root.append(statusRow);
 
   // -- duplicates --
   const dupBox = element("div", { class: "eval-card" });
@@ -255,26 +298,6 @@ function buildEvalResult({ intake, report, onExecute }) {
     }
   }
   root.append(dupBox);
-
-  // -- conflicts --
-  const confBox = element("div", { class: "eval-card" });
-  confBox.append(element("h4", { class: "eval-card-title", text: "冲突" }));
-  const pairs = Array.isArray(conflicts.pairs) ? conflicts.pairs : [];
-  if (!pairs.length) {
-    confBox.append(element("p", { class: "eval-line", text: "无冲突" }));
-  } else {
-    for (const pair of pairs) {
-      const fresh = (pair && pair.new_item) || "—";
-      const existing = (pair && (pair.existing_ref || pair.existing || pair.ref)) || "—";
-      confBox.append(
-        element("p", { class: "eval-line", text: `${fresh} ↔ ${existing}` })
-      );
-    }
-    confBox.append(
-      element("p", { class: "eval-note", text: "（进入开发需确认已知晓冲突）" })
-    );
-  }
-  root.append(confBox);
 
   // Raw JSON stays inspectable but out of the reading path.
   const details = element("details", { class: "eval-raw" });

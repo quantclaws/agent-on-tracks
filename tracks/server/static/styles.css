@@ -1473,6 +1473,35 @@ textarea {
   font-size: var(--fs-caption);
 }
 
+/* eval status row: feasibility + conflicts on one line (chip + note each) */
+.eval-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+}
+
+.eval-status {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.eval-chip {
+  display: inline-block;
+  padding: 1px var(--s-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.eval-status-note {
+  font-size: var(--fs-body);
+}
+
 .eval-raw {
   font-size: var(--fs-caption);
   color: var(--fg-muted);
@@ -1498,6 +1527,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-2);
+  justify-content: flex-end;
 }
 
 /* recommended decision: focus-ring highlight + badge */
