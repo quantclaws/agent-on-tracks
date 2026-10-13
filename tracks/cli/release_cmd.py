@@ -763,12 +763,17 @@ def _decide_release(
     request: _ReleaseRequest,
     payload: dict,
     actor: str = "human",
+    actor_kind: str = "human",
 ) -> int | None:
     """Run the pre-decision rejection gates; None when the decision may land.
 
     v0.11 §1j.3 (IF-GATEUI-001): also the supervisor gate worker's release
     core — the CLI face keeps its historic ``actor="human"`` default while
-    the worker threads the command row's actor into the event payload."""
+    the worker threads the command row's actor into the event payload. The
+    ``actor_kind`` carries the human class (v0.10 §1m.3: a web decision's
+    actor is the effective display name, so the publish approval reads the
+    kind for the named case).
+    """
     rejection = _reject_release_authorization(
         store, run_id, gate.version, request.action, payload, gate.authorization
     )
@@ -790,6 +795,7 @@ def _decide_release(
             "reason": request.reason,
             "target": request.target,
             "actor": actor,
+            "actor_kind": actor_kind,
         },
     )
     return None

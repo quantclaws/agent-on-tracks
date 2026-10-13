@@ -144,7 +144,10 @@ def _approval_error(events: list, preview_event, preview_digest: str, candidate_
         return "candidate_mismatch"
     if not decisions or decision.get("action") != "release":
         return "not_approved"
-    if decision.get("actor") != "human":
+    # v0.10 §1m.3: a web decision audits the effective display name as its
+    # actor (the CLI face keeps the historic literal ``human``); the actor
+    # KIND carries the human class for the named case.
+    if decision.get("actor") != "human" and decision.get("actor_kind") != "human":
         return "not_approved"
     if any(
         event.seq > preview_event.seq

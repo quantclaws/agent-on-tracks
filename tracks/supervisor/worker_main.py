@@ -135,6 +135,7 @@ def _execute_gate(db: Any, row: dict) -> tuple[dict | None, dict | None]:
         str(row.get("kind") or ""),
         _params(row),
         str(row.get("actor") or "human"),
+        str(row.get("actor_class") or "human"),
     )
 
 

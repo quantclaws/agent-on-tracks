@@ -56,14 +56,20 @@ _REVIEW_ACTIONS = {"comment": "revise", "no_comment": "no_comment"}
 
 
 def execute_gate_command(
-    repo: Path, run_id: str, kind: str, params: dict, actor: str
+    repo: Path, run_id: str, kind: str, params: dict, actor: str,
+    actor_kind: str = "human",
 ) -> tuple[dict | None, dict | None]:
     """Execute one claimed human gate command; returns ``(result, failure)``
-    with exactly one non-None (the ``worker_main._execute`` contract)."""
+    with exactly one non-None (the ``worker_main._execute`` contract).
+
+    ``actor_kind`` threads the command's actor class into the release
+    decision payload — v0.10 §1m.3 audits the effective display name as the
+    web decision's actor, and the publish approval reads the kind for the
+    named case (the CLI face keeps the literal ``human``)."""
     handler = _HANDLERS.get(kind)
     if handler is None:
         return None, _rejected(f"not a human gate command kind: {kind!r}")
-    return handler(repo, run_id, params, actor)
+    return handler(repo, run_id, params, actor, actor_kind)
 
 
 def _rejected(reason: str) -> dict:
@@ -99,7 +105,7 @@ def _run_pipeline(repo, store, run_id, state, checkpoint, label: str):
     return {"kind": "gate_recorded", "gate": label}, None
 
 
-def _execute_triage(repo: Path, run_id: str, params: dict, actor: str):
+def _execute_triage(repo: Path, run_id: str, params: dict, actor: str, actor_kind: str = "human"):
     decision = str(params.get("decision") or "")
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -119,7 +125,7 @@ def _execute_triage(repo: Path, run_id: str, params: dict, actor: str):
         store.close()
 
 
-def _execute_review(repo: Path, run_id: str, params: dict, actor: str):
+def _execute_review(repo: Path, run_id: str, params: dict, actor: str, actor_kind: str = "human"):
     cli_action = _REVIEW_ACTIONS.get(str(params.get("action") or ""))
     if cli_action is None:
         return None, _rejected(
@@ -144,7 +150,7 @@ def _execute_review(repo: Path, run_id: str, params: dict, actor: str):
         store.close()
 
 
-def _execute_approval(repo: Path, run_id: str, params: dict, actor: str):
+def _execute_approval(repo: Path, run_id: str, params: dict, actor: str, actor_kind: str = "human"):
     decision = str(params.get("decision") or "approve")
     if decision != "approve":
         return None, _rejected(
@@ -179,7 +185,7 @@ def _execute_approval(repo: Path, run_id: str, params: dict, actor: str):
         store.close()
 
 
-def _execute_release(repo: Path, run_id: str, params: dict, actor: str):
+def _execute_release(repo: Path, run_id: str, params: dict, actor: str, actor_kind: str = "human"):
     home = paths.tracks_home(repo)
     store = Store(home)
     try:
@@ -203,7 +209,10 @@ def _execute_release(repo: Path, run_id: str, params: dict, actor: str):
                 target=params.get("target"),
             )
             payload = gate.preview.payload or {}
-            rc = _decide_release(store, run_id, gate, request, payload, actor=actor)
+            rc = _decide_release(
+                store, run_id, gate, request, payload, actor=actor,
+                actor_kind=actor_kind,
+            )
             if rc is not None:
                 return None, _rejected(f"release decision rejected (rc={rc})")
             return {
