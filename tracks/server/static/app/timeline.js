@@ -137,24 +137,21 @@ export function fmtSmart(iso) {
   return fmtTs(iso);
 }
 
-// Canonical 13-stage display order (flow.md §1): the pipeline strip falls
-// back to this when the server stage_order is missing/empty. The live face
-// prefers the server-delivered stage_order (never hardcodes when present).
-const STAGE_PATH_ORDER = [
-  "M-START",
-  "M-STORY",
-  "M-SPEC",
-  "M-ACC",
-  "M-REQ-APPROVAL",
-  "M-DESIGN",
-  "M-TEST",
-  "M-IMPL",
-  "M-VERIFY",
-  "M-SECURITY",
-  "M-RELEASE",
-  "M-PUBLISH",
-  "M-MILESTONE",
-];
+// Upper track carousel (OOB 顶部轨道轮播): the viewport wraps the existing
+// <ol data-testid="timeline-stage-order"> unchanged (nodes / arrows /
+// testids / click semantics all preserved); the viewport hides its own
+// scrollbar, centers the current node on first paint, and the two buttons
+// reveal the overflowed neighbours.
+const TRACK_SCROLL_RATIO = 0.8;
+const TRACK_EDGE_TOLERANCE_PX = 2;
+
+// Stage workflow diagram (OOB 阶段内实际工作流): the lower panel renders the
+// SELECTED node's stage window (last stage.entered → next stage.exited, else
+// now) as a linear mermaid stateDiagram-v2 — dispatch+outcome packed per
+// interaction, discrete human/verdict/commit nodes, consecutive
+// attention.required folded, middle-fold past the threshold.
+const WORKFLOW_FOLD_THRESHOLD = 36;
+const WORKFLOW_FOLD_KEEP = 8;
 
 // Mermaid lazy loader (mirrors docs.js loadVditor): module-level promise
 // over the same-origin vendored asset; a failed load resets so it retries.
@@ -198,88 +195,353 @@ function sanitizeMermaidText(text) {
     .trim();
 }
 
-/** Build the stage-path ``stateDiagram-v2`` source (flow.md style:
- * ``direction TB`` + ``state "label" as id`` + ``id : description``)
- * from real run data. Alias ids (``s1..sN``) keep the ``M-`` hyphens out
- * of the grammar; order arrows follow the canonical sequence; rollback
- * edges ride ``sb --> sa : 回退``; state classes ride the four classDefs.
+/** Stage workflow source: per-stage ACTUAL execution graph (mermaid
+ * ``stateDiagram-v2`` TB, linear chain) over the stage window: the stage's
+ * LAST ``stage.entered`` ts through the nearest following ``stage.exited``
+ * (or now). One ``dispatch_agent command.issued`` + its following
+ * ``outcome.received`` pack into one interaction node; mechanical stream
+ * rows are kept by default; consecutive ``attention.required`` fold with
+ * ×N; past WORKFLOW_FOLD_THRESHOLD the middle folds into one summary node.
+ * Never throws — an empty window yields null and the caller degrades.
  */
-export function stagePathSource(detail, events, stages) {
-  const order = Array.isArray(stages) && stages.length ? stages : STAGE_PATH_ORDER;
-  const list = Array.isArray(events) ? events : [];
-  const facts = foldStageFacts(list);
-  const ids = new Map(order.map((stage, index) => [stage, `s${index + 1}`]));
+export function stageWorkflowSource(detail, events, stage) {
+  const window = stageWorkflowWindow(events, stage);
+  if (!window.length) return null;
+  const nodes = foldWorkflowNodes(window, stage, detail);
+  if (!nodes.length) return null;
   const lines = ["stateDiagram-v2", "direction TB"];
-  for (const stage of order) {
-    lines.push(`state "${sanitizeMermaidText(stage)}" as ${ids.get(stage)}`);
+  lines.push("[*] --> w1");
+  nodes.forEach((node, index) => {
+    const id = `w${index + 1}`;
+    lines.push(`state "${sanitizeMermaidText(node.title)}" as ${id}`);
+  });
+  for (let index = 1; index < nodes.length; index += 1) {
+    lines.push(`w${index} --> w${index + 1}`);
   }
-  if (order.length) {
-    lines.push(`[*] --> ${ids.get(order[0])}`);
-    for (let index = 1; index < order.length; index += 1) {
-      lines.push(`${ids.get(order[index - 1])} --> ${ids.get(order[index])}`);
-    }
-  }
-  for (const stage of order) {
-    const id = ids.get(stage);
-    const state = nodeStateOf(stage, detail, facts);
-    const entered = firstStageEvent(list, "stage.entered", stage);
-    const exited = firstStageEvent(list, "stage.exited", stage);
-    const isCurrent = !!detail && detail.stage === stage;
-    const awaiting = isCurrent && !!(detail && detail.awaiting_gate);
-    if (state === "done") {
-      if (entered) {
-        lines.push(`${id} : ${sanitizeMermaidText(`✓ 进入 ${fmtSmart(entered.ts)}`)}`);
-      }
-      if (exited) {
-        lines.push(`${id} : ${sanitizeMermaidText(`离开 ${fmtSmart(exited.ts)}`)}`);
-      }
-      if (!entered && !exited) {
-        lines.push(`${id} : ${sanitizeMermaidText("✓ 已完成")}`);
-      }
-    } else if (isCurrent) {
-      if (entered) {
-        lines.push(`${id} : ${sanitizeMermaidText(`● 进入 ${fmtSmart(entered.ts)}`)}`);
-      } else {
-        lines.push(`${id} : ${sanitizeMermaidText("● 当前阶段")}`);
-      }
-      const words = [];
-      if (detail && detail.substate) words.push(String(detail.substate));
-      words.push(awaiting ? "等待人工裁决" : "进行中");
-      lines.push(`${id} : ${sanitizeMermaidText(words.join(" · "))}`);
-      if (awaiting) {
-        const elapsed = waitingElapsed(lastBusinessEvent(list));
-        if (elapsed && elapsed !== "—") {
-          lines.push(`${id} : ${sanitizeMermaidText(`（已等 ${elapsed}）`)}`);
-        }
-      }
-    } else if (state === "void") {
-      lines.push(`${id} : ${sanitizeMermaidText("✕ 已回退")}`);
-    } else {
-      lines.push(`${id} : ${sanitizeMermaidText("待开始")}`);
-    }
-  }
-  for (const edge of facts.backEdges || []) {
-    if (edge && edge.from && edge.to && ids.has(edge.from) && ids.has(edge.to)) {
-      lines.push(`${ids.get(edge.from)} --> ${ids.get(edge.to)} : 回退`);
+  for (let index = 0; index < nodes.length; index += 1) {
+    const id = `w${index + 1}`;
+    for (const line of nodes[index].lines) {
+      lines.push(`${id} : ${sanitizeMermaidText(line)}`);
     }
   }
   lines.push("classDef done fill:#e8f5e9,stroke:#2e7d32,color:#1e4620");
   lines.push("classDef current fill:#fff4e5,stroke:#f5a623,stroke-width:2px,color:#7a4d00");
   lines.push("classDef pending fill:#f7f7f7,stroke:#d0d0d0,color:#9a9a9a");
   lines.push("classDef void fill:#fdecea,stroke:#d93025,color:#8a1c14");
-  for (const stage of order) {
-    const state = nodeStateOf(stage, detail, facts);
-    const mermaidClass =
-      state === "active" || state === "attention" ? "current" : state;
-    lines.push(`class ${ids.get(stage)} ${mermaidClass}`);
+  lines.push("classDef attention fill:#fff8e1,stroke:#f5a623,color:#7a4d00");
+  for (let index = 0; index < nodes.length; index += 1) {
+    lines.push(`class w${index + 1} ${nodes[index].tone || "pending"}`);
   }
   return lines.join("\n");
 }
 
-/** Render the stage-path source into ``host`` as inline SVG. Never throws:
- * a failed load or render degrades to a retry line in place. */
-async function renderStagePathDiagram(host, detail, events, stages) {
-  const source = stagePathSource(detail, events, stages);
+/** The stage window: from the LAST ``stage.entered(stage)`` through the
+ * nearest following ``stage.exited`` (any stage closes the window — an exit
+ * always ends the current stage), else to the end of the list (now).
+ * Time-ordered input assumed (the timeline projection sorts by ts).
+ */
+function stageWorkflowWindow(events, stage) {
+  const list = Array.isArray(events) ? events : [];
+  if (!stage) return [];
+  let start = -1;
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const event = list[index];
+    if (event && event.type === "stage.entered" && stageOf(event) === stage) {
+      start = index;
+      break;
+    }
+  }
+  if (start < 0) return [];
+  let end = list.length;
+  for (let index = start + 1; index < list.length; index += 1) {
+    const event = list[index];
+    if (event && event.type === "stage.exited") {
+      end = index + 1;
+      break;
+    }
+  }
+  return list.slice(start, end);
+}
+
+/** Dispatch params across slim + full rows (slim keeps command.params). */
+function dispatchParams(event) {
+  const payload = (event && event.payload) || {};
+  const command = payload.command || null;
+  if (command && typeof command === "object" && command.params && typeof command.params === "object") {
+    return command.params;
+  }
+  if (payload.params && typeof payload.params === "object") return payload.params;
+  return null;
+}
+
+function dispatchKind(event) {
+  const payload = (event && event.payload) || {};
+  const command = payload.command || null;
+  if (command && typeof command === "object" && command.kind) return String(command.kind);
+  return null;
+}
+
+function payloadScalar(event, key) {
+  const payload = (event && event.payload) || {};
+  if (payload[key] !== undefined && payload[key] !== null) return payload[key];
+  if (event && event[key] !== undefined && event[key] !== null) return event[key];
+  return null;
+}
+
+function roleDisplayName(role) {
+  const text = String(role || "");
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function shortSha(sha) {
+  const text = String(sha || "");
+  return text.length > 12 ? text.slice(0, 12) : text;
+}
+
+/** Window events → linear workflow nodes. Dispatch_agent rows (kind or a
+ * role-bearing params, the slim identity) become interaction nodes and
+ * swallow the outcome.received that follows before the next interaction;
+ * non-dispatch command rows and all other rows map to discrete nodes;
+ * heartbeats / parity / writelock / ledger rows are skipped; consecutive
+ * attention.required rows fold into one ×N node.
+ */
+function foldWorkflowNodes(window, stage, detail) {
+  const nodes = [];
+  let index = 0;
+  while (index < window.length) {
+    const event = window[index];
+    const type = (event && event.type) || "";
+    if (
+      HEARTBEAT_EVENT_TYPES.has(type) ||
+      type === "dispatch.parity" ||
+      type.startsWith("writelock.") ||
+      type.startsWith("ledger.")
+    ) {
+      index += 1;
+      continue;
+    }
+    if (isDispatchInteraction(event)) {
+      const packed = { node: interactionNode(event), consumed: 1 };
+      let cursor = index + 1;
+      while (cursor < window.length) {
+        const next = window[cursor];
+        const nextType = (next && next.type) || "";
+        if (isDispatchInteraction(next)) break;
+        if (nextType === "outcome.received") {
+          packed.node.lines.push(`结果 ${fmtSmart(next.ts)}`);
+          packed.consumed += 1;
+          cursor += 1;
+          continue;
+        }
+        break;
+      }
+      nodes.push(packed.node);
+      index += packed.consumed;
+      continue;
+    }
+    if (type === "attention.required") {
+      let count = 1;
+      let area = payloadScalar(event, "area");
+      let cursor = index + 1;
+      while (cursor < window.length && (window[cursor] && window[cursor].type) === "attention.required") {
+        count += 1;
+        cursor += 1;
+      }
+      const title = count > 1 ? `需要注意 ×${count}` : "需要注意";
+      const lines = [`需要注意${count > 1 ? ` ×${count}` : ""}`];
+      if (area) lines.push(String(area));
+      if (event.ts) lines.push(fmtSmart(event.ts));
+      nodes.push({ title, lines, tone: "attention", kind: "attention" });
+      index = cursor;
+      continue;
+    }
+    const discrete = discreteWorkflowNode(event);
+    if (discrete) {
+      nodes.push(discrete);
+    } else if (type === "outcome.received") {
+      nodes.push({
+        title: "收到执行结果",
+        lines: ["收到执行结果", fmtSmart(event.ts)].filter(Boolean),
+        tone: "pending", kind: "outcome",
+      });
+    } else {
+      nodes.push({
+        title: stageEventLabel(event),
+        lines: [`${stageEventLabel(event)} · ${event && event.ts ? fmtSmart(event.ts) : "-"}`],
+        tone: "pending", kind: "other",
+      });
+    }
+    index += 1;
+  }
+  appendGateNode(nodes, stage, detail, window);
+  return foldWorkflowMiddle(nodes);
+}
+
+function isDispatchInteraction(event) {
+  if (!event || event.type !== "command.issued") return false;
+  if (dispatchKind(event) === "dispatch_agent") return true;
+  const params = dispatchParams(event);
+  return !!(params && params.role);
+}
+
+function interactionNode(event) {
+  const params = dispatchParams(event) || {};
+  const role = roleDisplayName(params.role);
+  const substate = params.substate ? String(params.substate) : "";
+  const round = params.review_round !== undefined && params.review_round !== null
+    ? String(params.review_round) : "";
+  const attempt = params.attempt !== undefined && params.attempt !== null
+    ? String(params.attempt) : (payloadScalar(event, "attempt") ?? "");
+  const head = [role, substate ? `· ${substate}` : ""].filter(Boolean).join(" ");
+  const meta = [];
+  if (round !== "") meta.push(`第 ${round} 轮`);
+  if (attempt !== "") meta.push(`尝试 ${attempt}`);
+  const lines = [head || "派发 Agent"];
+  lines.push(`${meta.length ? `${meta.join(" / ")} · ` : ""}${fmtSmart(event.ts)}`);
+  return { title: `${head || "派发"}${meta.length ? `（${meta.join(" / ")}）` : ""}`, lines, tone: "current", kind: "dispatch" };
+}
+
+function discreteWorkflowNode(event) {
+  const type = (event && event.type) || "";
+  const ts = event && event.ts ? fmtSmart(event.ts) : "";
+  const at = (text) => (ts ? `${text} · ${ts}` : text);
+  switch (type) {
+    case "story.requested":
+      return { title: "故事骨架就位", lines: [at("故事骨架就位")], tone: "done", kind: "marker" };
+    case "stage.entered":
+      return { title: "进入阶段", lines: [at("进入阶段")], tone: "done", kind: "marker" };
+    case "stage.exited":
+      return { title: "离开阶段", lines: [at("离开阶段")], tone: "done", kind: "marker" };
+    case "human.triage": {
+      const decision = payloadScalar(event, "decision");
+      return { title: `人工裁决 ${decision || ""}`.trim(), lines: [at(`人工裁决 ${decision || ""}`.trim())], tone: "attention", kind: "human" };
+    }
+    case "human.review": {
+      const action = payloadScalar(event, "action");
+      return { title: `人工评审 ${action || ""}`.trim(), lines: [at(`人工评审 ${action || ""}`.trim())], tone: "attention", kind: "human" };
+    }
+    case "human.retry":
+    case "human.recover":
+    case "human.return":
+    case "human.approval": {
+      const label = EVENT_LABELS[type] || type;
+      return { title: label, lines: [at(label)], tone: "attention", kind: "human" };
+    }
+    case "review.round_started": {
+      const round = payloadScalar(event, "round");
+      return { title: `新一轮评审 #${round ?? "?"}`, lines: [at(`新一轮评审 #${round ?? "?"}`)], tone: "current", kind: "round" };
+    }
+    case "repair.round_started": {
+      const round = payloadScalar(event, "round");
+      const label = round ? `修复轮 #${round}` : "修复轮";
+      return { title: label, lines: [at(label)], tone: "current", kind: "round" };
+    }
+    case "verdict.passed":
+    case "verdict.failed": {
+      const check = payloadScalar(event, "check");
+      const label = type === "verdict.passed" ? "校验通过" : "校验未通过";
+      return { title: check ? `${label} ${check}` : label, lines: [at(check ? `${label} ${check}` : label)], tone: type === "verdict.passed" ? "done" : "void", kind: "verdict" };
+    }
+    case "sage.verdict":
+    case "lex.verdict":
+    case "prism.verdict": {
+      const who = type.split(".")[0];
+      const verdict = payloadScalar(event, "verdict");
+      const label = `${who} 评审 ${verdict || ""}`.trim();
+      return { title: label, lines: [at(label)], tone: verdict === "pass" ? "done" : "attention", kind: "verdict" };
+    }
+    case "stage.rolled_back": {
+      const to = payloadScalar(event, "to") ?? payloadScalar(event, "to_stage") ?? "";
+      const label = to ? `阶段回退 ${to}` : "阶段回退";
+      return { title: label, lines: [at(label)], tone: "void", kind: "rollback" };
+    }
+    case "command.issued": {
+      const kind = dispatchKind(event);
+      const label = kind && kind !== "dispatch_agent"
+        ? `指令 ${kind}` : stageEventLabel(event);
+      return { title: label, lines: [at(label)], tone: "pending", kind: "command" };
+    }
+    default: break;
+  }
+  if (type.endsWith(".committed")) {
+    const sha = payloadScalar(event, "commit_sha");
+    const final = payloadScalar(event, "final");
+    const label = `产物提交${final ? "（终版）" : ""}${sha ? shortSha(sha) : ""}`;
+    return { title: "产物提交", lines: [at(label)], tone: "done", kind: "commit" };
+  }
+  return null;
+}
+
+function appendGateNode(nodes, stage, detail, window) {
+  if (!detail || !stage || detail.stage !== stage) return;
+  if (detail.status && isTerminalStatus(detail.status)) return;
+  if (detail.awaiting_gate) {
+    const basis = lastBusinessEvent(window.length ? window : []);
+    nodes.push({
+      title: "人工门：等待裁决",
+      lines: [`人工门：等待裁决（已等 ${waitingElapsed(basis)}）`],
+      tone: "attention", kind: "gate",
+    });
+    return;
+  }
+  const last = window.length ? window[window.length - 1] : null;
+  if (last && last.type === "command.issued") {
+    nodes.push({ title: "进行中…", lines: ["进行中…"], tone: "current", kind: "running" });
+  }
+}
+
+/** Middle-fold past the threshold: first 8 + summary + last 8. Counts ride
+ * the summary node (dispatch/result/verdict/other tallies are real).
+ */
+function foldWorkflowMiddle(nodes) {
+  if (nodes.length <= WORKFLOW_FOLD_THRESHOLD) return nodes;
+  const head = nodes.slice(0, WORKFLOW_FOLD_KEEP);
+  const tail = nodes.slice(nodes.length - WORKFLOW_FOLD_KEEP);
+  const middle = nodes.slice(WORKFLOW_FOLD_KEEP, nodes.length - WORKFLOW_FOLD_KEEP);
+  const tally = { dispatch: 0, outcome: 0, verdict: 0, other: 0 };
+  for (const node of middle) {
+    if (node.kind === "dispatch") tally.dispatch += 1;
+    else if (node.kind === "outcome") tally.outcome += 1;
+    else if (node.kind === "verdict") tally.verdict += 1;
+    else tally.other += 1;
+  }
+  const summaryText =
+    `… 中间 ${middle.length} 步（派发×${tally.dispatch} · 结果×${tally.outcome} · 校验×${tally.verdict} · 其它×${tally.other}）…`;
+  return [...head, { title: summaryText, lines: [summaryText], tone: "pending", kind: "fold" }, ...tail];
+}
+
+/** Summary line inputs over the stage window (real counts only). */
+export function stageWorkflowSummary(detail, events, stage) {
+  const window = stageWorkflowWindow(events, stage);
+  let dispatches = 0;
+  const rounds = new Set();
+  let human = 0;
+  for (const event of window) {
+    const type = (event && event.type) || "";
+    if (isDispatchInteraction(event)) {
+      dispatches += 1;
+      const params = dispatchParams(event) || {};
+      if (params.review_round !== undefined && params.review_round !== null) {
+        rounds.add(String(params.review_round));
+      }
+    }
+    if (type === "review.round_started") {
+      const round = payloadScalar(event, "round");
+      if (round !== null) rounds.add(String(round));
+    }
+    if (type.startsWith("human.")) human += 1;
+  }
+  const roundText = rounds.size ? [...rounds].sort().join("/") : "—";
+  const firstTs = window.length ? window[0].ts : null;
+  const running = !!detail && detail.stage === stage && !(detail.status && isTerminalStatus(detail.status));
+  const duration = firstTs ? durationOf(firstTs).replace(/^已运行 /, "") : "—";
+  return `派发 ${dispatches} 次 · 交互轮次 ${roundText} · 人工动作 ${human} · ${running ? `进行中 ${duration}` : `用时 ${duration}`}`;
+}
+
+/** Render the stage workflow source into ``host`` as inline SVG. Never
+ * throws: a failed load or render degrades to a retry line in place. */
+async function renderStageWorkflowDiagram(host, source) {
   try {
     const mermaid = await loadMermaid();
     if (!mermaidInitialized) {
@@ -287,7 +549,7 @@ async function renderStagePathDiagram(host, detail, events, stages) {
       mermaidInitialized = true;
     }
     stagePathDiagramSeq += 1;
-    const graphId = `stage-path-diagram-${stagePathDiagramSeq}`;
+    const graphId = `stage-workflow-diagram-${stagePathDiagramSeq}`;
     const output = await mermaid.render(graphId, source);
     const svg = typeof output === "string" ? output : output && output.svg;
     if (!svg) throw new Error("empty render");
@@ -626,6 +888,7 @@ function stageOf(event) {
 
 /** First ``type`` event for ``stage`` (entered/exited); null when the run
  * never recorded one — the chip then shows no time rather than inventing.
+ * (Kept for window-adjacent callers; the workflow window is last-entered.)
  */
 function firstStageEvent(events, type, stage) {
   for (const event of events || []) {
@@ -634,40 +897,22 @@ function firstStageEvent(events, type, stage) {
   return null;
 }
 
-/** Events of the run's current stage window: from the first
- * ``stage.entered(stage)`` to the next foreign ``stage.entered`` (or end).
- * Window attribution (not per-event stage match) because the slim timeline
- * strips ``command.issued``/``outcome.received`` payloads to ``{}`` — their
- * stage lives only in ordering, and the window recovers it honestly.
- */
-function stageWindowEvents(events, stage) {
-  const list = Array.isArray(events) ? events : [];
-  let start = -1;
-  for (let index = 0; index < list.length; index += 1) {
-    const event = list[index];
-    if (event && event.type === "stage.entered" && stageOf(event) === stage) {
-      start = index;
-      break;
-    }
-  }
-  if (start < 0) return [];
-  let end = list.length;
-  for (let index = start + 1; index < list.length; index += 1) {
-    const event = list[index];
-    const entered = stageOf(event);
-    if (event && event.type === "stage.entered" && entered && entered !== stage) {
-      end = index;
-      break;
-    }
-  }
-  return list.slice(start, end);
+/** One workflow node's fallback label for unmapped mechanical rows: mapped
+ * Chinese label, the dispatch shape, or the raw type (never skipped —
+ * only heartbeats/parity/locks are). */
+function stageEventLabel(event) {
+  const type = (event && event.type) || "unknown";
+  if (type === "command.issued") return commandIssuedLabel(event);
+  const label = EVENT_LABELS[type];
+  if (label) return label;
+  return type;
 }
 
 /** ``command.issued`` readable label: ``下达指令 Scribe / TRIAGE #1`` from
- * ``payload.command.params`` when present (full timeline); the slim face
- * strips that payload, so ``task_id`` (``run:substate:round:attempt``)
- * degrades to the substate only — role/attempt stay absent rather than
- * invented. Base label alone when neither source exists. */
+ * ``payload.command.params`` when present (slim keeps the dispatch
+ * identity now); ``task_id`` (``run:substate:round:attempt``) degrades to
+ * the substate only when params are absent. Base label alone when neither
+ * source exists. */
 function commandIssuedLabel(event) {
   const base = EVENT_LABELS["command.issued"] || "command.issued";
   const params =
@@ -701,86 +946,85 @@ function commandIssuedLabel(event) {
   return text;
 }
 
-/** One window event's readable label: mapped Chinese label, the
- * ``command.issued`` dispatch shape, or the raw type for unknown kinds
- * (never skipped — only heartbeats are). */
-function stageEventLabel(event) {
-  const type = (event && event.type) || "unknown";
-  if (type === "command.issued") return commandIssuedLabel(event);
-  const label = EVENT_LABELS[type];
-  if (label) return label;
-  return type;
-}
-
-/** Static stage-path graph (no interaction): the canonical pipeline as a
- * rendered mermaid ``stateDiagram-v2`` (flow.md style) plus the current
- * stage's event chain. Pure display over the already loaded ``detail`` +
- * ``events`` — no new data source, no timers. */
-function stagePathPanel(detail, events, stages) {
+/** Stage workflow panel (OOB 阶段内实际工作流): the SELECTED (or current)
+ * stage's actual execution graph — never the full 13-stage pipeline (that
+ * static repetition is removed). Renders the summary line +
+ * ``stage-workflow-diagram`` mermaid host, or the pending degradation text
+ * when the stage has no recorded window. Pure display over the already
+ * loaded ``detail`` + ``events`` — no new data source, no timers. */
+function stagePathPanel(detail, events, selectedStage) {
+  const stage = selectedStage || (detail && detail.stage) || "";
   const wrap = element("section", {
     class: "stage-path",
     "data-testid": "stage-path",
   });
-  wrap.append(element("h4", { class: "stage-path-title", text: "阶段路径" }));
+  wrap.append(element("h4", { class: "stage-path-title", text: "阶段内工作流（实际运行）" }));
+  if (!stage || !stageWorkflowWindow(events, stage).length) {
+    wrap.append(element("p", {
+      class: "stage-workflow-empty",
+      "data-testid": "stage-workflow-empty",
+      text: "该阶段尚未开始（暂无实际执行记录）",
+    }));
+    const host = element("div", {
+      class: "stage-workflow-diagram",
+      "data-testid": "stage-workflow-diagram",
+    });
+    wrap.append(host);
+    return wrap;
+  }
+  wrap.append(element("p", {
+    class: "stage-workflow-summary",
+    "data-testid": "stage-workflow-summary",
+    text: `${stage} · ${stageWorkflowSummary(detail, events, stage)}`,
+  }));
   const host = element("div", {
-    class: "stage-path-diagram",
-    "data-testid": "stage-path-diagram",
+    class: "stage-workflow-diagram",
+    "data-testid": "stage-workflow-diagram",
   });
   wrap.append(host);
-  void renderStagePathDiagram(host, detail, events, stages);
-  const chain = stagePathEvents(detail, events);
-  if (chain) wrap.append(chain);
+  const source = stageWorkflowSource(detail, events, stage);
+  if (source) {
+    void renderStageWorkflowDiagram(host, source);
+  } else {
+    host.textContent = "该阶段尚未开始（暂无实际执行记录）";
+  }
   return wrap;
 }
 
-/** The current stage's event path: window events in time order as a
- * vertical ``↓`` chain of ``(中文标签 · 本地时间)`` chips, heartbeats cut,
- * plus the terminal ``到达人工门`` node when the run awaits a gate (timed
- * at the window's last real event — the gate itself writes no event). */
-function stagePathEvents(detail, events) {
-  const stage = detail && detail.stage;
-  if (!stage) return null;
-  const window = stageWindowEvents(events, stage);
-  const items = window.filter(
-    (event) => !HEARTBEAT_EVENT_TYPES.has((event && event.type) || "")
-  );
-  const list = element("ol", {
-    class: "stage-path-events",
-    "data-testid": "stage-path-events",
-  });
-  let lastTs = null;
-  items.forEach((event, index) => {
-    if (index > 0) {
-      list.append(element("li", {
-        class: "stage-path-sep",
-        "aria-hidden": "true",
-        text: "↓",
-      }));
-    }
-    if (event && event.ts) lastTs = event.ts;
-    list.append(element("li", {
-      class: "stage-path-event",
-      text: `${stageEventLabel(event)} · ${event && event.ts ? fmtSmart(event.ts) : "-"}`,
-    }));
-  });
-  if (detail && detail.awaiting_gate) {
-    if (items.length) {
-      list.append(element("li", {
-        class: "stage-path-sep",
-        "aria-hidden": "true",
-        text: "↓",
-      }));
-    }
-    list.append(element("li", {
-      class: "stage-path-event stage-path-gate",
-      text: `到达人工门 · ${lastTs ? fmtSmart(lastTs) : "-"}`,
-    }));
-  }
-  if (!list.children.length) return null;
-  return list;
+/** Update the carousel buttons' visibility from the viewport scroll
+ * position: prev hides at the left edge, next hides at the right edge.
+ * The buttons stay in the DOM (hidden only) for stable testids. */
+function updateTrackButtons(viewport, prev, next) {
+  if (!viewport || !prev || !next) return;
+  const max = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+  const left = viewport.scrollLeft || 0;
+  prev.hidden = left <= TRACK_EDGE_TOLERANCE_PX;
+  next.hidden = left >= max - TRACK_EDGE_TOLERANCE_PX;
 }
 
 function stageTrack(stages, events, detail) {
+  const wrap = element("div", {
+    class: "stage-track-carousel",
+    "data-testid": "stage-track-carousel",
+  });
+  const prev = element("button", {
+    type: "button",
+    class: "stage-track-nav stage-track-prev",
+    "data-testid": "stage-track-prev",
+    "aria-label": "上一段",
+    text: "‹",
+  });
+  const viewport = element("div", {
+    class: "stage-track-viewport",
+    "data-testid": "stage-track-viewport",
+  });
+  const next = element("button", {
+    type: "button",
+    class: "stage-track-nav stage-track-next",
+    "data-testid": "stage-track-next",
+    "aria-label": "下一段",
+    text: "›",
+  });
   const track = element("ol", {
     class: "stage-track stage-track-horizontal",
     "data-testid": "timeline-stage-order",
@@ -853,15 +1097,66 @@ function stageTrack(stages, events, detail) {
   if (!stages.length) {
     track.append(element("li", { class: "stage-node", text: "no stages" }));
   }
-  // §1l.1: the initial view focuses the active node and keeps its
-  // neighbourhood reachable (all history stays navigable). The pane opens
-  // on the active node's detail (or the gate action panel when awaiting)
-  // WITHOUT marking it selected — 选中查看 and 当前活跃 are two markers.
-  const activeNode = track.querySelector('[data-active="true"]');
-  if (activeNode && typeof activeNode.scrollIntoView === "function") {
-    activeNode.scrollIntoView({ block: "center" });
+  // §1l.1: the initial view centers the active node inside the viewport
+  // and keeps its neighbourhood reachable (all history stays navigable).
+  // The pane opens on the active node's detail (or the gate action panel
+  // when awaiting) WITHOUT marking it selected — 选中查看 and 当前活跃
+  // are two markers.
+  viewport.append(track);
+  wrap.append(prev, viewport, next);
+  let userNavigated = false;
+  const centerActive = () => {
+    const activeNode = track.querySelector('[data-active="true"]');
+    if (!activeNode) return;
+    const nr = activeNode.getBoundingClientRect();
+    const vr = viewport.getBoundingClientRect();
+    const delta = (nr.left + nr.width / 2) - (vr.left + vr.width / 2);
+    const max = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollLeft = Math.max(0, Math.min(viewport.scrollLeft + delta, max));
+  };
+  prev.addEventListener("click", () => {
+    userNavigated = true;
+    viewport.scrollBy({ left: -viewport.clientWidth * TRACK_SCROLL_RATIO, behavior: "smooth" });
+  });
+  next.addEventListener("click", () => {
+    userNavigated = true;
+    viewport.scrollBy({ left: viewport.clientWidth * TRACK_SCROLL_RATIO, behavior: "smooth" });
+  });
+  viewport.addEventListener("scroll", () => updateTrackButtons(viewport, prev, next), { passive: true });
+  viewport.addEventListener("wheel", () => { userNavigated = true; }, { passive: true });
+  viewport.addEventListener("pointerdown", () => { userNavigated = true; }, { passive: true });
+  viewport.addEventListener("touchstart", () => { userNavigated = true; }, { passive: true });
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(() => {
+      centerActive();
+      updateTrackButtons(viewport, prev, next);
+    });
+  } else {
+    centerActive();
+    updateTrackButtons(viewport, prev, next);
   }
-  return track;
+  if (typeof globalThis.ResizeObserver === "function") {
+    try {
+      const observer = new globalThis.ResizeObserver(() => updateTrackButtons(viewport, prev, next));
+      observer.observe(viewport);
+    } catch (error) {
+      globalThis.addEventListener("resize", () => updateTrackButtons(viewport, prev, next));
+    }
+    try {
+      const trackObserver = new globalThis.ResizeObserver(() => {
+        if (userNavigated) return;
+        centerActive();
+        updateTrackButtons(viewport, prev, next);
+      });
+      trackObserver.observe(track);
+    } catch (error) {
+      /* track re-centering unavailable — initial rAF centering still applies */
+    }
+  } else {
+    globalThis.addEventListener("resize", () => updateTrackButtons(viewport, prev, next));
+  }
+  updateTrackButtons(viewport, prev, next);
+  return wrap;
 }
 
 function acChainList(acChain) {
@@ -920,7 +1215,14 @@ function selectNode(node, stage, detail, events) {
       }
     }
     stopAgentSessionPoll();
-    host.replaceChildren(nodeDetail(stage, detail, events));
+    // the pane rebuilds around the SELECTED stage: node detail + that
+    // stage's actual workflow + the return pointer (the gate panel yields
+    // to the selected node's face — same mount, no overlay).
+    host.replaceChildren(
+      nodeDetail(stage, detail, events),
+      stagePathPanel(detail, events, stage),
+      returnPointer(detail),
+    );
   }
 }
 
@@ -1225,18 +1527,19 @@ function detailPane(detail, events, stages) {
     pane.append(gateActionPanel(detail, gate));
     // the awaiting stage is still the run's current working stage: its
     // agent session block rides below the gate panel (the poll flips it to
-    // the awaiting face on its first answer). The static stage-path graph
-    // rides after the session block, before the return pointer.
+    // the awaiting face on its first answer). The selected/current stage's
+    // actual workflow graph rides after the session block, before the
+    // return pointer.
     if (detail && detail.run_id && detail.stage) {
       pane.append(agentSessionBlock(detail));
     }
-    pane.append(stagePathPanel(detail, events, stages));
+    pane.append(stagePathPanel(detail, events, detail && detail.stage));
   } else {
     const stage = (detail && detail.stage) || "";
     pane.append(nodeDetail(stage, detail, events));
-    // node detail branch: the static stage-path graph rides after the
-    // detail content, before the return pointer.
-    pane.append(stagePathPanel(detail, events, stages));
+    // node detail branch: the selected/current stage's actual workflow
+    // graph rides after the detail content, before the return pointer.
+    pane.append(stagePathPanel(detail, events, stage));
   }
   pane.append(returnPointer(detail));
   return pane;
