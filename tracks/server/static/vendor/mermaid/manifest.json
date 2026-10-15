@@ -1,0 +1,11 @@
+{
+  "files": {
+    "LICENSE": "sha256:ec9fb67dcb25eccc416ed56e1aab819222c805a2a4bfe4cb19e7556bf2ffde80",
+    "mermaid.min.js": "sha256:18327bef70d96fb505fe7287d9f6a7362ebf07ff6576ddfaffb1a06f3e1a2954"
+  },
+  "license": "MIT",
+  "name": "mermaid",
+  "purpose": "stage-path diagram renderer (OOB)",
+  "source": "https://registry.npmjs.org/mermaid/-/mermaid-11.16.1.tgz",
+  "version": "11.16.1"
+}

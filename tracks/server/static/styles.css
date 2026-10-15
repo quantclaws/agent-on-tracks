@@ -1248,6 +1248,67 @@ textarea {
   font-weight: 600;
 }
 
+/* -- run timeline: stage-path mermaid diagram (OOB 阶段路径图, display only) --- */
+/* The detail pane's stage-path graph: a rendered mermaid stateDiagram (flow.md
+   style) plus the current stage's vertical event chain. The diagram host
+   never overflows its container; the SVG scales to the pane width. */
+
+.stage-path {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border);
+}
+
+.stage-path-title {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.stage-path-diagram {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 var(--s-3);
+}
+
+.stage-path-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.stage-path-events {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage-path-event {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
+.stage-path-sep {
+  padding-left: var(--s-3);
+  color: var(--fg-subtle);
+  font-size: var(--fs-caption);
+  user-select: none;
+}
+
+.stage-path-gate {
+  border-color: var(--warn);
+  color: var(--warn);
+  font-weight: 600;
+}
+
 .node-overlay {
   margin-top: var(--s-4);
   padding: var(--s-3);

@@ -121,6 +121,182 @@ function fmtClock(iso) {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+/** Smart local time: same-day stamps show ``HH:mm:ss`` only; stamps from
+ * another local day (or unparseable input) show the ``fmtTs`` date + clock
+ * so cross-day ranges stay unambiguous. Always carries ``HH:mm:ss``. */
+export function fmtSmart(iso) {
+  if (!iso) return "-";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) return fmtClock(iso);
+  return fmtTs(iso);
+}
+
+// Canonical 13-stage display order (flow.md §1): the pipeline strip falls
+// back to this when the server stage_order is missing/empty. The live face
+// prefers the server-delivered stage_order (never hardcodes when present).
+const STAGE_PATH_ORDER = [
+  "M-START",
+  "M-STORY",
+  "M-SPEC",
+  "M-ACC",
+  "M-REQ-APPROVAL",
+  "M-DESIGN",
+  "M-TEST",
+  "M-IMPL",
+  "M-VERIFY",
+  "M-SECURITY",
+  "M-RELEASE",
+  "M-PUBLISH",
+  "M-MILESTONE",
+];
+
+// Mermaid lazy loader (mirrors docs.js loadVditor): module-level promise
+// over the same-origin vendored asset; a failed load resets so it retries.
+let mermaidRequest = null;
+let mermaidInitialized = false;
+let stagePathDiagramSeq = 0;
+
+export function loadMermaid() {
+  if (globalThis.mermaid) return Promise.resolve(globalThis.mermaid);
+  if (!mermaidRequest) {
+    mermaidRequest = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/static/vendor/mermaid/mermaid.min.js";
+      script.async = true;
+      script.onload = () => {
+        if (globalThis.mermaid) resolve(globalThis.mermaid);
+        else reject(new Error("Mermaid did not initialise"));
+      };
+      script.onerror = () => reject(new Error("Mermaid asset unavailable"));
+      document.head.append(script);
+    });
+    mermaidRequest.catch(() => {
+      mermaidRequest = null; // a failed load may be retried later
+    });
+  }
+  return mermaidRequest;
+}
+
+// Mermaid-safe text: strip characters that break stateDiagram parsing.
+// Stage descriptions carry only stage names/times/state words, but the
+// filter stays as a guard (e.g. `trac install <path>` style text).
+function sanitizeMermaidText(text) {
+  return String(text === undefined || text === null ? "" : text)
+    .replace(/\r?\n/g, " ")
+    .replace(/"/g, "'")
+    .replace(/</g, "＜")
+    .replace(/>/g, "＞")
+    .replace(/;/g, "；")
+    .replace(/#/g, "＃")
+    .replace(/[{}]/g, "")
+    .trim();
+}
+
+/** Build the stage-path ``stateDiagram-v2`` source (flow.md style:
+ * ``direction TB`` + ``state "label" as id`` + ``id : description``)
+ * from real run data. Alias ids (``s1..sN``) keep the ``M-`` hyphens out
+ * of the grammar; order arrows follow the canonical sequence; rollback
+ * edges ride ``sb --> sa : 回退``; state classes ride the four classDefs.
+ */
+export function stagePathSource(detail, events, stages) {
+  const order = Array.isArray(stages) && stages.length ? stages : STAGE_PATH_ORDER;
+  const list = Array.isArray(events) ? events : [];
+  const facts = foldStageFacts(list);
+  const ids = new Map(order.map((stage, index) => [stage, `s${index + 1}`]));
+  const lines = ["stateDiagram-v2", "direction TB"];
+  for (const stage of order) {
+    lines.push(`state "${sanitizeMermaidText(stage)}" as ${ids.get(stage)}`);
+  }
+  if (order.length) {
+    lines.push(`[*] --> ${ids.get(order[0])}`);
+    for (let index = 1; index < order.length; index += 1) {
+      lines.push(`${ids.get(order[index - 1])} --> ${ids.get(order[index])}`);
+    }
+  }
+  for (const stage of order) {
+    const id = ids.get(stage);
+    const state = nodeStateOf(stage, detail, facts);
+    const entered = firstStageEvent(list, "stage.entered", stage);
+    const exited = firstStageEvent(list, "stage.exited", stage);
+    const isCurrent = !!detail && detail.stage === stage;
+    const awaiting = isCurrent && !!(detail && detail.awaiting_gate);
+    if (state === "done") {
+      if (entered) {
+        lines.push(`${id} : ${sanitizeMermaidText(`✓ 进入 ${fmtSmart(entered.ts)}`)}`);
+      }
+      if (exited) {
+        lines.push(`${id} : ${sanitizeMermaidText(`离开 ${fmtSmart(exited.ts)}`)}`);
+      }
+      if (!entered && !exited) {
+        lines.push(`${id} : ${sanitizeMermaidText("✓ 已完成")}`);
+      }
+    } else if (isCurrent) {
+      if (entered) {
+        lines.push(`${id} : ${sanitizeMermaidText(`● 进入 ${fmtSmart(entered.ts)}`)}`);
+      } else {
+        lines.push(`${id} : ${sanitizeMermaidText("● 当前阶段")}`);
+      }
+      const words = [];
+      if (detail && detail.substate) words.push(String(detail.substate));
+      words.push(awaiting ? "等待人工裁决" : "进行中");
+      lines.push(`${id} : ${sanitizeMermaidText(words.join(" · "))}`);
+      if (awaiting) {
+        const elapsed = waitingElapsed(lastBusinessEvent(list));
+        if (elapsed && elapsed !== "—") {
+          lines.push(`${id} : ${sanitizeMermaidText(`（已等 ${elapsed}）`)}`);
+        }
+      }
+    } else if (state === "void") {
+      lines.push(`${id} : ${sanitizeMermaidText("✕ 已回退")}`);
+    } else {
+      lines.push(`${id} : ${sanitizeMermaidText("待开始")}`);
+    }
+  }
+  for (const edge of facts.backEdges || []) {
+    if (edge && edge.from && edge.to && ids.has(edge.from) && ids.has(edge.to)) {
+      lines.push(`${ids.get(edge.from)} --> ${ids.get(edge.to)} : 回退`);
+    }
+  }
+  lines.push("classDef done fill:#e8f5e9,stroke:#2e7d32,color:#1e4620");
+  lines.push("classDef current fill:#fff4e5,stroke:#f5a623,stroke-width:2px,color:#7a4d00");
+  lines.push("classDef pending fill:#f7f7f7,stroke:#d0d0d0,color:#9a9a9a");
+  lines.push("classDef void fill:#fdecea,stroke:#d93025,color:#8a1c14");
+  for (const stage of order) {
+    const state = nodeStateOf(stage, detail, facts);
+    const mermaidClass =
+      state === "active" || state === "attention" ? "current" : state;
+    lines.push(`class ${ids.get(stage)} ${mermaidClass}`);
+  }
+  return lines.join("\n");
+}
+
+/** Render the stage-path source into ``host`` as inline SVG. Never throws:
+ * a failed load or render degrades to a retry line in place. */
+async function renderStagePathDiagram(host, detail, events, stages) {
+  const source = stagePathSource(detail, events, stages);
+  try {
+    const mermaid = await loadMermaid();
+    if (!mermaidInitialized) {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+      mermaidInitialized = true;
+    }
+    stagePathDiagramSeq += 1;
+    const graphId = `stage-path-diagram-${stagePathDiagramSeq}`;
+    const output = await mermaid.render(graphId, source);
+    const svg = typeof output === "string" ? output : output && output.svg;
+    if (!svg) throw new Error("empty render");
+    host.innerHTML = svg;
+  } catch (error) {
+    host.textContent = "（阶段图渲染失败，稍后重试）";
+  }
+}
+
 export function stageOrder(timeline) {
   return timeline && Array.isArray(timeline.stage_order) ? timeline.stage_order : [];
 }
@@ -244,7 +420,7 @@ export function renderTimelineView(body, context = {}) {
       class: "detail-panel",
       "data-testid": "detail-panel",
     });
-    lower.append(detailPane(detail, events));
+    lower.append(detailPane(detail, events, stageOrder(timeline)));
     body.append(lower);
     return null;
   })();
@@ -434,6 +610,174 @@ function nodeStateOf(stage, detail, facts) {
     return gate ? "attention" : "active";
   }
   return facts.entered.has(stage) ? "done" : "pending";
+}
+
+/** Resolve an event's stage across slim + full timeline rows (the slim
+ * projection lifts ``payload.stage`` onto ``event.stage``; full rows keep
+ * it inside the payload). Never fabricates — null when neither carries it.
+ */
+function stageOf(event) {
+  if (!event) return null;
+  if (event.stage) return event.stage;
+  const payload = event.payload;
+  if (payload && payload.stage) return payload.stage;
+  return null;
+}
+
+/** First ``type`` event for ``stage`` (entered/exited); null when the run
+ * never recorded one — the chip then shows no time rather than inventing.
+ */
+function firstStageEvent(events, type, stage) {
+  for (const event of events || []) {
+    if (event && event.type === type && stageOf(event) === stage) return event;
+  }
+  return null;
+}
+
+/** Events of the run's current stage window: from the first
+ * ``stage.entered(stage)`` to the next foreign ``stage.entered`` (or end).
+ * Window attribution (not per-event stage match) because the slim timeline
+ * strips ``command.issued``/``outcome.received`` payloads to ``{}`` — their
+ * stage lives only in ordering, and the window recovers it honestly.
+ */
+function stageWindowEvents(events, stage) {
+  const list = Array.isArray(events) ? events : [];
+  let start = -1;
+  for (let index = 0; index < list.length; index += 1) {
+    const event = list[index];
+    if (event && event.type === "stage.entered" && stageOf(event) === stage) {
+      start = index;
+      break;
+    }
+  }
+  if (start < 0) return [];
+  let end = list.length;
+  for (let index = start + 1; index < list.length; index += 1) {
+    const event = list[index];
+    const entered = stageOf(event);
+    if (event && event.type === "stage.entered" && entered && entered !== stage) {
+      end = index;
+      break;
+    }
+  }
+  return list.slice(start, end);
+}
+
+/** ``command.issued`` readable label: ``下达指令 Scribe / TRIAGE #1`` from
+ * ``payload.command.params`` when present (full timeline); the slim face
+ * strips that payload, so ``task_id`` (``run:substate:round:attempt``)
+ * degrades to the substate only — role/attempt stay absent rather than
+ * invented. Base label alone when neither source exists. */
+function commandIssuedLabel(event) {
+  const base = EVENT_LABELS["command.issued"] || "command.issued";
+  const params =
+    (event && event.payload && event.payload.command && event.payload.command.params) ||
+    (event && event.payload && event.payload.params) ||
+    null;
+  let role = params && params.role !== undefined ? params.role : undefined;
+  let substate = params && params.substate !== undefined ? params.substate : undefined;
+  let attempt = params && params.attempt !== undefined ? params.attempt : undefined;
+  if (substate === undefined && event && typeof event.task_id === "string") {
+    // task_id form ``run_id:SUBSTATE:review_round:attempt`` (run_loop.issue).
+    const parts = event.task_id.split(":");
+    if (parts.length >= 4) substate = parts[parts.length - 3];
+  }
+  if (attempt === undefined && event && event.attempt !== undefined && event.attempt !== null) {
+    attempt = event.attempt;
+  }
+  const segments = [];
+  if (role !== undefined && role !== null && role !== "") {
+    const text = String(role);
+    segments.push(text.charAt(0).toUpperCase() + text.slice(1));
+  }
+  if (substate !== undefined && substate !== null && substate !== "") {
+    segments.push(String(substate));
+  }
+  let text = base;
+  if (segments.length) text += ` ${segments.join(" / ")}`;
+  if (attempt !== undefined && attempt !== null && attempt !== "") {
+    text += ` #${attempt}`;
+  }
+  return text;
+}
+
+/** One window event's readable label: mapped Chinese label, the
+ * ``command.issued`` dispatch shape, or the raw type for unknown kinds
+ * (never skipped — only heartbeats are). */
+function stageEventLabel(event) {
+  const type = (event && event.type) || "unknown";
+  if (type === "command.issued") return commandIssuedLabel(event);
+  const label = EVENT_LABELS[type];
+  if (label) return label;
+  return type;
+}
+
+/** Static stage-path graph (no interaction): the canonical pipeline as a
+ * rendered mermaid ``stateDiagram-v2`` (flow.md style) plus the current
+ * stage's event chain. Pure display over the already loaded ``detail`` +
+ * ``events`` — no new data source, no timers. */
+function stagePathPanel(detail, events, stages) {
+  const wrap = element("section", {
+    class: "stage-path",
+    "data-testid": "stage-path",
+  });
+  wrap.append(element("h4", { class: "stage-path-title", text: "阶段路径" }));
+  const host = element("div", {
+    class: "stage-path-diagram",
+    "data-testid": "stage-path-diagram",
+  });
+  wrap.append(host);
+  void renderStagePathDiagram(host, detail, events, stages);
+  const chain = stagePathEvents(detail, events);
+  if (chain) wrap.append(chain);
+  return wrap;
+}
+
+/** The current stage's event path: window events in time order as a
+ * vertical ``↓`` chain of ``(中文标签 · 本地时间)`` chips, heartbeats cut,
+ * plus the terminal ``到达人工门`` node when the run awaits a gate (timed
+ * at the window's last real event — the gate itself writes no event). */
+function stagePathEvents(detail, events) {
+  const stage = detail && detail.stage;
+  if (!stage) return null;
+  const window = stageWindowEvents(events, stage);
+  const items = window.filter(
+    (event) => !HEARTBEAT_EVENT_TYPES.has((event && event.type) || "")
+  );
+  const list = element("ol", {
+    class: "stage-path-events",
+    "data-testid": "stage-path-events",
+  });
+  let lastTs = null;
+  items.forEach((event, index) => {
+    if (index > 0) {
+      list.append(element("li", {
+        class: "stage-path-sep",
+        "aria-hidden": "true",
+        text: "↓",
+      }));
+    }
+    if (event && event.ts) lastTs = event.ts;
+    list.append(element("li", {
+      class: "stage-path-event",
+      text: `${stageEventLabel(event)} · ${event && event.ts ? fmtSmart(event.ts) : "-"}`,
+    }));
+  });
+  if (detail && detail.awaiting_gate) {
+    if (items.length) {
+      list.append(element("li", {
+        class: "stage-path-sep",
+        "aria-hidden": "true",
+        text: "↓",
+      }));
+    }
+    list.append(element("li", {
+      class: "stage-path-event stage-path-gate",
+      text: `到达人工门 · ${lastTs ? fmtSmart(lastTs) : "-"}`,
+    }));
+  }
+  if (!list.children.length) return null;
+  return list;
 }
 
 function stageTrack(stages, events, detail) {
@@ -868,7 +1212,7 @@ function owningSurfaceEntry() {
  * is the awaiting action panel (§1k.3) plus the return confirm face
  * (§1m). Never a floating overlay: a plain section below the track.
  */
-function detailPane(detail, events) {
+function detailPane(detail, events, stages) {
   const pane = element("section", {
     class: "detail-pane",
     "data-testid": "detail-pane",
@@ -881,13 +1225,18 @@ function detailPane(detail, events) {
     pane.append(gateActionPanel(detail, gate));
     // the awaiting stage is still the run's current working stage: its
     // agent session block rides below the gate panel (the poll flips it to
-    // the awaiting face on its first answer).
+    // the awaiting face on its first answer). The static stage-path graph
+    // rides after the session block, before the return pointer.
     if (detail && detail.run_id && detail.stage) {
       pane.append(agentSessionBlock(detail));
     }
+    pane.append(stagePathPanel(detail, events, stages));
   } else {
     const stage = (detail && detail.stage) || "";
     pane.append(nodeDetail(stage, detail, events));
+    // node detail branch: the static stage-path graph rides after the
+    // detail content, before the return pointer.
+    pane.append(stagePathPanel(detail, events, stages));
   }
   pane.append(returnPointer(detail));
   return pane;
