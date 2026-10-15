@@ -1079,7 +1079,7 @@ def _timeline_rows(
         parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
         if slim:
-            parsed = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+            parsed = _slim_payload(type_, parsed)
         rows.append(
             {
                 "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
@@ -1098,10 +1098,46 @@ def _event_ac_refs(payload: dict) -> list[str]:
     return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
 
 
-# Timeline slim mode: the client (timeline.js foldStageFacts) needs only the
-# five stage-derivation keys; the 30KB–2.2MB evidence blobs never contribute
-# them (737 $ref rows in the reference run carry no stage, 8 carry attempt).
-_SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason"})
+# Timeline slim mode: the client (timeline.js foldStageFacts + the stage
+# workflow diagram) needs only the stage-derivation keys plus the small
+# workflow scalars (round/verdict/decision/action/check/final/commit_sha)
+# and the dispatch identity (command.kind + a small params subset); the
+# 30KB–2.2MB evidence blobs never contribute them (737 $ref rows in the
+# reference run carry no stage, 8 carry attempt).
+_SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
+    "round", "verdict", "decision", "action", "check", "final", "commit_sha",
+    "area", "next"})
+
+# command.issued params allowlist for slim mode: the dispatch identity the
+# stage workflow diagram renders (role/substate/attempt/review_round/…).
+# Only keys actually present are kept; everything else stays discarded.
+_SLIM_COMMAND_PARAM_KEYS = frozenset({"role", "substate", "attempt", "review_round",
+    "decision", "doc", "objective", "stage", "base", "branch_name"})
+
+
+def _slim_payload(type_: str, parsed: dict) -> dict:
+    """Whitelisted slim payload for one event (slim branch only).
+
+    Top-level scalars keep _SLIM_KEYS; a ``command.issued`` row additionally
+    keeps ``command.kind`` + the _SLIM_COMMAND_PARAM_KEYS subset of
+    ``command.params``. All other shapes (incl. service-plane command rows
+    with the same structure) fall through to the scalar whitelist.
+    """
+    slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+    if type_ == "command.issued":
+        command = parsed.get("command")
+        if isinstance(command, dict):
+            kept: dict = {}
+            if "kind" in command:
+                kept["kind"] = command["kind"]
+            params = command.get("params")
+            if isinstance(params, dict):
+                small = {key: params[key] for key in _SLIM_COMMAND_PARAM_KEYS if key in params}
+                if small:
+                    kept["params"] = small
+            if kept:
+                slim["command"] = kept
+    return slim
 
 
 def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
@@ -1134,7 +1170,7 @@ def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
                     "payload_ref": str(parsed["$ref"]),
                 })
             continue
-        slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+        slim = _slim_payload(type_, parsed)
         slim_rows.append(
             {
                 "source": "tracks", "seq": seq, "ts": ts, "type": type_,
