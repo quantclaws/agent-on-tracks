@@ -425,19 +425,26 @@ def _name_collected(conn: sqlite3.Connection) -> bool:
 
 
 class _AppModulesNoCache:
-    """``Cache-Control: no-cache`` on the SPA's own ES modules.
+    """``Cache-Control: no-cache`` on the SPA's own static text assets.
 
-    Without it a browser heuristic-caches the modules, and after a deploy a
-    plain reload keeps running the previous app — a fix ships and the user
-    still sees the old behaviour. ``no-cache`` still revalidates via ETag
-    (unchanged files answer 304), so the cost is one revalidation per module.
+    Without it a browser heuristic-caches the modules and the stylesheet,
+    and after a deploy a plain reload keeps running the previous app — a
+    fix ships and the user still sees the old behaviour (JS fresh, CSS
+    stale). ``no-cache`` still revalidates via ETag (unchanged files answer
+    304), so the cost is one revalidation per asset. Only ``/static/``
+    paths match — API routes are never affected.
     """
+
+    _TEXT_SUFFIXES = (".css", ".js", ".mjs", ".html", ".json", ".txt", ".map")
 
     def __init__(self, app: Any) -> None:
         self._app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and str(scope.get("path", "")).startswith("/static/app/"):
+        path = str(scope.get("path", "")) if scope.get("type") == "http" else ""
+        if path.startswith("/static/app/") or (
+            path.startswith("/static/") and path.endswith(self._TEXT_SUFFIXES)
+        ):
             from starlette.datastructures import MutableHeaders
 
             async def send_no_cache(message: Any) -> None:
