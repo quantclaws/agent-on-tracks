@@ -356,6 +356,7 @@ textarea {
   border-radius: var(--radius);
   font-size: var(--fs-body);
   color: var(--fg);
+  overflow-wrap: anywhere;
 }
 
 .project-row:hover,
@@ -1015,6 +1016,17 @@ textarea {
   font-size: var(--fs-body);
 }
 
+/* OOB 可读性：等待人工门时 card-action 用警告色（边框+底衬托，
+   文字直接用 var(--warn) 以满足 computed color 判据）。 */
+.card-action-awaiting {
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  padding: 2px var(--s-2);
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
 .timeline {
   display: block;
 }
@@ -1223,6 +1235,17 @@ textarea {
 .ac-chain {
   margin: 0 0 var(--s-3);
   padding-left: var(--s-5);
+}
+
+/* OOB 可读性：门面板状态行用警告色 chip。 */
+.gate-status {
+  display: inline-block;
+  padding: 2px var(--s-2);
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  color: var(--warn);
+  background: var(--bg);
+  font-weight: 600;
 }
 
 .node-overlay {

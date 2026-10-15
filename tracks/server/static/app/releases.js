@@ -545,7 +545,7 @@ export async function renderReleasesView(body, context = {}) {
   // The sidebar always renders the full three groups (never an empty node
   // list): the registry stays the switcher between runs (§1e.1), the
   // focused node carries the selected face and its version group expands.
-  const { runRowLabel } = await import("./views.js");
+  const { runRowFullLabel } = await import("./views.js");
   const sidebar = renderSidebar({
     title: "releases",
     nodes: [],
@@ -565,7 +565,7 @@ export async function renderReleasesView(body, context = {}) {
   void mountPendingIntakes(body, pid);
   await renderTimelineView(body, {
     runId: focusedId,
-    runTitle: known ? runRowLabel(known) : undefined,
+    runTitle: known ? runRowFullLabel(known) : undefined,
   });
   return null;
 }

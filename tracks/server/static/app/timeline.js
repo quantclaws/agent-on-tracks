@@ -46,6 +46,51 @@ const GATE_ACTIONS = [
   "guidance",
 ];
 
+// 英文事件类型→中文可读标签（OOB 可读性：最近事件行不再显示裸 type）。
+const EVENT_LABELS = {
+  "run.started": "运行开始",
+  "stage.entered": "进入阶段",
+  "stage.exited": "离开阶段",
+  "branch.created": "创建发布分支",
+  "command.issued": "下达指令",
+  "command.accepted": "指令已受理",
+  "dispatch.parity": "派发一致性核对完成",
+  "outcome.received": "收到执行结果",
+  "lease.acquired": "监督进程运行中（租约心跳）",
+  "lease.released": "监督进程释放租约",
+  "verdict.passed": "校验通过",
+  "verdict.failed": "校验未通过",
+  "run.completed": "运行完成",
+  "triage.recorded": "triage 裁决已记录",
+};
+
+// 服务心跳事件（合并流每 ~5s 一次）：card-action 的“已等 X”以前一个
+// 非心跳业务事件为起点，避免常年显示心跳。
+const HEARTBEAT_EVENT_TYPES = new Set([
+  "lease.acquired",
+  "lease.released",
+  "command.accepted",
+]);
+
+// 门面板可读标签（OOB 可读性：唯一主要动作 + 决策按钮双语）。
+const PRIMARY_ACTION_LABELS = {
+  "triage": "triage 裁决",
+  "review": "评审",
+  "approve": "批准",
+  "release-decision": "发布决策",
+  "retry": "重试",
+};
+
+const DECISION_LABELS = {
+  "go": "通过（go）",
+  "no_go": "不通过（no_go）",
+  "park": "搁置（park）",
+  "comment": "留意见（comment）",
+  "no_comment": "无意见（no_comment）",
+  "delay": "延期（delay）",
+  "release": "发布（release）",
+};
+
 // The rendered run timeline is the only event-stream consumer: one handle
 // per rendered face, released when another face renders.
 const detailStreams = new Map(); // runId -> handle (the rendered timeline)
@@ -210,10 +255,15 @@ function eventsOf(timeline) {
 }
 
 function lastEventText(event) {
-  if (!event) return "no events yet";
+  if (!event) return "最近事件：暂无";
   const type = event.type || "unknown";
+  const label = EVENT_LABELS[type];
+  const stage = event.stage ? ` · ${event.stage}` : "";
+  if (label) {
+    return `最近事件：${label}${stage}`;
+  }
   const summary = event.summary && event.summary !== type ? ` (${event.summary})` : "";
-  return `${type}${summary}`;
+  return `最近事件：${type}${summary}${stage}`;
 }
 
 /** The project+version of a run (the docs-centre faces are project-domain:
@@ -242,21 +292,37 @@ async function resolveRunProject(runId) {
 /** The rolling summary card above the track (unchanged v0.10 face). */
 function currentCard(detail, events, state) {
   const firstTs = events.length ? events[0].ts : null;
+  const ownerRaw = ownerRawOf(detail);
+  const ownerDisplay = ownerOf(detail);
+  const attempt = attemptCount(events);
+  const awaiting = !!(detail && detail.awaiting_gate);
+  const actionFace = actionOf(detail, state, events);
   return element("section", {
     class: "current-card",
     "data-testid": "current-node-card",
   }, [
-    span("card-owner", ownerOf(detail)),
-    span("card-attempt", String(attemptCount(events))),
-    span("card-duration", durationOf(firstTs)),
-    span("card-action", actionOf(detail, state)),
+    span("card-owner", ownerDisplay, { title: ownerRaw }),
+    span("card-attempt", `尝试 ${attempt} 次`, { title: "本 run 已发生的任务尝试次数" }),
+    span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
+    awaiting
+      ? span("card-action", actionFace.text, {
+          title: "正在等待人工处理该门",
+          class: "card-action-awaiting",
+        })
+      : span("card-action", actionFace.text),
   ]);
 }
 
-function ownerOf(detail) {
+function ownerRawOf(detail) {
   const lease = detail && detail.lease;
   const worker = lease && (lease.worker_id || lease.holder);
   return worker || "supervisor";
+}
+
+function ownerOf(detail) {
+  const raw = ownerRawOf(detail);
+  if (/^supervisor(-\d+)?$/.test(raw)) return "监管进程";
+  return raw;
 }
 
 function attemptCount(events) {
@@ -274,14 +340,56 @@ function durationOf(firstTs) {
   if (!firstTs) return "-";
   const start = Date.parse(firstTs);
   if (Number.isNaN(start)) return "-";
-  const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
-  return `${seconds}s`;
+  const total = Math.max(0, Math.round((Date.now() - start) / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts = [];
+  if (days) parts.push(`${days}天`);
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分`);
+  if (seconds) parts.push(`${seconds}秒`);
+  if (!parts.length) parts.push("0秒");
+  return `已运行 ${parts.join("")}`;
 }
 
-function actionOf(detail, state) {
+/** 等待计时的起点：最后一个非心跳业务事件；无则退回最后一个事件。 */
+function lastBusinessEvent(events) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    const type = (event && event.type) || "";
+    if (!HEARTBEAT_EVENT_TYPES.has(type)) return event;
+  }
+  return events.length ? events[events.length - 1] : null;
+}
+
+function waitingElapsed(basis) {
+  if (!basis || !basis.ts) return "—";
+  const start = Date.parse(basis.ts);
+  if (Number.isNaN(start)) return "—";
+  const total = Math.max(0, Math.round((Date.now() - start) / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts = [];
+  if (days) parts.push(`${days}天`);
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分`);
+  if (seconds || !parts.length) parts.push(`${seconds}秒`);
+  return parts.join("");
+}
+
+function actionOf(detail, state, events = []) {
+  const gate = detail && detail.awaiting_gate;
+  if (gate) {
+    const basis = lastBusinessEvent(events && events.length ? events : (state && state.last ? [state.last] : []));
+    return { text: `等待人工裁决（已等 ${waitingElapsed(basis)}）` };
+  }
   const action = (detail && detail.control_state) || (detail && detail.stage);
-  if (action) return String(action);
-  return (state.last && (state.last.type || "unknown")) || "-";
+  if (action) return { text: String(action) };
+  return { text: (state && state.last && (state.last.type || "unknown")) || "-" };
 }
 
 /**
@@ -424,7 +532,12 @@ function acChainList(acChain) {
       })
     );
   }
-  if (!rows.length) list.append(element("li", { text: "no acceptance chain yet" }));
+  if (!rows.length) {
+    list.append(element("li", {
+      class: "ac-chain-empty",
+      text: "验收链尚未开始：进入开发后，每条验收标准会在此逐条展开（AC → 测试 → 结果 → 证据）",
+    }));
+  }
   return list;
 }
 
@@ -791,14 +904,19 @@ function gateActionPanel(detail, gate) {
   });
   panel.append(
     element("p", {
+      class: "gate-status",
+      "data-testid": "gate-status",
+      text: "当前状态：等待人工裁决",
+    }),
+    element("p", {
       class: "gate-reason",
       "data-testid": "gate-reason",
-      text: `reason: ${gate.reason || "-"}`,
+      text: `原因：${gate.reason || "-"}`,
     }),
     element("p", {
       class: "gate-impact",
       "data-testid": "gate-impact",
-      text: `impact: ${gate.impact || "-"}`,
+      text: `影响：${gate.impact || "-"}`,
     })
   );
   const action = GATE_ACTIONS.includes(gate.primary_action)
@@ -955,11 +1073,13 @@ function primaryActionFace(encoded, action) {
   // (gate-action-<primary>) posting the happy-path default; the full
   // decision options ride gate-decision-* and never inflate the count.
   const wrap = element("div", { class: "gate-primary-action-wrap" });
+  const actionLabel = PRIMARY_ACTION_LABELS[action] || action;
   wrap.append(
     element("p", {
       class: "gate-primary-action",
       "data-testid": "gate-primary-action",
-      text: `primary action: ${action}`,
+      title: action,
+      text: `建议操作：${actionLabel}`,
     })
   );
   const _primaryDefaults = {
@@ -975,7 +1095,8 @@ function primaryActionFace(encoded, action) {
       type: "button",
       class: "gate-action-button gate-primary-button",
       "data-testid": `gate-action-${action}`,
-      text: action,
+      title: `${action} → ${JSON.stringify(_default[1])}`,
+      text: "执行默认动作",
     });
     primary.addEventListener("click", () => {
       requestJson(`/api/runs/${encoded}${_default[0]}`, {
@@ -991,7 +1112,8 @@ function primaryActionFace(encoded, action) {
       type: "button",
       class: "gate-action-button gate-primary-button",
       "data-testid": "gate-action-approve",
-      text: "approve",
+      title: "approve",
+      text: "执行默认动作",
     });
     primary.addEventListener("click", async () => {
       try {
@@ -1018,7 +1140,8 @@ function primaryActionFace(encoded, action) {
       type: "button",
       class: "gate-action-button gate-primary-button",
       "data-testid": "gate-action-release-decision",
-      text: "release-decision",
+      title: "release-decision",
+      text: "执行默认动作",
     });
     primary.addEventListener("click", async () => {
       try {
@@ -1058,7 +1181,8 @@ function primaryActionFace(encoded, action) {
         type: "button",
         class: "gate-action-button",
         "data-testid": `gate-decision-${choice}`,
-        text: choice,
+        title: choice,
+        text: DECISION_LABELS[choice] || choice,
       });
       btn.addEventListener("click", async () => {
         try {
@@ -1102,7 +1226,8 @@ function actionButton(encoded, path, params, label) {
     type: "button",
     class: "gate-action-button",
     "data-testid": `gate-decision-${label}`,
-    text: label,
+    title: label,
+    text: DECISION_LABELS[label] || label,
   });
   button.addEventListener("click", () => {
     requestJson(`/api/runs/${encoded}${path}`, {
@@ -1299,6 +1424,8 @@ function openReturnConfirm(box, runId, target) {
   box.append(face);
 }
 
-function span(testid, text) {
-  return element("span", { class: testid, "data-testid": testid, text });
+function span(testid, text, extra = {}) {
+  const { class: extraClass, ...rest } = extra || {};
+  const classes = extraClass ? `${testid} ${extraClass}` : testid;
+  return element("span", { class: classes, "data-testid": testid, text, ...rest });
 }

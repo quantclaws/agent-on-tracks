@@ -45,6 +45,13 @@ export function runRowLabel(run) {
   return `${chars.slice(0, RUN_ROW_MAX_CHARS).join("")}…`;
 }
 
+/** OOB 可读性：main-area 行与 run heading 用全量标签（不截断）。 */
+export function runRowFullLabel(run) {
+  const version = run.version || "unknown";
+  if (!run.title || run.title === run.run_id) return version;
+  return `${version} · ${run.title}`;
+}
+
 /** The Releases registry's two compact faces (#227): the sidebar nodes of
  * the version-grouped registry and the main-area row elements. releases.js
  * renders the window and consumes these through this seam — the releases
@@ -64,7 +71,7 @@ export function runRegistryFaces(runs) {
       class: "run-row",
       "data-testid": `registry-run-${run.run_id || "unknown"}`,
       "data-run-id": run.run_id || "",
-      text: runRowLabel(run),
+      text: runRowFullLabel(run),
     })
   );
   return { nodes, rows };
