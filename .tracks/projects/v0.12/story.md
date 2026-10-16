@@ -36,6 +36,10 @@ sha:
 > 3. 允许全局安装和指定目录安装不同版本。即，可能存在这样的情况，全局安装、更新最新版本的 tracks，但正在进行中的开发项目，仍然使用之前的版本。目前不支持开发中的项目升级
 > 4. 支持通过 trac install <path> 命令，把 tracks 安装到正在开发的项目（也可以是空目录）
 
+> **Scribe:** trac install <path> 落到非空已有项目时如何处理已有文件？A) 缺啥补啥、已有文件不覆盖（最安全、可预期）；B) 冲突即失败退出并指明手工处理。推荐 A，因为 seed 强调装到正在开发的项目，覆盖或失败都会阻塞正常使用；若选 B 则安装成功率显著降低。请 Human 确认。
+
+> **Scribe:** 全局 trac 的服务器启停语义是什么？A) 沿用现有 trac serve 前台运行（Ctrl-C/SIGTERM 停止），全局安装仅保证命令可用；B) 新增后台启停（含 daemon/autostart/log rotation）。推荐 A，因为 serve_cmd 基线明确本版无 daemon/autostart/log rotation（tracks/cli/serve_cmd.py:1-11），seed 仅说启动停止未要求后台化；若选 B 则范围显著扩大。请 Human 确认。
+
 ## 2. 用户意图
 
 - {用户想完成什么}
