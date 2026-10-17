@@ -1783,7 +1783,32 @@ const GATE_EXCEPTION_TYPES = new Set([
   "review_pending_threads",
 ]);
 
-function gateActionPanel(detail, gate) {
+// 门上待 Human 回答的讨论线程提示：gate.pending_human_threads 非空时渲染
+// 一行（data-testid="gate-pending-threads"），文本形如
+// "有 N 条待你回答的线程：T-002（install…）、T-003（serve…）"。
+// 评审门同面板显示；讨论面板的 resolved 入口只存在于 CLI/服务端
+// （trac discuss set-status resolved），web 端仅有 clarification 回复通道，
+// 故提示不写"resolved 对应线程"后半句。
+export function pendingHumanThreadsLine(gate) {
+  const threads = (gate && gate.pending_human_threads) || [];
+  if (!Array.isArray(threads) || threads.length === 0) return null;
+  const shown = threads.slice(0, 8).map((thread) => {
+    const id = (thread && thread.thread_id) || "T-???";
+    const raw = (thread && thread.snippet) || "";
+    const snippet = raw.length > 30 ? `${raw.slice(0, 30)}…` : raw;
+    return `${id}（${snippet}）`;
+  });
+  const overflow = threads.length > shown.length
+    ? `，等共 ${threads.length} 条`
+    : "";
+  return element("p", {
+    class: "gate-pending-threads",
+    "data-testid": "gate-pending-threads",
+    text: `有 ${threads.length} 条待你回答的线程：${shown.join("、")}${overflow}`,
+  });
+}
+
+export function gateActionPanel(detail, gate) {
   const runId = (detail && detail.run_id) || "";
   const encoded = encodeURIComponent(runId);
   const panel = element("div", {
@@ -1801,6 +1826,9 @@ function gateActionPanel(detail, gate) {
   const actions = element("div", { class: "gate-actions" });
   head.append(actions);
   panel.append(head);
+  // 门上待 Human 回答的讨论线程提示（OOB）：非空时渲染在 gate-status 行下方。
+  const pending = pendingHumanThreadsLine(gate);
+  if (pending) panel.append(pending);
   const gateType = (gate && gate.type) || "";
   if (GATE_EXCEPTION_TYPES.has(gateType)) {
     panel.append(

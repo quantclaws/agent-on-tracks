@@ -27,13 +27,14 @@ from typing import Any
 
 from tracks import paths
 from tracks.baseline import revision_digest
+from tracks.discuss.gate import adjudication_owner, is_human_owner
 from tracks.discuss.model import iter_comments
 from tracks.discuss.parser import parse_threads
 from tracks.executor.validation_shared import _acc_scan
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.kernel.machine import State
 from tracks.kernel.machine import project as project_state
-from tracks.kernel.stage_registry import canonical_stage_order
+from tracks.kernel.stage_registry import _STAGES, canonical_stage_order
 
 _PAUSE_REQUESTED = "run.pause_requested"
 _PAUSED = "run.paused"
@@ -594,8 +595,83 @@ def _run_branch(state: State) -> str | None:
     return None
 
 
-def _awaiting_gate(state: State) -> dict | None:
-    """The run-detail ``awaiting_gate`` field group (§1k.1) or None."""
+def _owner_is_human(owner: str, repo_path: str | None) -> bool:
+    """根评论 adjudication owner 是否为人类（单一来源）.
+
+    直接调用共享 ``tracks.discuss.gate.is_human_owner``（内部解析
+    auth display_name → git user.name → "Human"，带缓存）。
+    """
+    return bool(is_human_owner(owner, repo_path))
+
+
+def _pending_human_thread(text: str, thread: Any, repo_path: str | None) -> dict | None:
+    """一个线程归 Human 待答时返回 ``{thread_id, snippet}``，否则 None（只读）.
+
+    unresolved 判定 + ``adjudication_owner``（根评论唯一 @mention）判定；
+    解析失败不抛出，返回 None。
+    """
+    try:
+        if thread.status == "resolved":
+            return None
+        owner = adjudication_owner(text, thread.thread_id)
+    except Exception:
+        return None
+    if owner is None or not _owner_is_human(owner, repo_path):
+        return None
+    snippet = thread.snippet or (thread.root_text or "").strip()
+    return {"thread_id": thread.thread_id, "snippet": snippet}
+
+
+def _doc_pending_human_threads(doc_file: Path, repo_path: str | None) -> list[dict]:
+    """一个文档中归 Human 的 unresolved 线程（只读；缺失/解析失败 → []）."""
+    try:
+        text = doc_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    try:
+        threads = parse_threads(text)
+    except Exception:
+        return []
+    pending = []
+    for thread in threads:
+        item = _pending_human_thread(text, thread, repo_path)
+        if item is not None:
+            pending.append(item)
+    return pending
+
+
+def _stage_pending_human_threads(
+    repo_path: str | None, version: str | None, stage: str | None,
+) -> list[dict]:
+    """当前 stage 文档中归 Human 的 unresolved 线程（只读；无 doc → []）.
+
+    数据源：stage registry 的 doc 名 → 仓库内 ``.tracks/projects/<version>/<doc>``
+    （多文档 stage 取全部 docs）。解析失败的兜底不抛出，返回 []。
+    """
+    defn = _STAGES.get(stage or "")
+    if defn is None:
+        return []
+    docs = [defn.doc] if defn.doc else list(defn.docs or ())
+    if not docs or not repo_path or not version:
+        return []
+    try:
+        vdir = paths.version_dir(paths.tracks_home(Path(str(repo_path))), str(version))
+    except Exception:
+        return []
+    pending: list[dict] = []
+    for doc in docs:
+        pending.extend(_doc_pending_human_threads(vdir / doc, repo_path))
+    return pending
+
+
+def _awaiting_gate(
+    state: State, repo_path: str | None = None, version: str | None = None,
+) -> dict | None:
+    """The run-detail ``awaiting_gate`` field group (§1k.1) or None.
+
+    ``pending_human_threads`` 恒为 ``[{thread_id, snippet}]``（可能为空）：
+    当前 stage 文档中归 Human 的 unresolved 线程（只读；无 doc/解析失败 → []）。
+    """
     gate_type = _awaiting_type(state)
     if gate_type is None:
         return None
@@ -611,7 +687,9 @@ def _awaiting_gate(state: State) -> dict | None:
             f"run 停在 {stage}（{state.substate or gate_type}），该门完成前不再推进；"
             "在时间线下栏动作面板处理后自动推进到下一边界"
         ),
-        "primary_action": primary,}
+        "primary_action": primary,
+        "pending_human_threads": _stage_pending_human_threads(
+            repo_path, version, state.stage),}
 
 
 class _RunStoreView:
@@ -1009,7 +1087,9 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
             "control_state": _control_state(
                 state, events, pause_label, wait, _is_queued(conn, run_id)
             ),
-            "pause": pause, "wait": wait, "awaiting_gate": _awaiting_gate(state),
+            "pause": pause, "wait": wait,
+            "awaiting_gate": _awaiting_gate(
+                state, repo_path, state.version or version),
             "return_options": _return_options(repo_path, run_id),
             "progress": {
                 "tasks_done": state.tasks_completed, "tasks_total": state.tasks_total,

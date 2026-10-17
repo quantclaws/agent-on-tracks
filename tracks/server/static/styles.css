@@ -1306,6 +1306,17 @@ textarea {
   font-size: var(--fs-body);
 }
 
+/* OOB 门上待答线程提示：与 gate-status 同族警告色、更轻（淡底 + 左线）。 */
+.gate-pending-threads {
+  margin: var(--s-1) 0;
+  padding: var(--s-1) var(--s-2);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  color: var(--warn);
+  background: var(--bg-subtle);
+  font-size: var(--fs-body);
+}
+
 .gate-actions {
   display: inline-flex;
   align-items: center;
