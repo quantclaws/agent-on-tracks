@@ -303,13 +303,13 @@ export function createEditor({ url, revision, content, reload } = {}) {
       type: "button",
       class: "conflict-reload",
       "data-testid": "conflict-reload",
-      text: "Reload and discard",
+      text: "重载服务端版本（丢弃本地修改）",
     });
     const overwriteButton = element("button", {
       type: "button",
       class: "conflict-overwrite",
       "data-testid": "conflict-overwrite",
-      text: "Force overwrite",
+      text: "用本地修改覆盖服务端",
     });
     reloadButton.addEventListener("click", () => reloadDiscard());
     overwriteButton.addEventListener("click", () => forceOverwrite());
@@ -319,7 +319,7 @@ export function createEditor({ url, revision, content, reload } = {}) {
       [
         element("p", {
           class: "conflict-message",
-          text: "This document changed on the server. Choose how to continue.",
+          text: "文档已在服务器上更新。请选择继续方式：",
         }),
         revisionLabel,
         reloadButton,
@@ -333,9 +333,18 @@ export function createEditor({ url, revision, content, reload } = {}) {
         liveRevision = revision || "";
         revisionLabel.textContent = `server revision: ${liveRevision}`;
         panel.hidden = false;
+        panel.classList.add("conflict-attention");
+        if (typeof panel.scrollIntoView === "function") {
+          try {
+            panel.scrollIntoView({ block: "nearest" });
+          } catch (error) {
+            // scroll hint only — the panel is already unhidden
+          }
+        }
       },
       hide() {
         panel.hidden = true;
+        panel.classList.remove("conflict-attention");
       },
     };
   }

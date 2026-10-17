@@ -285,7 +285,7 @@ function createDocsWorkbench(projectId, versions) {
     const editor = pane && pane.editor;
     if (!editor) return true;
     if (editor.conflictOpen && editor.conflictOpen()) {
-      setPaneStatus(pane, "有未处理的冲突——请先在文档内二选一");
+      setPaneStatus(pane, "有未处理的冲突——请先在编辑器下方选择“重载服务端版本 / 用本地修改覆盖”（二选一）");
       return false;
     }
     const flush = editor.destroy ? await editor.destroy() : { flushed: false };

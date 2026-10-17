@@ -972,6 +972,22 @@ textarea {
   color: var(--accent-fg);
 }
 
+/* 冲突二选一面板可发现性：打开即 warning 色高亮 + 中文按钮不溢出 */
+.doc-conflict.conflict-attention {
+  border-color: var(--warn);
+  border-width: 2px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.doc-conflict .conflict-reload,
+.doc-conflict .conflict-overwrite {
+  max-width: 100%;
+  margin: 0 var(--s-2) var(--s-2) 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--lh);
+}
+
 /* -- read-only discussion overlay (§1p) ------------------------------------- */
 
 .discussion-controls {
