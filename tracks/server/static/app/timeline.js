@@ -76,9 +76,10 @@ const HEARTBEAT_EVENT_TYPES = new Set([
 const PRIMARY_ACTION_LABELS = {
   "triage": "triage 裁决",
   "review": "评审",
-  "approve": "批准",
+  "approve": "批准（approve）",
   "release-decision": "发布决策",
-  "retry": "重试",
+  "retry": "重试（retry）",
+  "guidance": "按指引处理",
 };
 
 const DECISION_LABELS = {
@@ -1948,7 +1949,7 @@ function reviewDecisionFace(detail, encoded) {
   return { _actions: [approve, ret], _body: body };
 }
 
-function primaryActionFace(encoded, action, actionsEl) {
+export function primaryActionFace(encoded, action, actionsEl) {
   // §1k.2 唯一主要动作入口: one display line (gate-primary-action, never
   // counted as a gate-action-*) below the head; the clickable buttons ride
   // the head-row actions slot (same line as gate-status).
@@ -1976,7 +1977,7 @@ function primaryActionFace(encoded, action, actionsEl) {
       class: "gate-action-button gate-primary-button",
       "data-testid": `gate-action-${action}`,
       title: `${action} → ${JSON.stringify(_default[1])}`,
-      text: "执行默认动作",
+      text: actionLabel,
     });
     primary.addEventListener("click", () => {
       requestJson(`/api/runs/${encoded}${_default[0]}`, {
@@ -1993,7 +1994,7 @@ function primaryActionFace(encoded, action, actionsEl) {
       class: "gate-action-button gate-primary-button",
       "data-testid": "gate-action-approve",
       title: "approve",
-      text: "执行默认动作",
+      text: actionLabel,
     });
     primary.addEventListener("click", async () => {
       try {
@@ -2021,7 +2022,7 @@ function primaryActionFace(encoded, action, actionsEl) {
       class: "gate-action-button gate-primary-button",
       "data-testid": "gate-action-release-decision",
       title: "release-decision",
-      text: "执行默认动作",
+      text: actionLabel,
     });
     primary.addEventListener("click", async () => {
       try {
@@ -2189,7 +2190,7 @@ function _gateAction(detail) {
  * (return-confirm-face: target + consequences + explicit confirm button);
  * confirming posts the return and the verdict face (return-verdict)
  * reflects the server's answer. */
-function returnPointer(detail) {
+export function returnPointer(detail) {
   const options = detail && detail.return_options;
   const targets = options && Array.isArray(options.targets) ? options.targets : [];
   if (!options || !options.allowed || !targets.length) {
@@ -2197,10 +2198,11 @@ function returnPointer(detail) {
       class: "return-pointer return-pointer-empty",
       "data-testid": "return-pointer",
       hidden: true,
-      text: "no return entry",
+      text: "无回退入口",
     });
   }
   const runId = encodeURIComponent((detail && detail.run_id) || "");
+  const currentStage = detail && detail.stage ? String(detail.stage) : "";
   const box = element("div", {
     class: "return-pointer",
     "data-testid": "return-pointer",
@@ -2208,18 +2210,21 @@ function returnPointer(detail) {
   box.append(
     element("p", {
       class: "return-targets",
-      text: `return targets: ${targets.map((target) => target.stage).join(", ")}`,
+      "data-testid": "return-targets",
+      text: `可回退目标：${targets.map((target) => target.stage === currentStage ? `${target.stage}（当前阶段）` : target.stage).join("、")}`,
     })
   );
   for (const target of targets) {
+    const isCurrent = target.stage === currentStage;
     const pointer = element("button", {
       type: "button",
       class: "return-pointer-button",
       "data-testid": `return-pointer-${target.stage}`,
-      text: `return to ${target.stage}`,
+      text: isCurrent ? `重做当前阶段 ${target.stage}` : `回退到 ${target.stage}`,
+      ...(isCurrent ? { title: `回到 ${target.stage} 阶段入口重新走；本阶段已产生的中间结果不保留` } : {}),
     });
     pointer.addEventListener("click", () => {
-      openReturnConfirm(box, runId, target);
+      openReturnConfirm(box, runId, target, currentStage);
     });
     box.append(pointer);
   }
@@ -2229,10 +2234,13 @@ function returnPointer(detail) {
 /** The return confirm face (§1m.2): target + already-executed
  * consequences + explicit confirmation; the verdict reflects the
  * server's answer (never a disguised undo). */
-function openReturnConfirm(box, runId, target) {
+export function openReturnConfirm(box, runId, target, currentStage) {
   const existing = box.querySelector('[data-testid="return-confirm-face"]');
   if (existing) existing.remove();
   const executed = target.already_executed || [];
+  const isCurrent = currentStage !== undefined && currentStage !== null && currentStage !== ""
+    ? target.stage === currentStage
+    : false;
   const face = element("div", {
     class: "return-confirm-face",
     "data-testid": "return-confirm-face",
@@ -2241,23 +2249,23 @@ function openReturnConfirm(box, runId, target) {
     element("p", {
       class: "return-target",
       "data-testid": "return-target",
-      text: `return target: ${target.stage}`,
+      text: isCurrent ? `回退目标：${target.stage}（重做当前阶段）` : `回退目标：${target.stage}`,
     }),
     element("p", {
       class: "return-consequences",
       "data-testid": "return-consequences",
       text: executed.length
-        ? `already executed on the way (not undone): ${executed
+        ? `路径上已执行（不撤销）：${executed
             .map((op) => `${op.operation_kind} ${op.target}`)
-            .join("; ")}`
-        : "no irreversible operations crossed",
+            .join("；")}`
+        : "无不可逆操作被跨越",
     })
   );
   const confirm = element("button", {
     type: "button",
     class: "return-confirm-button",
     "data-testid": "return-confirm-button",
-    text: `confirm return to ${target.stage}`,
+    text: isCurrent ? `确认重做 ${target.stage}` : `确认回退到 ${target.stage}`,
   });
   confirm.addEventListener("click", async () => {
     try {
@@ -2292,7 +2300,7 @@ function openReturnConfirm(box, runId, target) {
     class: "return-confirm-alias",
     "data-testid": `return-confirm-${target.stage}`,
     hidden: true,
-    text: `confirm return to ${target.stage}`,
+    text: isCurrent ? `确认重做 ${target.stage}` : `确认回退到 ${target.stage}`,
   });
   alias.removeAttribute("hidden");
   alias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
