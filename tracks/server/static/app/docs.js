@@ -354,6 +354,11 @@ function createDocsWorkbench(projectId, versions) {
     discussions = createDiscussionNav({ threads: [] });
     const reloadThreads = () =>
       loadThreads(projectId, version, docName, discussions).catch(() => null);
+    discussions.setReplyContext({
+      runId: model.editable_run_id || null,
+      doc: docName,
+      onReload: reloadThreads,
+    });
     reloadThreads();
     // The pane-bar discussion navigation (louke): ☰ opens the thread list,
     // ↯ walks threads, ! jumps unresolved-only.

@@ -993,6 +993,47 @@ textarea {
   padding-left: var(--s-4);
 }
 
+.discussion-item {
+  margin-bottom: var(--s-1);
+}
+
+.discussion-item-label {
+  margin-right: var(--s-2);
+}
+
+.discussion-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.discussion-reply-toggle {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--s-2);
+  font-size: var(--fs-caption);
+}
+
+.discussion-reply-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+}
+
+.comment-body {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--s-1);
+  font-size: var(--fs-body);
+  resize: vertical;
+}
+
+.comment-error {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--danger);
+}
+
 /* -- run timeline (§1q) ----------------------------------------------------- */
 
 /* the run's identity opens the timeline face (no main header strip) */

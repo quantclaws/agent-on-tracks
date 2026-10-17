@@ -117,11 +117,16 @@ export function createCommentComposer({ doc, runId, anchorLineOf, onLanded }) {
   return { root };
 }
 
-export function createDiscussionNav({ threads = [], onNavigate } = {}) {
+export function createDiscussionNav({ threads = [], onNavigate = null, runId = null, doc = null, onReload = null } = {}) {
   let open = false;
   let index = -1;
   let items = Array.isArray(threads) ? threads.slice() : [];
   let overlay = null;
+  let replyContext = { runId, doc, onReload };
+  // Expanded reply forms + per-thread drafts (a re-render must not drop
+  // what the user typed in another thread's box).
+  const expanded = new Set();
+  const drafts = new Map();
 
   const list = element("ul", {
     class: "discussion-list",
@@ -198,26 +203,125 @@ export function createDiscussionNav({ threads = [], onNavigate } = {}) {
     return items.length;
   }
 
+  function setReplyContext(next = {}) {
+    replyContext = {
+      runId: next.runId ?? null,
+      doc: next.doc ?? null,
+      onReload: next.onReload ?? null,
+    };
+    renderList(items);
+  }
+
   function renderList(rows, activeId) {
     list.replaceChildren();
     for (const thread of rows) {
       const id = thread.thread_id || "unknown";
-      list.append(
-        element("li", {
-          class: "discussion-item",
-          "data-testid": `discussion-thread-${id}`,
-          "data-entry-line":
-            thread.entry_line === undefined ? "" : String(thread.entry_line),
-          "aria-current": thread.thread_id === activeId ? "true" : "false",
+      const item = element("li", {
+        class: "discussion-item",
+        "data-testid": `discussion-thread-${id}`,
+        "data-entry-line":
+          thread.entry_line === undefined ? "" : String(thread.entry_line),
+        "aria-current": thread.thread_id === activeId ? "true" : "false",
+      });
+      item.append(
+        element("span", {
+          class: "discussion-item-label",
           text: `${id} - ${thread.status || "unknown"}`,
         })
       );
+      if (replyContext.runId && replyContext.doc) {
+        item.append(renderReplyControl(id));
+      }
+      list.append(item);
     }
     if (!rows.length) {
       list.append(element("li", { class: "discussion-empty", text: "No threads." }));
     }
   }
 
+  // Per-thread reply entry (OOB): a toggle button per thread expands an
+  // inline form that posts through the #18 clarification endpoint with
+  // thread_token = thread_id (service.py _apply_clarification relocates by
+  // thread_id, so the read model needs no token_str). The toggle mutates
+  // only its own item in place so an active Unresolved-only filter is kept;
+  // a server refresh (setThreads) rebuilds open forms from drafts.
+  function renderReplyControl(id) {
+    const wrap = element("span", { class: "discussion-reply" });
+    const toggleButton = element("button", {
+      type: "button",
+      class: "discussion-reply-toggle",
+      "data-testid": `discussion-reply-${id}`,
+      text: expanded.has(id) ? "收起" : "回复",
+    });
+    toggleButton.addEventListener("click", () => {
+      const existing = wrap.querySelector(".discussion-reply-form");
+      if (existing) {
+        const current = existing.querySelector("textarea");
+        if (current) drafts.set(id, current.value);
+        existing.remove();
+        expanded.delete(id);
+        toggleButton.textContent = "回复";
+      } else {
+        expanded.add(id);
+        wrap.append(renderReplyForm(id));
+        toggleButton.textContent = "收起";
+      }
+    });
+    wrap.append(toggleButton);
+    if (expanded.has(id)) wrap.append(renderReplyForm(id));
+    return wrap;
+  }
+
+  function renderReplyForm(id) {
+    const box = element("div", { class: "discussion-reply-form" });
+    const input = element("textarea", {
+      class: "comment-body",
+      "data-testid": `discussion-reply-body-${id}`,
+      "aria-label": `回复 ${id}`,
+      rows: 2,
+      placeholder: `回复 ${id}…`,
+    });
+    input.value = drafts.get(id) || "";
+    input.addEventListener("input", () => drafts.set(id, input.value));
+    const errorLine = element("p", {
+      class: "comment-error",
+      "data-testid": `discussion-reply-error-${id}`,
+      role: "alert",
+      hidden: true,
+    });
+    const submit = element("button", {
+      type: "button",
+      class: "comment-publish",
+      "data-testid": `discussion-reply-submit-${id}`,
+      text: "发表回复",
+    });
+    submit.addEventListener("click", async () => {
+      const body = input.value.trim();
+      errorLine.hidden = true;
+      if (!body) return;
+      submit.disabled = true;
+      try {
+        await submitClarification({
+          runId: replyContext.runId,
+          doc: replyContext.doc,
+          body,
+          threadToken: id,
+        });
+        drafts.delete(id);
+        expanded.delete(id);
+        if (replyContext.onReload) await replyContext.onReload();
+        else renderList(items);
+      } catch (error) {
+        errorLine.textContent = error && error.message ? error.message : String(error);
+        errorLine.hidden = false;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    box.append(input, submit, errorLine);
+    return box;
+  }
+
   renderList(items);
-  return { toggle, nextThread, unresolvedOnly, setThreads };
+  return { toggle, nextThread, unresolvedOnly, setThreads, setReplyContext };
 }
