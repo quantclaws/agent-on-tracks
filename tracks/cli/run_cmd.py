@@ -434,11 +434,11 @@ def _triage_artifacts(doc: str | None) -> tuple[list[str], list[str]]:
     return [], []
 
 
-def _review_action_params(action: str, stage: str) -> dict:
+def _review_action_params(action: str, stage: str, has_comments: bool = False) -> dict:
     """Returns pipeline params for a review action."""
     if action == "revise":
         return {
-            "requires_diff": True,
+            "requires_diff": False if has_comments else True,
             "forbid_diff": False,
             "discussion_only": False,
             "checks": ["template"],
@@ -526,7 +526,10 @@ def _review_checkpoint(
     """Assemble the review checkpoint (action params resolved up front)."""
     actor_name = actor or _human_actor(repo)
     doc = _stage_doc(state.stage)
-    params = _review_action_params(action, state.stage)
+    params = _review_action_params(
+        action, state.stage,
+        has_comments=bool(comments and comments.strip()),
+    )
     payload: dict = {"actor": actor_name}
     if comments is not None and params["verdict"] == "comment":
         payload["comments"] = comments
