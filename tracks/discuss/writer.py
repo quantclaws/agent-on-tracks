@@ -230,3 +230,36 @@ def set_status(
     tag = parse_tag(_BQ.match(lines[idx]).group(2))
     lines[idx] = format_root(thread.initiator, status, tag[2])[0]
     return "\n".join(lines) + _nl(text)
+
+
+def resolve_all_open(text: str) -> tuple[str, int]:
+    """Rewrite every non-resolved root thread as resolved (privileged review closure).
+
+    Runtime review-closure action (human no-comment approval): unlike
+    ``set_status(..., "resolved", operator)``, this bypasses the per-thread
+    initiator/adjudicator restriction — the closure is the runtime closing
+    the review, not an operator's personal resolved. ``set_status`` rules
+    and caller semantics are unchanged.
+
+    Pure text transform (no I/O): each open/reopen root's first line is
+    rewritten with the canonical ``[RESOLVED]`` marker via ``format_root``
+    (body continuation lines untouched, same as ``set_status``); already
+    resolved threads are byte-identical. Returns ``(new_text, closed)``
+    where ``closed`` counts the threads flipped to resolved (idempotent:
+    a second call returns 0).
+    """
+    lines = text.splitlines()
+    closed = 0
+    for thread in parse_threads(text):
+        if thread.status == "resolved":
+            continue
+        idx = thread.root_line - 1
+        m = _BQ.match(lines[idx]) if 0 <= idx < len(lines) else None
+        if m is None:
+            continue
+        tag = parse_tag(m.group(2))
+        if tag is None:
+            continue
+        lines[idx] = format_root(thread.initiator, "resolved", tag[2])[0]
+        closed += 1
+    return "\n".join(lines) + _nl(text), closed

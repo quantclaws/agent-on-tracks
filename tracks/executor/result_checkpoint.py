@@ -23,8 +23,9 @@ drift (CLI semantics zero-change).
 from __future__ import annotations
 
 import subprocess as subprocess  # noqa: F401  (explicit re-export: test seam)
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from tracks.discuss.gate import resolve_all_open
 from tracks.executor.file_identity import (  # noqa: F401  (re-export: test import seam)
     is_regular_file_identity as _is_regular_file_identity,
 )
@@ -97,6 +98,35 @@ def unstage_foreign_staged_content(repo, version: str, label: str) -> int:
     return 0
 
 
+def _close_review_threads(
+    executor, checkpoint: HumanCheckpoint, doc: str | None
+) -> HumanCheckpoint:
+    """Review-closure on human approval (review + no_comment only).
+
+    The Human no-comment approval closes the review: every open/reopen
+    thread in the stage doc flips to resolved BEFORE ``submit_human_result``
+    captures digests, so the ``[RESOLVED]`` markers ride the same
+    ``commit_label`` checkpoint commit (``allowed_paths=[doc]`` covers it).
+    The flipped markers are a canonical discussion change, so the patched
+    checkpoint relaxes to ``forbid_diff=False, discussion_only=True`` (body
+    text stays protected). Zero closed threads (or no doc) keep the
+    original policy untouched. ``comment`` (revise) and every other gate
+    never reach here. Closure failure fails open to the original policy —
+    the approval itself must never fail because the close-out did.
+    """
+    if checkpoint.label != "review" or checkpoint.verdict != "no_comment":
+        return checkpoint
+    if not doc:
+        return checkpoint
+    try:
+        closed = resolve_all_open(executor._artifact_path(doc))
+    except Exception:
+        return checkpoint
+    if not closed:
+        return checkpoint
+    return replace(checkpoint, forbid_diff=False, discussion_only=True)
+
+
 def run_human_gate_pipeline(
     repo,
     state,
@@ -129,6 +159,7 @@ def run_human_gate_pipeline(
     awaiting_before = state.awaiting
     ex = executor_factory(store, repo, run_id)
     doc = _stage_doc(state.stage)
+    checkpoint = _close_review_threads(ex, checkpoint, doc)
     ex.submit_human_result(
         state=state,
         domain_event_type=checkpoint.event_type,

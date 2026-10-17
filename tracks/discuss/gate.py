@@ -12,11 +12,13 @@ reviewer) to adjudicate is resolved only by that party. Both the discuss CLI
 
 from __future__ import annotations
 
+import fcntl
 import os
 import sqlite3
 import subprocess
 from pathlib import Path
 
+from tracks.discuss import writer
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 
@@ -32,6 +34,37 @@ def check_ready(text: str) -> tuple:
     """Return ``(is_ready, ready_blockers)``; blockers are non-resolved thread_ids."""
     blockers = tuple(t.thread_id for t in parse_threads(text) if t.status != "resolved")
     return not blockers, blockers
+
+
+def resolve_all_open(doc_path) -> int:
+    """Resolve every open/reopen thread in the document (privileged review closure).
+
+    Runtime review-closure action: the human no-comment approval closes the
+    review, so all pending threads flip to resolved in one atomic
+    flock-serialized tmp+rename write (same FR-110/AC-1104 convention as the
+    discuss CLI's ``_atomic_write``). Bypasses the per-thread
+    initiator/adjudicator restriction — see ``writer.resolve_all_open``.
+    Returns the closed count (0 when already settled or the file is missing;
+    no write then, the file is left byte-for-byte untouched).
+    """
+    path = Path(doc_path)
+    lock_path = path.with_name(path.name + ".lock")
+    with open(lock_path, "w", encoding="utf-8") as lockf:
+        fcntl.flock(lockf, fcntl.LOCK_EX)
+        try:
+            if not path.exists():
+                return 0
+            new_text, closed = writer.resolve_all_open(
+                path.read_text(encoding="utf-8")
+            )
+            if not closed:
+                return 0
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(new_text, encoding="utf-8")
+            tmp.replace(path)
+            return closed
+        finally:
+            fcntl.flock(lockf, fcntl.LOCK_UN)
 
 
 def adjudication_owner(text: str, thread_id: str) -> str | None:
