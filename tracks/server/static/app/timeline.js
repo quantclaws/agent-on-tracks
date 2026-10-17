@@ -145,13 +145,15 @@ export function fmtSmart(iso) {
 const TRACK_SCROLL_RATIO = 0.8;
 const TRACK_EDGE_TOLERANCE_PX = 2;
 
-// Stage workflow diagram (OOB 阶段内实际工作流): the lower panel renders the
-// SELECTED node's stage window (last stage.entered → next stage.exited, else
-// now) as a linear mermaid stateDiagram-v2 — dispatch+outcome packed per
-// interaction, discrete human/verdict/commit nodes, consecutive
-// attention.required folded, middle-fold past the threshold.
-const WORKFLOW_FOLD_THRESHOLD = 36;
-const WORKFLOW_FOLD_KEEP = 8;
+// Stage workflow diagram (OOB 阶段内实际工作流 · 聚合视图): the lower
+// panel renders the SELECTED node's stage window (last stage.entered →
+// next stage.exited, else now) as a compact mermaid stateDiagram-v2 LR —
+// one node per DISTINCT dispatch substate (first-seen order), plus an
+// entry node, a 人工门 end node (current stage awaiting) or a 完成 end
+// node (exited). Edges join adjacent substates; consecutive repeats fold
+// into a 重派 ×K self loop; repeated transitions collapse into ×N / 第N轮.
+// Per-round input/output/thinking detail rides below the diagram in native
+// <details> rows (lazy fetch, see stageRoundsPanel).
 
 // Mermaid lazy loader (mirrors docs.js loadVditor): module-level promise
 // over the same-origin vendored asset; a failed load resets so it retries.
@@ -196,31 +198,46 @@ function sanitizeMermaidText(text) {
 }
 
 /** Stage workflow source: per-stage ACTUAL execution graph (mermaid
- * ``stateDiagram-v2`` TB, linear chain) over the stage window: the stage's
+ * ``stateDiagram-v2`` LR, aggregated) over the stage window: the stage's
  * LAST ``stage.entered`` ts through the nearest following ``stage.exited``
- * (or now). One ``dispatch_agent command.issued`` + its following
- * ``outcome.received`` pack into one interaction node; mechanical stream
- * rows are kept by default; consecutive ``attention.required`` fold with
- * ×N; past WORKFLOW_FOLD_THRESHOLD the middle folds into one summary node.
- * Never throws — an empty window yields null and the caller degrades.
+ * (or now). One node per DISTINCT dispatch ``params.substate``
+ * (first-seen order) plus an entry node, a 人工门 end node (the stage is
+ * current and awaiting) or a 完成 end node (the window closed). Edges join
+ * adjacent substates of the dispatch sequence; consecutive repeats of one
+ * substate fold into a ``重派 ×K`` self loop; repeated A→B transitions
+ * collapse into one edge labelled ``×N`` (or ``第 N 轮`` on review_round
+ * change). Each substate node carries three description lines: entry
+ * count, latest conclusion (pass/失败/ok from the nearest following
+ * outcome/verdict-class event) and cumulative dispatch→outcome time
+ * (humanized, zero-value units dropped). Never throws — an empty window
+ * yields null and the caller degrades.
  */
 export function stageWorkflowSource(detail, events, stage) {
   const window = stageWorkflowWindow(events, stage);
   if (!window.length) return null;
-  const nodes = foldWorkflowNodes(window, stage, detail);
-  if (!nodes.length) return null;
-  const lines = ["stateDiagram-v2", "direction TB"];
-  lines.push("[*] --> w1");
-  nodes.forEach((node, index) => {
-    const id = `w${index + 1}`;
-    lines.push(`state "${sanitizeMermaidText(node.title)}" as ${id}`);
+  const graph = foldSubstateGraph(window, stage, detail);
+  if (!graph || !graph.nodes.length) return null;
+  const nodeIds = new Map();
+  graph.nodes.forEach((node, index) => {
+    nodeIds.set(node.key, `w${index + 1}`);
   });
-  for (let index = 1; index < nodes.length; index += 1) {
-    lines.push(`w${index} --> w${index + 1}`);
+  const lines = ["stateDiagram-v2", "direction LR"];
+  for (const node of graph.nodes) {
+    lines.push(`state "${sanitizeMermaidText(node.title)}" as ${nodeIds.get(node.key)}`);
   }
-  for (let index = 0; index < nodes.length; index += 1) {
-    const id = `w${index + 1}`;
-    for (const line of nodes[index].lines) {
+  for (const edge of graph.edges) {
+    const from = nodeIds.get(edge.from);
+    const to = nodeIds.get(edge.to);
+    if (!from || !to) continue;
+    if (edge.label) {
+      lines.push(`${from} --> ${to} : ${sanitizeMermaidText(edge.label)}`);
+    } else {
+      lines.push(`${from} --> ${to}`);
+    }
+  }
+  for (const node of graph.nodes) {
+    const id = nodeIds.get(node.key);
+    for (const line of node.lines) {
       lines.push(`${id} : ${sanitizeMermaidText(line)}`);
     }
   }
@@ -229,8 +246,8 @@ export function stageWorkflowSource(detail, events, stage) {
   lines.push("classDef pending fill:#f7f7f7,stroke:#d0d0d0,color:#9a9a9a");
   lines.push("classDef void fill:#fdecea,stroke:#d93025,color:#8a1c14");
   lines.push("classDef attention fill:#fff8e1,stroke:#f5a623,color:#7a4d00");
-  for (let index = 0; index < nodes.length; index += 1) {
-    lines.push(`class w${index + 1} ${nodes[index].tone || "pending"}`);
+  for (const node of graph.nodes) {
+    lines.push(`class ${nodeIds.get(node.key)} ${node.tone || "pending"}`);
   }
   return lines.join("\n");
 }
@@ -288,94 +305,229 @@ function payloadScalar(event, key) {
   return null;
 }
 
-function roleDisplayName(role) {
-  const text = String(role || "");
-  if (!text) return "";
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function shortSha(sha) {
-  const text = String(sha || "");
-  return text.length > 12 ? text.slice(0, 12) : text;
-}
-
-/** Window events → linear workflow nodes. Dispatch_agent rows (kind or a
- * role-bearing params, the slim identity) become interaction nodes and
- * swallow the outcome.received that follows before the next interaction;
- * non-dispatch command rows and all other rows map to discrete nodes;
- * heartbeats / parity / writelock / ledger rows are skipped; consecutive
- * attention.required rows fold into one ×N node.
+/** Window events → aggregated substate graph. Dispatch_agent rows (kind or
+ * a role-bearing params, the slim identity) line up in dispatch order;
+ * each dispatch pairs with the nearest following ``outcome.received``
+ * carrying the same command id (before the next dispatch) for its end ts,
+ * and the latest following outcome/verdict-class row decides its running
+ * conclusion. Distinct ``params.substate`` values become one node each
+ * (first-seen order); adjacent dispatch pairs become edges; consecutive
+ * repeats of one substate fold into a ``重派 ×K`` self loop; repeated A→B
+ * transitions collapse into one edge (``×N``, or ``第 N 轮`` when the
+ * review_round changed across repeats). Returns ``{nodes, edges}`` or null
+ * when the window holds no dispatch substate.
  */
-function foldWorkflowNodes(window, stage, detail) {
-  const nodes = [];
-  let index = 0;
-  while (index < window.length) {
-    const event = window[index];
-    const type = (event && event.type) || "";
-    if (
-      HEARTBEAT_EVENT_TYPES.has(type) ||
-      type === "dispatch.parity" ||
-      type.startsWith("writelock.") ||
-      type.startsWith("ledger.")
-    ) {
-      index += 1;
-      continue;
-    }
-    if (isDispatchInteraction(event)) {
-      const packed = { node: interactionNode(event), consumed: 1 };
-      let cursor = index + 1;
-      while (cursor < window.length) {
-        const next = window[cursor];
-        const nextType = (next && next.type) || "";
-        if (isDispatchInteraction(next)) break;
-        if (nextType === "outcome.received") {
-          packed.node.lines.push(`结果 ${fmtSmart(next.ts)}`);
-          packed.consumed += 1;
-          cursor += 1;
-          continue;
-        }
-        break;
-      }
-      nodes.push(packed.node);
-      index += packed.consumed;
-      continue;
-    }
-    if (type === "attention.required") {
-      let count = 1;
-      let area = payloadScalar(event, "area");
-      let cursor = index + 1;
-      while (cursor < window.length && (window[cursor] && window[cursor].type) === "attention.required") {
-        count += 1;
-        cursor += 1;
-      }
-      const title = count > 1 ? `需要注意 ×${count}` : "需要注意";
-      const lines = [`需要注意${count > 1 ? ` ×${count}` : ""}`];
-      if (area) lines.push(String(area));
-      if (event.ts) lines.push(fmtSmart(event.ts));
-      nodes.push({ title, lines, tone: "attention", kind: "attention" });
-      index = cursor;
-      continue;
-    }
-    const discrete = discreteWorkflowNode(event);
-    if (discrete) {
-      nodes.push(discrete);
-    } else if (type === "outcome.received") {
-      nodes.push({
-        title: "收到执行结果",
-        lines: ["收到执行结果", fmtSmart(event.ts)].filter(Boolean),
-        tone: "pending", kind: "outcome",
-      });
-    } else {
-      nodes.push({
-        title: stageEventLabel(event),
-        lines: [`${stageEventLabel(event)} · ${event && event.ts ? fmtSmart(event.ts) : "-"}`],
-        tone: "pending", kind: "other",
-      });
-    }
-    index += 1;
+function foldSubstateGraph(window, stage, detail) {
+  const dispatches = [];
+  for (const event of window) {
+    if (!isDispatchInteraction(event)) continue;
+    const params = dispatchParams(event) || {};
+    if (!params.substate) continue;
+    dispatches.push({ event, params, substate: String(params.substate) });
   }
-  appendGateNode(nodes, stage, detail, window);
-  return foldWorkflowMiddle(nodes);
+  if (!dispatches.length) return null;
+  const enriched = dispatches.map((dispatch, pos) => {
+    const bound = pos + 1 < dispatches.length ? dispatches[pos + 1].event : null;
+    return { ...dispatch, ...dispatchSpan(window, dispatch.event, bound) };
+  });
+  const order = [];
+  const stats = new Map();
+  for (const item of enriched) {
+    if (!stats.has(item.substate)) {
+      stats.set(item.substate, { count: 0, totalMs: 0, conclusion: "ok", repeats: 0 });
+      order.push(item.substate);
+    }
+    const entry = stats.get(item.substate);
+    entry.count += 1;
+    if (item.ms !== null && item.ms !== undefined) entry.totalMs += item.ms;
+    if (item.conclusion) entry.conclusion = item.conclusion;
+  }
+  let runKey = null;
+  let runLength = 0;
+  const flushRun = () => {
+    if (runKey !== null && runLength > 1 && stats.has(runKey)) {
+      const entry = stats.get(runKey);
+      entry.repeats = Math.max(entry.repeats, runLength);
+    }
+  };
+  for (const item of enriched) {
+    if (item.substate === runKey) {
+      runLength += 1;
+    } else {
+      flushRun();
+      runKey = item.substate;
+      runLength = 1;
+    }
+  }
+  flushRun();
+  const groups = new Map();
+  let prev = null;
+  for (const item of enriched) {
+    if (prev !== null && prev !== item.substate) {
+      const key = `${prev}→${item.substate}`;
+      if (!groups.has(key)) {
+        groups.set(key, { from: prev, to: item.substate, count: 0, rounds: new Set() });
+      }
+      const group = groups.get(key);
+      group.count += 1;
+      const round = item.params.review_round;
+      if (round !== undefined && round !== null) group.rounds.add(String(round));
+    }
+    prev = item.substate;
+  }
+  const running = !!detail && detail.stage === stage &&
+    !(detail.status && isTerminalStatus(detail.status));
+  const currentSubstate = detail && detail.substate ? String(detail.substate) : "";
+  const lastSubstate = order[order.length - 1];
+  const nodes = [{ key: "__enter__", title: "进入", lines: ["进入阶段"], tone: "done" }];
+  for (const substate of order) {
+    const entry = stats.get(substate);
+    const lines = [
+      `进入 ${entry.count} 次`,
+      `最近结论 ${entry.conclusion}`,
+      `累计 ${humanizeSeconds(entry.totalMs / 1000)}`,
+    ];
+    if (entry.repeats > 1) lines.push(`重派 ×${entry.repeats}`);
+    let tone = "done";
+    if (running && (substate === currentSubstate || substate === lastSubstate)) {
+      tone = "current";
+    }
+    nodes.push({ key: substate, title: substate, lines, tone });
+  }
+  const exited = window.some((event) => event && event.type === "stage.exited");
+  const awaiting = running && detail && !!detail.awaiting_gate;
+  let endKey = null;
+  if (awaiting) {
+    const basis = lastBusinessEvent(window.length ? window : []);
+    nodes.push({
+      key: "__gate__",
+      title: "人工门",
+      lines: [`人工门：等待裁决（已等 ${waitingElapsed(basis)}）`],
+      tone: "attention",
+    });
+    endKey = "__gate__";
+  } else if (exited) {
+    nodes.push({ key: "__done__", title: "完成", lines: ["完成"], tone: "done" });
+    endKey = "__done__";
+  }
+  const edges = [{ from: "__enter__", to: order[0], label: "" }];
+  for (const substate of order) {
+    const repeats = stats.get(substate).repeats;
+    if (repeats > 1) {
+      edges.push({ from: substate, to: substate, label: `重派 ×${repeats}` });
+    }
+  }
+  for (const group of groups.values()) {
+    edges.push({ from: group.from, to: group.to, label: repeatEdgeLabel(group) });
+  }
+  if (endKey) edges.push({ from: lastSubstate, to: endKey, label: "" });
+  return { nodes, edges };
+}
+
+/** One dispatch's outcome span: end ts from the nearest following
+ * ``outcome.received`` with the same command id (any outcome before the
+ * bound as fallback), conclusion from that outcome plus verdict-class rows
+ * anchored to it — same command id, or within 120s after the outcome ts
+ * (``pass`` / ``失败`` / ``ok`` closed set). The anchor stops late
+ * downstream verdicts (e.g. a full-suite failure 16min later that the next
+ * DIAGNOSE already owns) from drifting onto this dispatch. Never throws. */
+function dispatchSpan(window, dispatchEvent, boundEvent) {
+  const commandId = dispatchEvent.command_id ?? null;
+  let matched = null;
+  let fallback = null;
+  let outcomeVerdict = "ok";
+  let started = false;
+  for (const event of window) {
+    if (event === dispatchEvent) {
+      started = true;
+      continue;
+    }
+    if (!started) continue;
+    if ((boundEvent && event === boundEvent) || isDispatchInteraction(event)) break;
+    if ((event && event.type) !== "outcome.received") continue;
+    const same = !commandId || !event.command_id || event.command_id === commandId;
+    if (!fallback) fallback = event;
+    if (same && !matched) {
+      matched = event;
+      outcomeVerdict = outcomeConclusion(event);
+    }
+  }
+  const close = matched || fallback;
+  const closeMs = close ? Date.parse(close.ts) : NaN;
+  let latest = outcomeVerdict;
+  let latestMs = closeMs;
+  started = false;
+  for (const event of window) {
+    if (event === dispatchEvent) {
+      started = true;
+      continue;
+    }
+    if (!started) continue;
+    if ((boundEvent && event === boundEvent) || isDispatchInteraction(event)) break;
+    if ((event && event.type) === "outcome.received") continue;
+    const text = verdictConclusion(event);
+    if (!text) continue;
+    const same = !commandId || !event.command_id || event.command_id === commandId;
+    const eventMs = Date.parse(event.ts);
+    const nearOutcome = !Number.isNaN(closeMs) && !Number.isNaN(eventMs) &&
+      eventMs >= closeMs && eventMs - closeMs <= 120000;
+    if (!same && !nearOutcome) continue;
+    if (Number.isNaN(eventMs) || Number.isNaN(latestMs) || eventMs >= latestMs) {
+      latest = text;
+      latestMs = eventMs;
+    }
+  }
+  const startMs = Date.parse(dispatchEvent.ts);
+  const endMs = close ? closeMs : Date.now();
+  const ms = Number.isNaN(startMs)
+    ? null
+    : Math.max(0, (Number.isNaN(endMs) ? Date.now() : endMs) - startMs);
+  return { ms, conclusion: latest };
+}
+
+function outcomeConclusion(event) {
+  const payload = (event && event.payload) || {};
+  const verdict = payload.verdict;
+  if (verdict === "pass") return "pass";
+  if (verdict === "fail" || verdict === "failed") return "失败";
+  return "ok";
+}
+
+function verdictConclusion(event) {
+  const type = (event && event.type) || "";
+  if (type === "verdict.passed") return "pass";
+  if (type === "verdict.failed") return "失败";
+  if (type.endsWith(".verdict")) {
+    const payload = (event && event.payload) || {};
+    return payload.verdict === "pass" ? "pass" : "失败";
+  }
+  return null;
+}
+
+function repeatEdgeLabel(group) {
+  if (group.count < 2) return "";
+  if (group.rounds.size > 1) {
+    const numeric = [...group.rounds].map(Number).filter((n) => !Number.isNaN(n));
+    const latest = numeric.length ? Math.max(...numeric) : [...group.rounds].sort().pop();
+    return `第 ${latest} 轮`;
+  }
+  return `×${group.count}`;
+}
+
+/** ``durationOf`` 同款人性化（秒数入参）：丢弃 0 值单位；全零 → "0秒"。 */
+function humanizeSeconds(totalSeconds) {
+  const total = Math.max(0, Math.round(Number(totalSeconds) || 0));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const parts = [];
+  if (days) parts.push(`${days}天`);
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分`);
+  if (seconds) parts.push(`${seconds}秒`);
+  if (!parts.length) parts.push("0秒");
+  return parts.join("");
 }
 
 function isDispatchInteraction(event) {
@@ -383,132 +535,6 @@ function isDispatchInteraction(event) {
   if (dispatchKind(event) === "dispatch_agent") return true;
   const params = dispatchParams(event);
   return !!(params && params.role);
-}
-
-function interactionNode(event) {
-  const params = dispatchParams(event) || {};
-  const role = roleDisplayName(params.role);
-  const substate = params.substate ? String(params.substate) : "";
-  const round = params.review_round !== undefined && params.review_round !== null
-    ? String(params.review_round) : "";
-  const attempt = params.attempt !== undefined && params.attempt !== null
-    ? String(params.attempt) : (payloadScalar(event, "attempt") ?? "");
-  const head = [role, substate ? `· ${substate}` : ""].filter(Boolean).join(" ");
-  const meta = [];
-  if (round !== "") meta.push(`第 ${round} 轮`);
-  if (attempt !== "") meta.push(`尝试 ${attempt}`);
-  const lines = [head || "派发 Agent"];
-  lines.push(`${meta.length ? `${meta.join(" / ")} · ` : ""}${fmtSmart(event.ts)}`);
-  return { title: `${head || "派发"}${meta.length ? `（${meta.join(" / ")}）` : ""}`, lines, tone: "current", kind: "dispatch" };
-}
-
-function discreteWorkflowNode(event) {
-  const type = (event && event.type) || "";
-  const ts = event && event.ts ? fmtSmart(event.ts) : "";
-  const at = (text) => (ts ? `${text} · ${ts}` : text);
-  switch (type) {
-    case "story.requested":
-      return { title: "故事骨架就位", lines: [at("故事骨架就位")], tone: "done", kind: "marker" };
-    case "stage.entered":
-      return { title: "进入阶段", lines: [at("进入阶段")], tone: "done", kind: "marker" };
-    case "stage.exited":
-      return { title: "离开阶段", lines: [at("离开阶段")], tone: "done", kind: "marker" };
-    case "human.triage": {
-      const decision = payloadScalar(event, "decision");
-      return { title: `人工裁决 ${decision || ""}`.trim(), lines: [at(`人工裁决 ${decision || ""}`.trim())], tone: "attention", kind: "human" };
-    }
-    case "human.review": {
-      const action = payloadScalar(event, "action");
-      return { title: `人工评审 ${action || ""}`.trim(), lines: [at(`人工评审 ${action || ""}`.trim())], tone: "attention", kind: "human" };
-    }
-    case "human.retry":
-    case "human.recover":
-    case "human.return":
-    case "human.approval": {
-      const label = EVENT_LABELS[type] || type;
-      return { title: label, lines: [at(label)], tone: "attention", kind: "human" };
-    }
-    case "review.round_started": {
-      const round = payloadScalar(event, "round");
-      return { title: `新一轮评审 #${round ?? "?"}`, lines: [at(`新一轮评审 #${round ?? "?"}`)], tone: "current", kind: "round" };
-    }
-    case "repair.round_started": {
-      const round = payloadScalar(event, "round");
-      const label = round ? `修复轮 #${round}` : "修复轮";
-      return { title: label, lines: [at(label)], tone: "current", kind: "round" };
-    }
-    case "verdict.passed":
-    case "verdict.failed": {
-      const check = payloadScalar(event, "check");
-      const label = type === "verdict.passed" ? "校验通过" : "校验未通过";
-      return { title: check ? `${label} ${check}` : label, lines: [at(check ? `${label} ${check}` : label)], tone: type === "verdict.passed" ? "done" : "void", kind: "verdict" };
-    }
-    case "sage.verdict":
-    case "lex.verdict":
-    case "prism.verdict": {
-      const who = type.split(".")[0];
-      const verdict = payloadScalar(event, "verdict");
-      const label = `${who} 评审 ${verdict || ""}`.trim();
-      return { title: label, lines: [at(label)], tone: verdict === "pass" ? "done" : "attention", kind: "verdict" };
-    }
-    case "stage.rolled_back": {
-      const to = payloadScalar(event, "to") ?? payloadScalar(event, "to_stage") ?? "";
-      const label = to ? `阶段回退 ${to}` : "阶段回退";
-      return { title: label, lines: [at(label)], tone: "void", kind: "rollback" };
-    }
-    case "command.issued": {
-      const kind = dispatchKind(event);
-      const label = kind && kind !== "dispatch_agent"
-        ? `指令 ${kind}` : stageEventLabel(event);
-      return { title: label, lines: [at(label)], tone: "pending", kind: "command" };
-    }
-    default: break;
-  }
-  if (type.endsWith(".committed")) {
-    const sha = payloadScalar(event, "commit_sha");
-    const final = payloadScalar(event, "final");
-    const label = `产物提交${final ? "（终版）" : ""}${sha ? shortSha(sha) : ""}`;
-    return { title: "产物提交", lines: [at(label)], tone: "done", kind: "commit" };
-  }
-  return null;
-}
-
-function appendGateNode(nodes, stage, detail, window) {
-  if (!detail || !stage || detail.stage !== stage) return;
-  if (detail.status && isTerminalStatus(detail.status)) return;
-  if (detail.awaiting_gate) {
-    const basis = lastBusinessEvent(window.length ? window : []);
-    nodes.push({
-      title: "人工门：等待裁决",
-      lines: [`人工门：等待裁决（已等 ${waitingElapsed(basis)}）`],
-      tone: "attention", kind: "gate",
-    });
-    return;
-  }
-  const last = window.length ? window[window.length - 1] : null;
-  if (last && last.type === "command.issued") {
-    nodes.push({ title: "进行中…", lines: ["进行中…"], tone: "current", kind: "running" });
-  }
-}
-
-/** Middle-fold past the threshold: first 8 + summary + last 8. Counts ride
- * the summary node (dispatch/result/verdict/other tallies are real).
- */
-function foldWorkflowMiddle(nodes) {
-  if (nodes.length <= WORKFLOW_FOLD_THRESHOLD) return nodes;
-  const head = nodes.slice(0, WORKFLOW_FOLD_KEEP);
-  const tail = nodes.slice(nodes.length - WORKFLOW_FOLD_KEEP);
-  const middle = nodes.slice(WORKFLOW_FOLD_KEEP, nodes.length - WORKFLOW_FOLD_KEEP);
-  const tally = { dispatch: 0, outcome: 0, verdict: 0, other: 0 };
-  for (const node of middle) {
-    if (node.kind === "dispatch") tally.dispatch += 1;
-    else if (node.kind === "outcome") tally.outcome += 1;
-    else if (node.kind === "verdict") tally.verdict += 1;
-    else tally.other += 1;
-  }
-  const summaryText =
-    `… 中间 ${middle.length} 步（派发×${tally.dispatch} · 结果×${tally.outcome} · 校验×${tally.verdict} · 其它×${tally.other}）…`;
-  return [...head, { title: summaryText, lines: [summaryText], tone: "pending", kind: "fold" }, ...tail];
 }
 
 /** Summary line inputs over the stage window (real counts only). */
@@ -946,19 +972,19 @@ function commandIssuedLabel(event) {
   return text;
 }
 
-/** Stage workflow panel (OOB 阶段内实际工作流): the SELECTED (or current)
- * stage's actual execution graph — never the full 13-stage pipeline (that
- * static repetition is removed). Renders the summary line +
- * ``stage-workflow-diagram`` mermaid host, or the pending degradation text
- * when the stage has no recorded window. Pure display over the already
- * loaded ``detail`` + ``events`` — no new data source, no timers. */
+/** Stage workflow panel (OOB 阶段内实际工作流 · 聚合视图): the SELECTED
+ * (or current) stage's actual execution graph — never the full 13-stage
+ * pipeline (that static repetition is removed). Renders the summary line +
+ * ``stage-workflow-diagram`` mermaid host, then the per-round
+ * input/output/thinking detail (lazy native <details>), or the pending
+ * degradation text when the stage has no recorded window. */
 function stagePathPanel(detail, events, selectedStage) {
   const stage = selectedStage || (detail && detail.stage) || "";
   const wrap = element("section", {
     class: "stage-path",
     "data-testid": "stage-path",
   });
-  wrap.append(element("h4", { class: "stage-path-title", text: "阶段内工作流（实际运行）" }));
+  wrap.append(element("h4", { class: "stage-path-title", text: "阶段内工作流（实际运行 · 聚合视图）" }));
   if (!stage || !stageWorkflowWindow(events, stage).length) {
     wrap.append(element("p", {
       class: "stage-workflow-empty",
@@ -988,7 +1014,227 @@ function stagePathPanel(detail, events, selectedStage) {
   } else {
     host.textContent = "该阶段尚未开始（暂无实际执行记录）";
   }
+  wrap.append(stageRoundsPanel(detail, stage));
   return wrap;
+}
+
+/** Per-round execution detail (OOB 执行明细): a collapsed native
+ * ``<details data-testid="stage-rounds">`` below the aggregate diagram.
+ * The rounds list fetches on FIRST expansion only; each round row is its
+ * own ``<details data-testid="stage-round-N">`` whose single-round detail
+ * fetches on ITS first expansion (cached per command_id — re-expanding
+ * never refetches). Rows carry four zones: 输入 / 输出 / 思考过程
+ * (nested collapsed details, degraded when logs rotated) / 工具. Every
+ * fetch failure degrades its zone in place, never throwing. */
+function stageRoundsPanel(detail, stage) {
+  const runId = detail && detail.run_id ? String(detail.run_id) : "";
+  const outer = element("details", {
+    class: "stage-rounds",
+    "data-testid": "stage-rounds",
+  });
+  const summary = element("summary", {
+    class: "stage-rounds-summary",
+    text: "执行明细（加载中…）",
+  });
+  outer.append(summary);
+  const body = element("div", { class: "stage-rounds-body" });
+  outer.append(body);
+  const state = { loaded: false, loading: false, detailCache: new Map() };
+  outer.addEventListener("toggle", () => {
+    if (!outer.open || state.loaded || state.loading) return;
+    state.loading = true;
+    void (async () => {
+      try {
+        const payload = await requestJson(
+          `/api/runs/${encodeURIComponent(runId)}/stages/${encodeURIComponent(stage)}/rounds`
+        );
+        const rounds = Array.isArray(payload && payload.rounds) ? payload.rounds : [];
+        state.loaded = true;
+        summary.textContent = `执行明细（${rounds.length} 轮）`;
+        if (!rounds.length) {
+          body.append(element("p", {
+            class: "stage-rounds-empty",
+            text: "（暂无轮次记录）",
+          }));
+          return;
+        }
+        for (const round of rounds) {
+          body.append(stageRoundRow(runId, round, state.detailCache));
+        }
+      } catch (error) {
+        summary.textContent = "执行明细（加载失败，稍后重试）";
+        body.replaceChildren(element("p", {
+          class: "stage-rounds-empty",
+          text: "（加载失败，稍后重试）",
+        }));
+        state.loading = false;
+      }
+    })();
+  });
+  return outer;
+}
+
+/** One round row: ``#N Role · SUBSTATE · 第R轮 · 尝试A · 耗时 · 状态``; the
+ * four-zone detail fetches once on first expansion, cached per command_id. */
+function stageRoundRow(runId, round, detailCache) {
+  const n = round && round.n !== undefined ? round.n : "?";
+  const role = round && round.role ? `${String(round.role).charAt(0).toUpperCase()}${String(round.role).slice(1)}` : "-";
+  const substate = round && round.substate ? String(round.substate) : "-";
+  const reviewRound = round && round.review_round !== undefined && round.review_round !== null
+    ? `第${round.review_round}轮` : "第-轮";
+  const attempt = round && round.attempt !== undefined && round.attempt !== null
+    ? `尝试${round.attempt}` : "尝试-";
+  const elapsed = humanizeSeconds(durationSeconds(round && round.start_ts, round && round.end_ts));
+  const status = round && round.status === "running" ? "⏳ 进行中" : "✓ ok";
+  const row = element("details", {
+    class: "stage-round",
+    "data-testid": `stage-round-${n}`,
+  });
+  row.append(element("summary", {
+    class: "stage-round-summary",
+    text: `#${n} ${role} · ${substate} · ${reviewRound} · ${attempt} · ${elapsed} · ${status}`,
+  }));
+  const body = element("div", { class: "stage-round-body" });
+  row.append(body);
+  const commandId = round && round.command_id ? String(round.command_id) : "";
+  row.addEventListener("toggle", () => {
+    if (!row.open || row.dataset.loaded === "true" || row.dataset.loading === "true") return;
+    row.dataset.loading = "true";
+    void (async () => {
+      try {
+        let entry = detailCache.get(commandId);
+        if (!entry) {
+          entry = await requestJson(
+            `/api/runs/${encodeURIComponent(runId)}/rounds/${encodeURIComponent(commandId)}`
+          );
+          detailCache.set(commandId, entry);
+        }
+        row.dataset.loaded = "true";
+        body.replaceChildren(...stageRoundZones(entry));
+      } catch (error) {
+        row.dataset.loading = "false";
+        body.replaceChildren(element("p", {
+          class: "stage-round-error",
+          text: "（加载失败，稍后重试）",
+        }));
+      }
+    })();
+  });
+  return row;
+}
+
+function durationSeconds(startTs, endTs) {
+  if (!startTs) return 0;
+  const start = Date.parse(startTs);
+  if (Number.isNaN(start)) return 0;
+  const end = endTs ? Date.parse(endTs) : Date.now();
+  if (Number.isNaN(end)) return 0;
+  return Math.max(0, Math.round((end - start) / 1000));
+}
+
+/** The four zones of one expanded round (each with its own heading). */
+function stageRoundZones(entry) {
+  return [
+    stageRoundZoneInput(entry),
+    stageRoundZoneOutput(entry),
+    stageRoundZoneThinking(entry),
+    stageRoundZoneTools(entry),
+  ];
+}
+
+function stageRoundZoneInput(entry) {
+  const zone = element("div", { class: "stage-round-zone" });
+  zone.append(element("h5", { class: "stage-round-zone-title", text: "输入" }));
+  const input = entry && entry.input ? entry.input : null;
+  const prompt = input && typeof input.prompt === "string" && input.prompt
+    ? input.prompt : "（暂无输入）";
+  zone.append(element("pre", { class: "stage-round-pre", text: prompt }));
+  const assignment = input && input.assignment && typeof input.assignment === "object"
+    ? Object.keys(input.assignment).length ? JSON.stringify(input.assignment, null, 2) : ""
+    : "";
+  if (assignment) {
+    zone.append(element("pre", { class: "stage-round-pre", text: assignment }));
+  }
+  const metaText = [
+    `role=${(input && input.role) || (entry && entry.role) || "-"}`,
+    `substate=${(input && input.substate) || (entry && entry.substate) || "-"}`,
+    `round=${inputRoundOr(entry, input, "review_round")}`,
+    `attempt=${inputRoundOr(entry, input, "attempt")}`,
+    `doc=${(input && input.doc) || "-"}`,
+    `objective=${(input && input.objective) || "-"}`,
+  ].join(" · ");
+  zone.append(element("p", { class: "stage-round-meta", text: metaText }));
+  return zone;
+}
+
+function inputRoundOr(entry, input, key) {
+  const fromInput = input ? input[key] : undefined;
+  if (fromInput !== undefined && fromInput !== null) return fromInput;
+  const fromEntry = entry ? entry[key] : undefined;
+  if (fromEntry !== undefined && fromEntry !== null) return fromEntry;
+  return "-";
+}
+
+function stageRoundZoneOutput(entry) {
+  const zone = element("div", { class: "stage-round-zone" });
+  zone.append(element("h5", { class: "stage-round-zone-title", text: "输出" }));
+  const output = entry && entry.output ? entry.output : null;
+  if (!output || output.unavailable) {
+    zone.append(element("p", { class: "stage-round-empty", text: "（暂无输出）" }));
+    return zone;
+  }
+  const text = typeof output.text === "string" && output.text ? output.text : "（暂无输出）";
+  zone.append(element("pre", { class: "stage-round-pre", text }));
+  return zone;
+}
+
+function stageRoundZoneThinking(entry) {
+  const zone = element("div", { class: "stage-round-zone" });
+  zone.append(element("h5", { class: "stage-round-zone-title", text: "思考过程" }));
+  const inner = element("details", { class: "stage-round-thinking" });
+  inner.append(element("summary", { class: "stage-round-thinking-summary", text: "展开思考过程" }));
+  const thinking = entry ? entry.thinking : null;
+  const available = entry ? entry.thinking_available : false;
+  if (Array.isArray(thinking) && thinking.length) {
+    const list = element("div", { class: "stage-round-thinking-list" });
+    for (const item of thinking) {
+      const text = item && typeof item.text === "string" ? item.text : "";
+      const ts = item && item.ts ? `${fmtClock(item.ts)} ` : "";
+      list.append(element("pre", { class: "stage-round-pre", text: `${ts}${text}` }));
+    }
+    inner.append(list);
+  } else if (available === false) {
+    inner.append(element("p", {
+      class: "stage-round-empty",
+      text: "该轮的会话日志已轮转清理，仅存输入/输出",
+    }));
+  } else {
+    inner.append(element("p", {
+      class: "stage-round-empty",
+      text: "该轮没有记录到思考过程（日志已轮转或 Agent 未产生推理流）",
+    }));
+  }
+  zone.append(inner);
+  return zone;
+}
+
+function stageRoundZoneTools(entry) {
+  const zone = element("div", { class: "stage-round-zone" });
+  zone.append(element("h5", { class: "stage-round-zone-title", text: "工具" }));
+  const output = entry && entry.output ? entry.output : null;
+  const calls = output && Array.isArray(output.tool_calls) ? output.tool_calls : [];
+  if (!calls.length) {
+    zone.append(element("p", { class: "stage-round-empty", text: "（本轮未调用工具）" }));
+    return zone;
+  }
+  const list = element("ul", { class: "stage-round-tools" });
+  for (const call of calls) {
+    const tool = call && call.tool ? String(call.tool) : "unknown";
+    const n = call && call.n !== undefined && call.n !== null ? call.n : 1;
+    list.append(element("li", { text: `${tool} ×${n}` }));
+  }
+  zone.append(list);
+  return zone;
 }
 
 /** Update the carousel buttons' visibility from the viewport scroll

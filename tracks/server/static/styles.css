@@ -1333,6 +1333,133 @@ textarea {
   height: auto;
 }
 
+.stage-workflow-diagram .node text,
+.stage-workflow-diagram text {
+  font-size: var(--fs-body);
+}
+
+/* -- run timeline: stage rounds detail (OOB 执行明细) ---------------------- */
+/* Native <details> rows below the aggregate diagram (lazy fetch): the card /
+   fold language matches the existing pane faces; long prompt/output bodies
+   scroll inside their own capped <pre>, never the whole page. */
+
+.stage-rounds {
+  margin: var(--s-3) 0 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--fs-body);
+}
+
+.stage-rounds-summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.stage-rounds-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.stage-rounds-empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
+.stage-round {
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.stage-round-summary {
+  cursor: pointer;
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
+.stage-round-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.stage-round-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-body);
+}
+
+.stage-round-zone {
+  padding-top: var(--s-2);
+  border-top: 1px solid var(--border);
+}
+
+.stage-round-zone:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.stage-round-zone-title {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.stage-round-pre {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0 0 var(--s-1);
+  padding: var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stage-round-meta {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+
+.stage-round-empty {
+  margin: 0 0 var(--s-1);
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
+.stage-round-thinking-summary {
+  cursor: pointer;
+  font-size: var(--fs-body);
+  color: var(--fg-muted);
+}
+
+.stage-round-thinking-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+}
+
+.stage-round-tools {
+  margin: 0;
+  padding-left: var(--s-4);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--fg-muted);
+}
+
 .node-overlay {
   margin-top: var(--s-4);
   padding: var(--s-3);
