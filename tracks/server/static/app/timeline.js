@@ -1861,24 +1861,18 @@ export function gateActionPanel(detail, gate) {
   return panel;
 }
 
-const REVIEW_DOC_BY_STAGE = {
-  "M-STORY": "story",
-  "M-SPEC": "spec",
-  "M-ACC": "acceptance",
-};
-
 /** Review-gate decision row: [通过] posts no_comment (comments must be
- * empty); [退回] first posts the comments as a clarifications thread, then
- * posts comment (comments must be non-empty). Returns { _actions, _body }:
- * the caller mounts _actions into the head-row slot (same line as
- * gate-status) and _body below the head. */
+ * empty); [退回] posts comment with comments carried directly to Scribe
+ * (comments must be non-empty, no document thread write). Returns
+ * { _actions, _body }: the caller mounts _actions into the head-row slot
+ * (same line as gate-status) and _body below the head. */
 function reviewDecisionFace(detail, encoded) {
-  const doc = REVIEW_DOC_BY_STAGE[(detail && detail.stage) || ""] || "story";
+  void detail;
   const body = element("div", { class: "review-decision-face" });
   const comments = element("textarea", {
     class: "review-comments",
     "data-testid": "review-comments",
-    "aria-label": "评审意见（退回时必填，写入文档线程）",
+    "aria-label": "评审意见（退回时必填，直接传给 Scribe）",
     rows: 3,
     placeholder: "填写退回意见（为空则通过）",
   });
@@ -1904,7 +1898,7 @@ function reviewDecisionFace(detail, encoded) {
     type: "button",
     class: "gate-action-button",
     "data-testid": "review-return",
-    title: "clarifications → review comment",
+    title: 'review → {"action":"comment","comments":<文本>}',
     text: "退回",
   });
   const say = (text, failed) => {
@@ -1918,7 +1912,7 @@ function reviewDecisionFace(detail, encoded) {
     ret.disabled = empty;
     hint.textContent = empty
       ? "通过将直接推进；如需退回请填写意见"
-      : "将带意见退回（意见会写入文档线程）";
+      : "将带意见退回（意见将直接传给 Scribe）";
   };
   comments.addEventListener("input", sync);
   sync();
@@ -1945,25 +1939,9 @@ function reviewDecisionFace(detail, encoded) {
     if (!text) return;
     busy = true;
     try {
-      let anchorLine = "";
-      try {
-        const docPayload = await requestJson(
-          `/api/runs/${encoded}/docs/${encodeURIComponent(doc)}`
-        );
-        const content = docPayload && typeof docPayload.content === "string"
-          ? docPayload.content
-          : "";
-        anchorLine = (content.split("\n")[0] || "").trim();
-      } catch (anchorError) {
-        anchorLine = "";
-      }
-      await requestJson(`/api/runs/${encoded}/clarifications`, {
-        method: "POST",
-        body: JSON.stringify({ doc, body: text, anchor_line: anchorLine }),
-      });
       await requestJson(`/api/runs/${encoded}/review`, {
         method: "POST",
-        body: JSON.stringify({ action: "comment" }),
+        body: JSON.stringify({ action: "comment", comments: text }),
       });
       scheduleGateRefresh(encoded, "review");
     } catch (error) {

@@ -117,7 +117,7 @@ _PARAM_TYPES: dict[str, dict[str, object]] = {
         "to": (str, _NULL),
     },
     "record_triage": {"run_id": str, "decision": str},
-    "record_review": {"run_id": str, "action": str},
+    "record_review": {"run_id": str, "action": str, "comments": (str, _NULL)},
 }
 
 # Closed enums per kind (interfaces §1b); unknown values are rejected.

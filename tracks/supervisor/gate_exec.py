@@ -144,7 +144,11 @@ def _execute_review(repo: Path, run_id: str, params: dict, actor: str, actor_kin
                     "run not awaiting review"
                     f" (awaiting={state.awaiting or 'nothing'})"
                 )
-            checkpoint = _review_checkpoint(repo, state, actor, cli_action)
+            comments = params.get("comments")
+            checkpoint = _review_checkpoint(
+                repo, state, actor, cli_action,
+                comments if isinstance(comments, str) else None,
+            )
             return _run_pipeline(repo, store, run_id, state, checkpoint, "review")
     finally:
         store.close()

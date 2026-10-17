@@ -339,6 +339,10 @@ the envelope/failure faces stay re-exported by executor.py."""
         if not self._dispatch_parity_ok(cmd, task_id, assignment):
             return
         assignment = self._inject_failure_evidence(assignment, role, state, task_id, cmd)
+        human_comments = p.get("human_comments") if isinstance(p, dict) else None
+        if human_comments is not None:
+            assignment = dict(assignment or {})
+            assignment["human_comments"] = human_comments
         pre_dirty = self._resolve_pre_dirty(state, substate, p)
         # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
         # and dirty snapshot BEFORE act() so deltas can be classified after.

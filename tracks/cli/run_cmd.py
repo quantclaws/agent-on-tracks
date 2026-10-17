@@ -520,15 +520,20 @@ def _pipeline_outcome(result, label: str, success_line: str) -> int:
     return 0
 
 
-def _review_checkpoint(repo: Path, state, actor: str | None, action: str) -> _HumanCheckpoint:
+def _review_checkpoint(
+    repo: Path, state, actor: str | None, action: str, comments: str | None = None
+) -> _HumanCheckpoint:
     """Assemble the review checkpoint (action params resolved up front)."""
     actor_name = actor or _human_actor(repo)
     doc = _stage_doc(state.stage)
     params = _review_action_params(action, state.stage)
+    payload: dict = {"actor": actor_name}
+    if comments is not None and params["verdict"] == "comment":
+        payload["comments"] = comments
     return _HumanCheckpoint(
         label="review",
         event_type="human.review",
-        payload={"actor": actor_name},
+        payload=payload,
         verdict=params["verdict"],
         artifacts=[doc] if doc else [],
         checks=params["checks"],
@@ -540,11 +545,25 @@ def _review_checkpoint(repo: Path, state, actor: str | None, action: str) -> _Hu
 
 
 def cmd_review(repo: Path, *args: str) -> int:
-    usage = "usage: trac review no-comment|revise [--actor NAME]"
-    parsed = _parse_action_actor(args, usage)
-    if parsed is None:
-        return 1
-    action, actor = parsed
+    usage = "usage: trac review no-comment|revise [--actor NAME] [--comments TEXT]"
+    argv = list(args)
+    if not argv:
+        return _err(usage)
+    raw_action = argv.pop(0)
+    action = raw_action.replace("-", "_")
+    actor: str | None = None
+    comments: str | None = None
+    seen: set[str] = set()
+    while argv:
+        flag = argv.pop(0)
+        if flag not in ("--actor", "--comments") or not argv or flag in seen:
+            return _err(usage)
+        seen.add(flag)
+        value = argv.pop(0)
+        if flag == "--actor":
+            actor = value
+        else:
+            comments = value
     if action not in ("no_comment", "revise"):
         return _err(usage)
     with active_run_context(repo) as active:
@@ -559,7 +578,7 @@ def cmd_review(repo: Path, *args: str) -> int:
         # HUMAN_REVIEW (awaiting=review) semantics are unchanged.
         if state.awaiting not in ("review", _REVIEW_PENDING_THREADS):
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
-        checkpoint = _review_checkpoint(repo, state, actor, action)
+        checkpoint = _review_checkpoint(repo, state, actor, action, comments)
         rc, result = _do_human_pipeline(repo, state, store, run_id, checkpoint)
         if rc:
             return rc

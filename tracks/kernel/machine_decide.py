@@ -82,6 +82,8 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
             cmd.params["evidence"] = dict(s.last_failure)  # FR-11
         if sub == "RESPOND" and s.review_diff_ref:
             cmd.params["diff_ref"] = s.review_diff_ref  # FR-16
+        if sub == "RESPOND" and getattr(s, "review_comments", None):
+            cmd.params["human_comments"] = s.review_comments
         return cmd
     if not s.doc_produced:
         return None

@@ -47,6 +47,7 @@ def _on_human_review(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     _reset_doc(s)
     s.review_diff_ref = p.get("diff_ref")
+    s.review_comments = p.get("comments")
     # Fresh 3-attempt budget for the new RESPOND round triggered by the human
     # comment; prior DRAFT/RESPOND failures must not consume it.
     s.current_attempt = 0

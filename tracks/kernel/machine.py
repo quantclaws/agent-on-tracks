@@ -355,6 +355,7 @@ class State:
     last_failure: dict | None = None  # evidence for the next re-dispatch (FR-11)
     scope_overflow: bool = False  # FR-20: pending rollback to M-STORY
     review_diff_ref: str | None = None  # FR-16: human revise commit sha
+    review_comments: str | None = None  # OOB: human revise comments direct to Scribe
     branch_created: bool = False  # release branch exists (M-START create_branch)
     branch_deleted: bool = False  # release branch torn down (FR-09 reject)
     # M-TEST (flow.md §9 / SM-01, FR-0010~0070). The shared <=3 attempt budget
