@@ -565,13 +565,30 @@ export function stageWorkflowSummary(detail, events, stage) {
   return `派发 ${dispatches} 次 · 交互轮次 ${roundText} · 人工动作 ${human} · ${running ? `进行中 ${duration}` : `用时 ${duration}`}`;
 }
 
+// Document type stack (mirrors styles.css :root --font-sans) + body size
+// (--fs-body 13px): the stage graph uses the same face as the document.
+const MERMAID_FONT_FAMILY = `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, ` +
+  `"Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif`;
+const MERMAID_FONT_SIZE = "13px";
+
 /** Render the stage workflow source into ``host`` as inline SVG. Never
  * throws: a failed load or render degrades to a retry line in place. */
 async function renderStageWorkflowDiagram(host, source) {
   try {
     const mermaid = await loadMermaid();
     if (!mermaidInitialized) {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "neutral",
+        fontFamily: MERMAID_FONT_FAMILY,
+        themeVariables: {
+          fontFamily: MERMAID_FONT_FAMILY,
+          fontSize: MERMAID_FONT_SIZE,
+        },
+        flowchart: { nodeSpacing: 16, rankSpacing: 24 },
+        state: { padding: 8 },
+      });
       mermaidInitialized = true;
     }
     stagePathDiagramSeq += 1;
@@ -728,29 +745,6 @@ function lastEventText(event) {
   }
   const summary = event.summary && event.summary !== type ? ` (${event.summary})` : "";
   return `最近事件：${type}${summary}${stage}`;
-}
-
-/** The project+version of a run (the docs-centre faces are project-domain:
- * the review-round write face resolves them before #32 read / #35 save). */
-async function resolveRunProject(runId) {
-  try {
-    const projects = await requestJson("/api/projects");
-    const rows = Array.isArray(projects) ? projects : projects.projects || [];
-    for (const row of rows) {
-      const overview = await requestJson(
-        `/api/projects/${encodeURIComponent(row.project_id)}/overview`
-      ).catch(() => null);
-      const run = overview && (overview.runs || []).find(
-        (entry) => entry.run_id === runId
-      );
-      if (run) {
-        return { projectId: row.project_id, version: run.version || "" };
-      }
-    }
-    return null;
-  } catch (error) {
-    return null;
-  }
 }
 
 /** The rolling summary card above the track (unchanged v0.10 face). */
@@ -1407,6 +1401,13 @@ function stageTrack(stages, events, detail) {
 
 function acChainList(acChain) {
   const rows = Array.isArray(acChain) ? acChain : [];
+  if (!rows.length) {
+    return element("p", {
+      class: "ac-chain-empty",
+      hidden: true,
+      text: "",
+    });
+  }
   const list = element("ul", { class: "ac-chain", "data-testid": "ac-chain" });
   for (const entry of rows) {
     list.append(
@@ -1416,12 +1417,6 @@ function acChainList(acChain) {
         text: `${entry.ac_id || "unknown"} - ${entry.latest_result || "pending"}`,
       })
     );
-  }
-  if (!rows.length) {
-    list.append(element("li", {
-      class: "ac-chain-empty",
-      text: "验收链尚未开始：进入开发后，每条验收标准会在此逐条展开（AC → 测试 → 结果 → 证据）",
-    }));
   }
   return list;
 }
@@ -1452,15 +1447,6 @@ function selectNode(node, stage, detail, events) {
     candidate.setAttribute("data-state-active", "true");
   }
   if (host) {
-    const previous = host.querySelector('[data-testid="node-detail"] [data-testid="node-agent-session"]');
-    if (previous && typeof previous._stopAgentPoll === "function") {
-      try {
-        previous._stopAgentPoll();
-      } catch (error) {
-        /* non-fatal */
-      }
-    }
-    stopAgentSessionPoll();
     // the pane rebuilds around the SELECTED stage: node detail + that
     // stage's actual workflow + the return pointer (the gate panel yields
     // to the selected node's face — same mount, no overlay).
@@ -1514,173 +1500,6 @@ function nodeDetail(stage, detail, events) {
     element("p", { class: "detail-line", text: `owner: ${owner}` }),
     owningSurfaceEntry()
   );
-  const facts = foldStageFacts(events);
-  // the working-agent block rides the run's current stage node while it is
-  // being worked (active) or parked at its human gate (attention — the
-  // agent's session is still the relevant one; the poll flips the block to
-  // the awaiting face on its first answer). Awaiting is decided by the
-  // response's `awaiting` field, not pre-empted here, so the pre-restart
-  // degraded face (route 404) shows the same way in both states.
-  const nodeState = nodeStateOf(stage, detail, facts);
-  if (
-    detail &&
-    detail.run_id &&
-    detail.stage === stage &&
-    (nodeState === "active" || nodeState === "attention")
-  ) {
-    box.append(agentSessionBlock(detail));
-  }
-  return box;
-}
-
-/** The working-agent session block: who is doing the current stage's work
- * and what it has done lately (``GET /api/runs/{run_id}/activity``, 2s
- * poll). Renders only for the run's current working stage (active, no
- * gate) — a gated stage shows the gate action panel instead. The fetch
- * degrades silently: before the route ships (serve restart) the block
- * keeps its waiting face and never throws. */
-let agentSessionTimer = null;
-
-function stopAgentSessionPoll() {
-  if (agentSessionTimer !== null) {
-    globalThis.clearTimeout(agentSessionTimer);
-    agentSessionTimer = null;
-  }
-}
-
-function shortSessionId(session) {
-  const text = String(session || "");
-  if (text.length <= 20) return text;
-  return `${text.slice(0, 8)}…${text.slice(-8)}`;
-}
-
-function agentSessionFeedItem(item) {
-  const kind = (item && item.kind) || "text";
-  const row = element("div", {
-    class: `activity-item activity-kind-${kind} node-agent-feed-item`,
-    "data-testid": "node-agent-feed-item",
-    "data-kind": kind,
-  });
-  row.append(element("span", { class: "node-agent-feed-ts", text: fmtClock(item && item.ts) }));
-  const label = (item && item.label) || "";
-  const tool = (item && item.tool) || "";
-  if (kind === "tool") {
-    row.append(element("span", {
-      class: "activity-tool",
-      text: `[${tool || "tool"}]${label ? ` ${label}` : ""}`,
-    }));
-  } else if (label) {
-    row.append(element("span", { class: "activity-label", text: ` ${label}` }));
-  }
-  const body = (item && item.text) || "";
-  if (body && kind !== "step") {
-    row.append(element("span", { class: "activity-text", text: ` ${body}` }));
-  } else if (kind === "step" && !label) {
-    row.append(element("span", { class: "activity-step", text: body || "—" }));
-  }
-  return row;
-}
-
-function agentSessionBlock(detail) {
-  const runId = detail.run_id;
-  const box = element("div", {
-    class: "node-agent-session",
-    "data-testid": "node-agent-session",
-  });
-  const status = element("p", {
-    class: "node-agent-session-status",
-    "data-testid": "node-agent-session-status",
-    role: "status",
-    text: "等待 Agent 启动…",
-  });
-  const sessionId = element("p", {
-    class: "node-agent-session-id",
-    "data-testid": "node-agent-session-id",
-    text: "",
-  });
-  sessionId.hidden = true;
-  const feed = element("div", {
-    class: "activity-feed node-agent-feed",
-    "data-testid": "node-agent-feed",
-    "aria-live": "polite",
-  });
-  box.append(status, sessionId, feed);
-  stopAgentSessionPoll();
-  const state = { stopped: false, backoff: false, seen: 0 };
-  box._stopAgentPoll = () => {
-    state.stopped = true;
-  };
-  async function pollOnce() {
-    if (state.stopped || !document.contains(box)) return;
-    const url = `/api/runs/${encodeURIComponent(runId)}/activity`;
-    let payload = null;
-    try {
-      payload = await requestJson(url);
-    } catch (error) {
-      payload = null;
-    }
-    if (state.stopped || !document.contains(box)) return;
-    if (payload === null) {
-      status.textContent = "（会话流不可用，稍后重试）";
-      schedule(true);
-      return;
-    }
-    // every answered poll renders first (the awaiting face still shows the
-    // finished session's items for human review); only the status line and
-    // the stop/continue decision differ per branch.
-    const rendered = render(payload);
-    if (payload.stage !== detail.stage) {
-      state.stopped = true;
-      status.textContent = "该阶段已结束";
-      return;
-    }
-    if (payload.awaiting) {
-      state.stopped = true;
-      status.textContent = "等待人工确认";
-      return;
-    }
-    state.backoff = false;
-    if (!rendered) {
-      status.textContent = "等待 Agent 启动…";
-    }
-    schedule(false);
-  }
-  // Render one answered payload's sessions + feed tail; returns true when a
-  // session was present (the status line is the caller's per-branch face).
-  function render(payload) {
-    const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
-    const items = Array.isArray(payload.items) ? payload.items : [];
-    const role = payload.role || "";
-    const roleName = role ? role.charAt(0).toUpperCase() + role.slice(1) : "Agent";
-    if (!sessions.length) {
-      return false;
-    }
-    status.textContent = `${roleName} 正在工作 · ${items.length} 条动态`;
-    sessionId.textContent = shortSessionId(sessions[0]);
-    sessionId.hidden = false;
-    const latest = items.slice(-30);
-    if (latest.length < state.seen) {
-      feed.replaceChildren();
-      state.seen = 0;
-    }
-    for (const item of latest.slice(state.seen)) {
-      feed.append(agentSessionFeedItem(item));
-    }
-    state.seen = latest.length;
-    try {
-      feed.scrollTop = feed.scrollHeight;
-    } catch (error) {
-      /* non-fatal */
-    }
-    return true;
-  }
-  function schedule(failed) {
-    if (state.stopped) return;
-    agentSessionTimer = globalThis.setTimeout(
-      pollOnce, failed ? 5000 : 2000
-    );
-  }
-  schedule(false);
   return box;
 }
 
@@ -1771,14 +1590,8 @@ function detailPane(detail, events, stages) {
   const gate = detail && detail.awaiting_gate;
   if (gate) {
     pane.append(gateActionPanel(detail, gate));
-    // the awaiting stage is still the run's current working stage: its
-    // agent session block rides below the gate panel (the poll flips it to
-    // the awaiting face on its first answer). The selected/current stage's
-    // actual workflow graph rides after the session block, before the
-    // return pointer.
-    if (detail && detail.run_id && detail.stage) {
-      pane.append(agentSessionBlock(detail));
-    }
+    // the selected/current stage's actual workflow graph rides after the
+    // gate panel, before the return pointer.
     pane.append(stagePathPanel(detail, events, detail && detail.stage));
   } else {
     const stage = (detail && detail.stage) || "";
@@ -1791,8 +1604,18 @@ function detailPane(detail, events, stages) {
   return pane;
 }
 
-/** The awaiting action panel (§1k): reason, impact and the single mapped
- * primary action — 映射外无入口. */
+/** The awaiting action panel (§1k): the single mapped primary action —
+ * 映射外无入口. reason/impact render only for exception gates
+ * (escalation/rollback/hotfix_triage/review_pending_threads); the normal
+ * flow gates (triage/review/approval/AWAIT_RELEASE) stay terse. The head
+ * row holds [gate-status chip + action buttons] on one flex line. */
+const GATE_EXCEPTION_TYPES = new Set([
+  "escalation",
+  "rollback",
+  "hotfix_triage",
+  "review_pending_threads",
+]);
+
 function gateActionPanel(detail, gate) {
   const runId = (detail && detail.run_id) || "";
   const encoded = encodeURIComponent(runId);
@@ -1800,33 +1623,45 @@ function gateActionPanel(detail, gate) {
     class: "gate-panel",
     "data-testid": "gate-panel",
   });
-  panel.append(
+  const head = element("div", { class: "gate-head" });
+  head.append(
     element("p", {
       class: "gate-status",
       "data-testid": "gate-status",
       text: "当前状态：等待人工裁决",
-    }),
-    element("p", {
-      class: "gate-reason",
-      "data-testid": "gate-reason",
-      text: `原因：${gate.reason || "-"}`,
-    }),
-    element("p", {
-      class: "gate-impact",
-      "data-testid": "gate-impact",
-      text: `影响：${gate.impact || "-"}`,
     })
   );
+  const actions = element("div", { class: "gate-actions" });
+  head.append(actions);
+  panel.append(head);
+  const gateType = (gate && gate.type) || "";
+  if (GATE_EXCEPTION_TYPES.has(gateType)) {
+    panel.append(
+      element("p", {
+        class: "gate-reason",
+        "data-testid": "gate-reason",
+        text: `原因：${gate.reason || "-"}`,
+      }),
+      element("p", {
+        class: "gate-impact",
+        "data-testid": "gate-impact",
+        text: `影响：${gate.impact || "-"}`,
+      })
+    );
+  }
   const action = GATE_ACTIONS.includes(gate.primary_action)
     ? gate.primary_action
     : "guidance";
-  panel.append(primaryActionFace(encoded, action));
   if (action === "review") {
-    // §1n 评审轮写入通道 on the run face (FR-0344 / test-plan §9.4): the
-    // reviewed document is editable inline and accepts an inline comment —
-    // both writes ride the command plane (no fake success; failed content
-    // stays in place, retryable).
-    panel.append(reviewWriteFace(detail));
+    // review gate: the dedicated 通过/退回 decision row replaces the old
+    // primary/default + comment/no-comment faces. Buttons ride the head
+    // actions slot (same line as gate-status); comments + hint + feedback
+    // ride below the head.
+    const face = reviewDecisionFace(detail, encoded);
+    for (const btn of face._actions) actions.append(btn);
+    panel.append(face._body);
+  } else {
+    panel.append(primaryActionFace(encoded, action, actions));
   }
   return panel;
 }
@@ -1837,139 +1672,120 @@ const REVIEW_DOC_BY_STAGE = {
   "M-ACC": "acceptance",
 };
 
-function reviewWriteFace(detail) {
-  const runId = (detail && detail.run_id) || "";
-  const encoded = encodeURIComponent(runId);
+/** Review-gate decision row: [通过] posts no_comment (comments must be
+ * empty); [退回] first posts the comments as a clarifications thread, then
+ * posts comment (comments must be non-empty). Returns { _actions, _body }:
+ * the caller mounts _actions into the head-row slot (same line as
+ * gate-status) and _body below the head. */
+function reviewDecisionFace(detail, encoded) {
   const doc = REVIEW_DOC_BY_STAGE[(detail && detail.stage) || ""] || "story";
-  const editor = element("textarea", {
-    class: "review-doc-editor",
-    "data-testid": "review-doc-editor",
-    "aria-label": "评审轮直接修改文档",
-    rows: 6,
+  const body = element("div", { class: "review-decision-face" });
+  const comments = element("textarea", {
+    class: "review-comments",
+    "data-testid": "review-comments",
+    "aria-label": "评审意见（退回时必填，写入文档线程）",
+    rows: 3,
+    placeholder: "填写退回意见（为空则通过）",
   });
-  const save = element("button", {
-    type: "button",
-    class: "gate-action-button",
-    "data-testid": "review-doc-save",
-    text: "save",
-  });
-  const comment = element("input", {
-    type: "text",
-    class: "review-comment-input",
-    "data-testid": "review-comment-input",
-    "aria-label": "评审轮 inline 意见",
-  });
-  const commentSubmit = element("button", {
-    type: "button",
-    class: "gate-action-button",
-    "data-testid": "review-comment-submit",
-    text: "comment",
+  const hint = element("p", {
+    class: "review-hint",
+    "data-testid": "review-hint",
+    text: "通过将直接推进；如需退回请填写意见",
   });
   const feedback = element("p", {
-    class: "review-write-feedback",
-    "data-testid": "review-write-feedback",
+    class: "review-feedback",
+    "data-testid": "review-feedback",
     role: "status",
     hidden: true,
   });
-  // §1n.1/§1o.1b: the review round edits through the docs-centre face #35
-  // (the six-piece docs_revision token is missing-aware and therefore
-  // available in ANY review round — the run-domain #17 face binds the trio
-  // digest, which structurally cannot exist before spec/acceptance are
-  // written). Resolve the run's project, then read #32 / save #35.
-  let revision = null;
-  let docsContext = null;
-  let loaded = false;
-  save.disabled = true; /* enabled once the revision baseline is known */
-  resolveRunProject(runId)
-    .then(async (context) => {
-      docsContext = context;
-      if (context === null) {
-        return;
-      }
-      const payload = await requestJson(
-        `/api/projects/${encodeURIComponent(context.projectId)}/docs/` +
-          `${encodeURIComponent(context.version)}/${encodeURIComponent(doc)}`
-      ).catch(() => null);
-      if (payload && typeof payload.content === "string") {
-        editor.value = payload.content;
-      }
-      revision = payload && payload.revision ? payload.revision : null;
-    })
-    .catch(() => {
-      /* keep the editable face; the save reports its own outcome */
-    })
-    .then(() => {
-      loaded = true;
-      save.disabled = false;
-    });
+  const approve = element("button", {
+    type: "button",
+    class: "gate-action-button",
+    "data-testid": "review-approve",
+    title: 'review → {"action":"no_comment"}',
+    text: "通过",
+  });
+  const ret = element("button", {
+    type: "button",
+    class: "gate-action-button",
+    "data-testid": "review-return",
+    title: "clarifications → review comment",
+    text: "退回",
+  });
   const say = (text, failed) => {
     feedback.textContent = text;
     feedback.hidden = false;
     feedback.setAttribute("data-failed", failed ? "true" : "false");
   };
-  save.addEventListener("click", async () => {
+  const sync = () => {
+    const empty = !(comments.value || "").trim();
+    approve.disabled = !empty;
+    ret.disabled = empty;
+    hint.textContent = empty
+      ? "通过将直接推进；如需退回请填写意见"
+      : "将带意见退回（意见会写入文档线程）";
+  };
+  comments.addEventListener("input", sync);
+  sync();
+  let busy = false;
+  approve.addEventListener("click", async () => {
+    if (busy || approve.disabled) return;
+    busy = true;
     try {
-      if (!loaded || docsContext === null) {
-        docsContext = docsContext || (await resolveRunProject(runId));
-      }
-      if (docsContext === null) {
-        throw new Error("the run's project could not be resolved");
-      }
-      const body = JSON.stringify({ content: editor.value, base_revision: revision });
-      let result;
-      try {
-        // §1n.1 / AC-FR0344-01: the review-round edit binds the docs-centre
-        // face #35 (docs_revision base) — the only face bindable before
-        // spec/acceptance exist (the M-STORY window; the read falls back to
-        // the missing-aware docs_revision there).
-        result = await requestJson(
-          `/api/projects/${encodeURIComponent(docsContext.projectId)}/docs/` +
-            `${encodeURIComponent(docsContext.version)}/${encodeURIComponent(doc)}/edits`,
-          { method: "POST", body }
-        );
-      } catch (docsError) {
-        // a trio-complete dir answers the trio digest: the run-domain review
-        // face #17 binds it (§1o.1b, the v0.9 review-round face).
-        result = await requestJson(
-          `/api/runs/${encoded}/docs/${encodeURIComponent(doc)}/edits`,
-          { method: "POST", body }
-        );
-      }
-      if (result && result.new_revision) {
-        revision = result.new_revision;
-      }
-      say("已保存", false);
+      await requestJson(`/api/runs/${encoded}/review`, {
+        method: "POST",
+        body: JSON.stringify({ action: "no_comment" }),
+      });
+      scheduleGateRefresh(encoded, "review");
     } catch (error) {
       say(`失败: ${error && error.message ? error.message : error}`, true);
+    } finally {
+      busy = false;
+      sync();
     }
   });
-  commentSubmit.addEventListener("click", async () => {
-    const body = (comment.value || "").trim();
-    if (!body) {
-      return;
-    }
-    const anchorLine = (editor.value.split("\n")[0] || "").trim();
+  ret.addEventListener("click", async () => {
+    if (busy || ret.disabled) return;
+    const text = (comments.value || "").trim();
+    if (!text) return;
+    busy = true;
     try {
+      let anchorLine = "";
+      try {
+        const docPayload = await requestJson(
+          `/api/runs/${encoded}/docs/${encodeURIComponent(doc)}`
+        );
+        const content = docPayload && typeof docPayload.content === "string"
+          ? docPayload.content
+          : "";
+        anchorLine = (content.split("\n")[0] || "").trim();
+      } catch (anchorError) {
+        anchorLine = "";
+      }
       await requestJson(`/api/runs/${encoded}/clarifications`, {
         method: "POST",
-        body: JSON.stringify({ doc, body, anchor_line: anchorLine }),
+        body: JSON.stringify({ doc, body: text, anchor_line: anchorLine }),
       });
-      comment.value = "";
-      say("已发表", false);
+      await requestJson(`/api/runs/${encoded}/review`, {
+        method: "POST",
+        body: JSON.stringify({ action: "comment" }),
+      });
+      scheduleGateRefresh(encoded, "review");
     } catch (error) {
       say(`失败: ${error && error.message ? error.message : error}`, true);
+    } finally {
+      busy = false;
+      sync();
     }
   });
-  const face = element("div", { class: "review-write-face" });
-  face.append(editor, save, comment, commentSubmit, feedback);
-  return face;
+  body.append(hint, comments, feedback);
+  return { _actions: [approve, ret], _body: body };
 }
 
-function primaryActionFace(encoded, action) {
+function primaryActionFace(encoded, action, actionsEl) {
   // §1k.2 唯一主要动作入口: one display line (gate-primary-action, never
-  // counted as a gate-action-*) plus exactly one clickable primary button
-  // (gate-action-<primary>) posting the happy-path default; the full
-  // decision options ride gate-decision-* and never inflate the count.
+  // counted as a gate-action-*) below the head; the clickable buttons ride
+  // the head-row actions slot (same line as gate-status).
   const wrap = element("div", { class: "gate-primary-action-wrap" });
   const actionLabel = PRIMARY_ACTION_LABELS[action] || action;
   wrap.append(
@@ -1980,9 +1796,9 @@ function primaryActionFace(encoded, action) {
       text: `建议操作：${actionLabel}`,
     })
   );
+  const mount = actionsEl || wrap;
   const _primaryDefaults = {
     triage: ["/triage", { decision: "go" }],
-    review: ["/review", { action: "no_comment" }],
     approve: null, // bound at click time (revision-bound approval, FR-0308)
     "release-decision": null, // bound at click time (preview-bound, FR-0309)
     retry: ["/retry", {}],
@@ -2002,7 +1818,7 @@ function primaryActionFace(encoded, action) {
         body: JSON.stringify(_default[1]),
       }).then(() => scheduleGateRefresh(encoded, action)).catch(() => undefined);
     });
-    wrap.append(primary);
+    mount.append(primary);
   } else if (action === "approve") {
     // FR-0308: the approval binds the live trio revision the reviewer saw;
     // the UI reads it from the run's spec doc face (same trio digest).
@@ -2031,7 +1847,7 @@ function primaryActionFace(encoded, action) {
         /* readable failure stays on panel; no fake success */
       }
     });
-    wrap.append(primary);
+    mount.append(primary);
   } else if (action === "release-decision") {
     // FR-0309: the decision binds the live preview digest.
     const primary = element("button", {
@@ -2060,15 +1876,11 @@ function primaryActionFace(encoded, action) {
         /* keep panel; no fake success */
       }
     });
-    wrap.append(primary);
+    mount.append(primary);
   }
   if (action === "triage") {
     for (const decision of ["go", "no_go", "park"]) {
-      wrap.append(actionButton(encoded, "/triage", { decision }, decision));
-    }
-  } else if (action === "review") {
-    for (const act of ["comment", "no_comment"]) {
-      wrap.append(actionButton(encoded, "/review", { action: act }, act));
+      mount.append(actionButton(encoded, "/triage", { decision }, decision));
     }
   } else if (action === "approve") {
     // single primary button only (no duplicate decision button).
@@ -2101,12 +1913,12 @@ function primaryActionFace(encoded, action) {
           /* keep panel */
         }
       });
-      wrap.append(btn);
+      mount.append(btn);
     }
   } else if (action === "retry") {
     // single primary button only.
   } else if (action === "return") {
-    wrap.append(
+    mount.append(
       element("span", {
         class: "gate-action-hint",
         text: "confirm the rollback target in the return face below",
@@ -2114,7 +1926,7 @@ function primaryActionFace(encoded, action) {
     );
   } else {
     // guidance: no action endpoint — owning surface direction only (§1k.2).
-    wrap.append(owningSurfaceEntry());
+    mount.append(owningSurfaceEntry());
   }
   return wrap;
 }
