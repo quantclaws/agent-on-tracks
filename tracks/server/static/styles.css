@@ -940,6 +940,18 @@ textarea {
 }
 
 .doc-conflict {
+  /* OOB 固定悬浮层：面板打开时必然可见、必然在最上层 — 不再随 pane
+     滚动跑出视野。祖先链（.doc-editor/.pane-body/.pane/.panes/.main/
+     .view/.workbench）无 transform/filter，fixed 不会被困，无需挂到 body。
+     全局 [hidden]{display:none !important} 已保证 hidden 时不可见。 */
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: var(--s-5);
+  z-index: 9999;
+  width: min(92vw, 720px);
+  max-height: 60vh;
+  overflow: auto;
   margin-top: var(--s-3);
   padding: var(--s-3);
   border: 1px solid var(--danger);
