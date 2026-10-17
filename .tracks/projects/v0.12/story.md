@@ -19,10 +19,10 @@ sha:
 > 3. 允许全局安装和指定目录安装不同版本。即，可能存在这样的情况，全局安装、更新最新版本的 tracks，但正在进行中的开发项目，仍然使用之前的版本。目前不支持开发中的项目升级
 > 4. 支持通过 trac install <path> 命令，把 tracks 安装到正在开发的项目（也可以是空目录）
 
-> **Scribe [RESOLVED]:** trac install <path> 落到非空已有项目时如何处理已有文件？A) 缺啥补啥、已有文件不覆盖（最安全、可预期）；B) 冲突即失败退出并指明手工处理。推荐 A，因为 seed 强调装到正在开发的项目，覆盖或失败都会阻塞正常使用；若选 B 则安装成功率显著降低。请 Human 确认。
+> **Scribe [REOPEN]:** trac install <path> 落到非空已有项目时如何处理已有文件？A) 缺啥补啥、已有文件不覆盖（最安全、可预期）；B) 冲突即失败退出并指明手工处理。推荐 A，因为 seed 强调装到正在开发的项目，覆盖或失败都会阻塞正常使用；若选 B 则安装成功率显著降低。请 Human 确认。
 >> **Scribe:** DRAFT 已将本问题收录为 §6 开放产品决定（推荐 A：缺啥补啥、已有文件不覆盖，见 BS-05），Human 可在评审阶段定夺；本线程关闭，后续以 §6 为准。
 
-> **Scribe [RESOLVED]:** 全局 trac 的服务器启停语义是什么？A) 沿用现有 trac serve 前台运行（Ctrl-C/SIGTERM 停止），全局安装仅保证命令可用；B) 新增后台启停（含 daemon/autostart/log rotation）。推荐 A，因为 serve_cmd 基线明确本版无 daemon/autostart/log rotation（tracks/cli/serve_cmd.py:1-11），seed 仅说启动停止未要求后台化；若选 B 则范围显著扩大。请 Human 确认。
+> **Scribe [REOPEN]:** 全局 trac 的服务器启停语义是什么？A) 沿用现有 trac serve 前台运行（Ctrl-C/SIGTERM 停止），全局安装仅保证命令可用；B) 新增后台启停（含 daemon/autostart/log rotation）。推荐 A，因为 serve_cmd 基线明确本版无 daemon/autostart/log rotation（tracks/cli/serve_cmd.py:1-11），seed 仅说启动停止未要求后台化；若选 B 则范围显著扩大。请 Human 确认。
 >> **Scribe:** DRAFT 已将本问题收录为 §6 开放产品决定（推荐 A：沿用前台 serve 语义，见 BS-03），Human 可在评审阶段定夺；本线程关闭，后续以 §6 为准。
 
 ## 2. 用户意图
@@ -177,12 +177,13 @@ sha:
 
 ## 6. 开放产品决定
 
-**trac install 落到非空已有项目时如何处理已有文件** — 缺啥补啥还是冲突即失败，会改变安装成功率与用户手工负担。方向：A) 缺啥补啥、已有文件不覆盖 B) 冲突即失败退出并指明手工处理。推荐 A，因为 seed 强调装到正在开发的项目，覆盖或失败都会阻塞正常使用。
+无
 
-**全局 trac 的服务器启停语义是否新增后台化** — 沿用前台还是新增后台启停，会显著改变 serve 范围与可观测性负担。方向：A) 沿用现有 trac serve 前台运行（Ctrl-C/SIGTERM 停止），全局安装仅保证命令可用 B) 新增后台启停（含 daemon/autostart/log rotation）。推荐 A，因为 serve_cmd 基线明确本版无 daemon/autostart/log rotation（tracks/cli/serve_cmd.py:1-11），seed 仅说启动停止未要求后台化。
+<!-- T-002/T-003 原为阻塞性问题（安装覆盖策略、serve 后台化），按裁定移出本节：
+     阻塞性问题不得置于开放产品决定，改由讨论线程等待 Human 答复。 -->
 
 ## 7. 必要性与风险
 
 - **既有能力**：`[project.scripts] trac` 与 `dist/` wheel 安装基线；`trac init` 的 `.tracks` 脚手架幂等（`run_cmd.py:51-91`）；`trac serve` 前台运行与启停退出码（`serve_cmd.py`）；`tracks/skills`、`tracks/templates`、`tracks/agents` 与包数据清单（`pyproject.toml:package-data`）；仓库根默认 `opencode.json`；OOB 工作台能力已上线验证（阶段路径 mermaid 图 bf80e88、节点工作流/轮播 5cbb779、聚合与明细 dbd11e0、按轮读接口 2ef0314、可读卡片 7a746d9、本地时间与会话题 0453b4a、静态 no-cache 9e7cfba、门控简明与评审两决策 ffaeed4）。
 - **冲突**：无（多版本共存是对“全局唯一版本”现状的增强，不推翻既有子命令语义；OOB 工作台改进是对时间线/门控展示的增强，已验证，不改变既有 testid 与 API 语义）。
-- **重要风险**：§6 两项长期未决会改变范围（已有文件覆盖策略、serve 后台化）；若安装包内容清单中 skills/templates/默认 opencode.json 的具体所指在后续阶段无确切来源绑定，安装包完整性不可验证；OOB 择要以已验证提交为准，若后续 spec 把纯展示调参重新展开为需求，范围会无意义膨胀。
+- **重要风险**：T-002/T-003 两项待 Human 答复（已有文件覆盖策略、serve 后台化），长期未决会改变范围；若安装包内容清单中 skills/templates/默认 opencode.json 的具体所指在后续阶段无确切来源绑定，安装包完整性不可验证；OOB 择要以已验证提交为准，若后续 spec 把纯展示调参重新展开为需求，范围会无意义膨胀。
