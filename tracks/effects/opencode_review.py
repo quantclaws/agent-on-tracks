@@ -37,6 +37,11 @@ _HUMAN_SPEAKER = "Human"
 # identity the discuss writer uses.
 _LEX_SPEAKER = "Lex"
 
+# SAGE_REVIEW narrowing (M-STORY, v0.12): isomorphic to the FR-0347 LEX
+# narrowing — matched against the current review role through the same
+# ``speaker_key`` identity the discuss writer uses.
+_SAGE_SPEAKER = "Sage"
+
 
 def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
     """The unresolved threads whose adjudication owner is Human (FR-0332).
@@ -413,6 +418,16 @@ class OpencodeReviewMixin:
                     result["verdict"], pending = _lex_review_verdict(doc_paths)
                     if pending:
                         result["pending_threads"] = pending
+                elif substate == "SAGE_REVIEW":
+                    # FR-0347 narrowing is isomorphic for M-STORY's Sage review
+                    # face: only Sage's own pending findings threads constitute
+                    # a revise ground; non-own (incl. Human-initiated) pending
+                    # threads do not block — pass into HUMAN_REVIEW, where the
+                    # initiator handles them (§4.1 has no park on this face).
+                    if _reviewer_own_pending_threads(doc_paths, _SAGE_SPEAKER):
+                        result["verdict"] = "revise"
+                    else:
+                        result["verdict"] = "pass"
                 else:
                     result["verdict"] = "revise"
         return result
