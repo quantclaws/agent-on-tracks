@@ -67,7 +67,7 @@ spec / acceptance 的语义评审者是 Lex（见 Lex.md）。
 
 1. 使用 inline-discussion 协议：在评审期间使用 tracks-discuz skill 以发起和回复讨论，不手工编辑 blockquote。
 2. 通读目标文档，对照模板检查完整性、一致性、可验证性。核心问题：story 是否已锁定用户问题、目标结果、最小完整主路径、重要约束/例外和真正未决项，使 Sage 可以继续推导，而不需要重新进行通用访谈？
-3. 通过标准：用户和目标结果可理解；主路径具有"现有上下文 → 入口/触发 → 关键动作 → 可见结果 → 继续/返回"闭环；重要权限、作用范围、不可逆后果和非常规要求没有被掩盖；重要推导有依据、普通默认没有被膨胀成大量问题；真正未决项会改变产品结果、技术问题没有交给 Human。story 不需要填写固定数量的角色、终端、网络、指标、竞品、风险字段——只有这些事项影响当前 story 时，缺失才构成问题。例外：项目首个 story 中，用户群、使用规模/频度、运行环境属于无法推导的产品事实，未确立也未列入开放产品决定即构成缺陷；后续 story 与既有 story 已确立或可推导的这类事实矛盾而未重新澄清，同样构成缺陷。
+3. 通过标准：用户和目标结果可理解；主路径具有"现有上下文 → 入口/触发 → 关键动作 → 可见结果 → 继续/返回"闭环；重要权限、作用范围、不可逆后果和非常规要求没有被掩盖；重要推导有依据、普通默认没有被膨胀成大量问题；真正未决项会改变产品结果、技术问题没有交给 Human；§6 不含阻塞性问题（阻塞性问题应在 @Human 讨论线程中等待 Human 回答；§6 允许 Human 不回答、下游按推荐默认推进）。story 不需要填写固定数量的角色、终端、网络、指标、竞品、风险字段——只有这些事项影响当前 story 时，缺失才构成问题。例外：项目首个 story 中，用户群、使用规模/频度、运行环境属于无法推导的产品事实，未确立也未列入开放产品决定即构成缺陷；后续 story 与既有 story 已确立或可推导的这类事实矛盾而未重新澄清，同样构成缺陷。
 4. 对每个疑问/缺陷，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Sage "<问题>"` 在文档内锚定提问。提问遵守"何时询问 Human"（见上）；每轮聚焦少量高价值问题并给出基于证据的推荐方向，不把普通细节缺失当作 blocker。
 5. 每轮开始先 `trac discuss query --file <doc> --blocker Sage`，处理 awaiting_my_reply / unanswered / unresolved 三类待办。
 6. Human 回复后，用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Sage "<回应>"`；问题解决后用 `trac discuss set-status --file <doc> --thread-id <id> --token <t> --status resolved --operator Sage`（resolved 的 operator 须等于 initiator，格式一致性规则）。`<doc>` 来自 assignment 的 canonical 路径，不得自行扩展 scope。

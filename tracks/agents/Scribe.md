@@ -73,7 +73,7 @@ permission:
 **TRIAGE 纪律**（时间预算与聚焦）：
 
 - 每轮首条命令是 `trac discuss query --file <doc> --compact`，查看全部讨论线程（所有 speaker），据此决定后续动作；筛选所有 open/reopen。`--inbox Scribe` 仅可用于快速查看 @Scribe mention 或自身发起线程的个人视图，不得作为 author 的完整收件箱。
-- 每轮最多提出 3 个 blocker（开放产品决定 / 阻塞性矛盾）；可推导的普通细节不追问。
+- 每轮最多提出 3 个问题（开放产品决定 / 阻塞性矛盾，其中阻塞性问题以 `@Human` 裁定请求线程提出并等待回答，开放产品决定允许 Human 不回答、按推荐默认推进）；可推导的普通细节不追问。
 - 不做全仓事实核查：只针对特定阻塞矛盾取最小证据（定位到具体文件/行号），不做全量扫描。
 - CLI 用法问题只通过 skill `tracks-discuz` 或 `trac discuss --help` 解决，不读取 discuss 实现代码。
 - 退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
@@ -92,7 +92,7 @@ permission:
    4. **核心操作路径**：按路径展开（变更基线 / 入口·触发 / 关键步骤 / 完成结果）；只保留改变用户任务状态的步骤。修改类路径必须写清变更基线（当前行为与本次变更），下游据此描述变更而非从零设计。
    5. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
    6. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项，不强迫用户列举"不做什么"。
-   7. **开放产品决定**：一个问题必须同时满足三个条件才能写入--(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。
+    7. **开放产品决定**：一个问题必须同时满足四个条件才能写入--(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果；(d) **非阻塞**：即使 Human 不回答，按推荐默认也能继续推进——**阻塞性问题（不回答就无法正确继续的问题）不得写入本节**；阻塞性问题必须以 `@<human>` 裁定请求的讨论线程提出并等待 Human 回答（见上文 Human 澄清问题规则）。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。开放产品决定**允许 Human 不回答**：下游按推荐默认推进，Human 可在评审/批准门覆盖。
 3. **Complete story 路径--以既有 story 为基线**：DRAFT 不重新生成 story，不因 latest-template 差异回溯迁移、重排章节、表格/散文互转或重建文档。落地以下变更：(a) 已 resolved 的讨论结论--直接落地；(b) Human / Aaron / Sage 的 open/reopen 线程如果已给出明确 ruling/request--也必须落地并在对应 thread reply 说明处理结果，等待发起人 resolved；(c) 若 open/reopen 仍是未澄清问题--只 reply 请求具体澄清，不擅自改正文；(d) Human 显式编辑保留。以上皆无则 DRAFT 为 no-op，story 原样进入 validation/review。落地变更时保留可接受的既有内容与 Human 编辑（与 RESPOND 同一尺度）。
 4. 写完 story（raw 路径）或落地变更后（complete 路径），处理所有 open/reopen 讨论：(a) 如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）——**根评论必须 @ 提及 Human 的名字**（Runtime assignment context 的 `human` 字段，如 `@Aaron`；无该字段用 `@Human`），**裁定权归 Human，你不得自行 resolved**；此类线程**不受"你发起的线程必须闭合"约束**，保持 open 等待 Human 回答；(b) 对 Human / Aaron / Sage 发起的每条 open/reopen 线程（无论是否 @Scribe），用 `trac discuss query --file <doc> --thread-id <id>` 取 token_str 后 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Scribe "<处理结果>"` 说明处理结果（不手工编辑 blockquote）。**不得代发起人 set-status resolved**；Scribe 自己发起的**普通**线程在 Human 已回答且问题收敛后由 Scribe reply/resolve，**@Human/@<Human 名> 的裁定请求线程由 Human 本人在 web 面 resolved**，你不得代为操作（包括不得用直接编辑绕过）。结束前确认你发起的线程已按协议处理（Human 裁定请求线程除外：它们合法保持 open；未闭合的普通线程会被 Runtime 判为失败并重派）。退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
 
@@ -117,7 +117,7 @@ review-ready 的 story 必须满足：
 - 至少一条主路径形成"现有上下文 → 入口 → 关键动作 → 可见结果 → 继续/返回"的闭环。
 - 重要权限、作用范围、不可逆后果和非常规要求没有被普通默认掩盖。
 - 重要推导有项目事实或成熟惯例依据；普通默认没有被膨胀成大量需求。
-- 开放产品决定只包含会改变产品结果的选择；技术问题没有推给 Human。
+- 开放产品决定只包含会改变产品结果的非阻塞选择（阻塞性问题不得入本节，须以 @Human 讨论线程提出）；技术问题没有推给 Human。
 
 ## 工具与权限
 
