@@ -58,6 +58,29 @@ class _ActAudit:
 class OpencodeActMixin:
     """The dispatch main chain + failure/result construction."""
 
+    def _assignment_context(self, assignment: dict | None) -> str:
+        """Prompt-side assignment context with the Human display name.
+
+        Overrides ``OpencodePromptMixin._assignment_context`` (earlier in the
+        backend MRO): a shallow copy of the assignment gains the ``"human"``
+        key (the effective Human name for this repo — the auth-table
+        display_name, else ``git config user.name``, else ``"Human"``), so
+        agents learn which @mention carries adjudication power. The caller's
+        dict is never mutated and every pre-existing field is preserved, so
+        parity faces derived from the assignment are unaffected.
+        """
+        if not assignment:
+            return ""
+        from tracks.discuss.gate import human_identity
+
+        try:
+            human = human_identity(getattr(self, "repo", None))
+        except Exception:
+            human = "Human"
+        enriched = dict(assignment)
+        enriched.setdefault("human", human)
+        return super()._assignment_context(enriched)
+
     def act(
         self,
         role: str,

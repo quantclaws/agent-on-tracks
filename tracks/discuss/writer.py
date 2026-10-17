@@ -184,7 +184,9 @@ def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str, new_b
     return "\n".join(lines) + _nl(text)
 
 
-def set_status(text: str, thread_id: str, token: dict, status: str, operator: str) -> str:
+def set_status(
+    text: str, thread_id: str, token: dict, status: str, operator: str, repo_or_cwd=None
+) -> str:
     """Change a root thread's status (FR-090 format-consistency rules).
 
     resolved -> the initiator OR the root's single requested adjudicator
@@ -192,12 +194,19 @@ def set_status(text: str, thread_id: str, token: dict, status: str, operator: st
     CLI's FR-0314.4 owner rule into an unsatisfiable requirement whenever
     the two parties differ — nobody, not even the Human, could close such a
     thread); reopen -> anyone.
+
+    A Human-adjudicated thread (root @mentions the Human by display name or
+    the legacy @Human) is closed by the Human under either name — the
+    display name and the "Human" alias are interchangeable here, so a
+    renamed binding never deadlocks the thread. The CLI keeps such threads
+    web-only (it refuses them before reaching this layer); the web resolves
+    with the authenticated actor.
     """
     if status not in ("resolved", "reopen"):
         raise WriteError(f"invalid status {status!r} (use resolved|reopen)")
     thread = _thread(text, thread_id, token)
     if status == "resolved":
-        from tracks.discuss.gate import adjudication_owner
+        from tracks.discuss.gate import adjudication_owner, human_keys, is_human_owner
 
         allowed = {speaker_key(thread.initiator)}
         owner = adjudication_owner(text, thread_id)
@@ -206,7 +215,10 @@ def set_status(text: str, thread_id: str, token: dict, status: str, operator: st
             # requested party (the CLI already enforces the choice and keeps
             # @Human requests web-only); the old initiator-only rule composed
             # into an unsatisfiable conjunction with it.
-            allowed = {speaker_key(owner)}
+            if is_human_owner(owner, repo_or_cwd):
+                allowed = human_keys(repo_or_cwd)
+            else:
+                allowed = {speaker_key(owner)}
         if speaker_key(operator) not in allowed:
             raise WriteError(
                 "resolved requires "

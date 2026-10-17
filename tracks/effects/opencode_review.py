@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from tracks.discuss.gate import adjudication_owner, check_ready
+from tracks.discuss.gate import adjudication_owner, check_ready, is_human_owner
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 from tracks.effects.devon_evidence import _result_file_payload
@@ -27,9 +27,8 @@ from .opencode_audit import _discussion_snapshot, _docset_text
 
 # FR-0332 §1s.1: the LEX_REVIEW park verdict token is owned by the kernel
 # reducer module (machine_verdicts) so the producer and the reducer agree on
-# one definition. ``_HUMAN_SPEAKER`` is compared through ``speaker_key`` (the
-# same normalized/lowercased identity the discuss writer uses).
-_HUMAN_SPEAKER = "Human"
+# one definition. The Human owner check is ``is_human_owner`` (display name
+# or the legacy @Human alias, via gate.human_identity).
 
 # IF-REVIEW-002 §1p.2 (FR-0347, v0.11): the LEX_REVIEW revise branch narrows
 # to the reviewer's OWN pending findings threads — the thread initiator
@@ -51,9 +50,12 @@ def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
     adjudication owner); returns ``[]`` as soon as one unresolved thread is
     owned by anyone else — that review is a ``revise``, never a park. The
     computation is server-side from the tracks/discuss parse and ignores any
-    agent self-report (interfaces §1s.1)."""
+    agent self-report (interfaces §1s.1).
+
+    The Human matches by display name or the legacy ``@Human`` alias
+    (``is_human_owner``) — a renamed binding never breaks the park."""
     pending: list[dict] = []
-    human_key = speaker_key(_HUMAN_SPEAKER)
+    ctx = doc_paths[0].parent if doc_paths else None
     for path in doc_paths:
         if not path.exists():
             continue
@@ -62,7 +64,7 @@ def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
             if thread.status == "resolved":
                 continue
             owner = adjudication_owner(text, thread.thread_id)
-            if owner is None or speaker_key(owner) != human_key:
+            if owner is None or not is_human_owner(owner, ctx):
                 return []
             pending.append(
                 {

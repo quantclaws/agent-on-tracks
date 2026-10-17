@@ -22,7 +22,7 @@ import zlib
 from pathlib import Path
 
 from tracks.discuss import writer
-from tracks.discuss.gate import adjudication_owner, check_ready
+from tracks.discuss.gate import adjudication_owner, check_ready, is_human_owner
 from tracks.discuss.locate import comment_token, token_for
 from tracks.discuss.model import iter_comments, speaker_key
 from tracks.discuss.parser import parse_threads
@@ -306,7 +306,7 @@ def _set_status(repo: Path, ns) -> int:
         # and must never impersonate the Human (AC-FR0314-04 test 3).
         owner = adjudication_owner(text, ns.thread_id)
         if owner is not None:
-            if speaker_key(owner) == speaker_key("Human"):
+            if is_human_owner(owner, repo):
                 raise writer.WriteError(
                     "a @Human-requested thread resolves on the authenticated "
                     "web surface, not the CLI (FR-0314.4)"
@@ -317,7 +317,8 @@ def _set_status(repo: Path, ns) -> int:
                     "(FR-0314.4, #210)"
                 )
     _atomic_write(
-        target, lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator)
+        target,
+        lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator, repo),
     )
     print("ok")
     return 0

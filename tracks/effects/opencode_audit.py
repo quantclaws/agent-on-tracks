@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from tracks.discuss.delta import is_discussion_delta
-from tracks.discuss.gate import check_ready
+from tracks.discuss.gate import adjudication_owner, check_ready, is_human_owner
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
@@ -80,7 +80,9 @@ def _require_target_diff(
             stderr=proc.stderr,
         )
 
-def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
+def _unresolved_role_threads(
+    doc_paths: list[Path], role: str, repo_or_cwd=None
+) -> list[str]:
     """Threads in the target doc-set INITIATED by ``role`` and not resolved.
 
     Audit predicate: ``speaker_key(initiator) == speaker_key(role)`` and
@@ -89,15 +91,31 @@ def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
     such thread is an offence (closure unverified); for reviewer dispatches
     these threads ARE the anchored findings a revise verdict must carry. With
     a single target doc the offenders are thread ids; a multi-doc set (the
-    M-DESIGN trio) names them ``doc:T-NNN`` so the ids stay unambiguous."""
+    M-DESIGN trio) names them ``doc:T-NNN`` so the ids stay unambiguous.
+
+    Exempt: threads whose adjudication owner is the Human (root @mentions
+    the Human by display name or the legacy @Human). They belong to the
+    Human to close, never to the author — the same partition the LEX park
+    face uses (``_pending_human_threads`` in opencode_review), so a Scribe
+    adjudication request legitimately stays open past DRAFT.
+
+    ``repo_or_cwd`` is the identity context for the Human-name lookup
+    (writer DRAFT dispatches observe a worktree whose walk-up never reaches
+    the main tree's service.db — callers pass the main repo); it defaults
+    to the first doc's parent, which suits main-tree reviewers."""
     role_key = speaker_key(role)
     multi = len(doc_paths) > 1
+    ctx = repo_or_cwd if repo_or_cwd is not None else (doc_paths[0].parent if doc_paths else None)
     offending = []
     for path in doc_paths:
         if not path.exists():
             continue
-        for thread in parse_threads(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        for thread in parse_threads(text):
             if speaker_key(thread.initiator) == role_key and thread.status != "resolved":
+                owner = adjudication_owner(text, thread.thread_id)
+                if owner is not None and is_human_owner(owner, ctx):
+                    continue
                 label = f"{path.name}:{thread.thread_id}" if multi else thread.thread_id
                 offending.append(label)
     return offending
@@ -431,8 +449,12 @@ class OpencodeAuditMixin:
             # Author DRAFT (live run041): every thread the author initiated
             # must be resolved before the dispatch may finish. RESPOND and
             # reviewer dispatches are exempt: replies/findings legitimately
-            # stay open for the other party's next round.
-            offending = _unresolved_role_threads(doc_paths, role)
+            # stay open for the other party's next round. The Human-name
+            # lookup is rooted at the main repo: a writer DRAFT observes a
+            # worktree whose walk-up never reaches the main service.db.
+            offending = _unresolved_role_threads(
+                doc_paths, role, getattr(self, "repo", None)
+            )
             if offending:
                 return self._unresolved_threads_result(
                     diff_ref,
@@ -465,7 +487,9 @@ class OpencodeAuditMixin:
             if (
                 substate not in ("LEX_REVIEW", "SAGE_REVIEW")
                 and not ready
-                and not _unresolved_role_threads(doc_paths, role)
+                and not _unresolved_role_threads(
+                    doc_paths, role, getattr(self, "repo", None)
+                )
                 and not structured_findings
             ):
                 return self._revise_without_findings_result(
