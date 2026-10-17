@@ -7,6 +7,8 @@ status: draft
 sha:
 ---
 
+> **Aaron:** 已回答问题，请继续
+
 > **Aaron:** 需要把我们近期 oob中所做的修改，择要加入 story，以便进行跟踪。
 >> **Scribe:** 已择要纳入：新增 §3.4 运行工作流可观察（阶段路径 mermaid 图 bf80e88、节点工作流/轮播 5cbb779、聚合与明细 dbd11e0、按轮读接口 2ef0314）与 §3.5 运行卡片与门控评审可读（可读卡片 7a746d9、本地时间与会话题 0453b4a、静态 no-cache 9e7cfba、门控简明与评审两决策 ffaeed4），对应 BS-08 至 BS-13；§5 纳入不得回退约束并把纯展示调参列为 Out-of-Scope，§7 补充 OOB 既有能力与范围膨胀风险。原始 seed §1 未动。请 Aaron 确认择要口径是否合适，确认后由你 resolved 本线程。
 
@@ -21,9 +23,11 @@ sha:
 
 > **Scribe [REOPEN]:** trac install <path> 落到非空已有项目时如何处理已有文件？A) 缺啥补啥、已有文件不覆盖（最安全、可预期）；B) 冲突即失败退出并指明手工处理。推荐 A，因为 seed 强调装到正在开发的项目，覆盖或失败都会阻塞正常使用；若选 B 则安装成功率显著降低。请 Human 确认。
 >> **Scribe:** DRAFT 已将本问题收录为 §6 开放产品决定（推荐 A：缺啥补啥、已有文件不覆盖，见 BS-05），Human 可在评审阶段定夺；本线程关闭，后续以 §6 为准。
+>> **Aaron:** 覆盖安装；安装不应该与用户的项目文件冲突。暂不允许用户编辑 tracks 的 skills, templates 等文件。
 
 > **Scribe [REOPEN]:** 全局 trac 的服务器启停语义是什么？A) 沿用现有 trac serve 前台运行（Ctrl-C/SIGTERM 停止），全局安装仅保证命令可用；B) 新增后台启停（含 daemon/autostart/log rotation）。推荐 A，因为 serve_cmd 基线明确本版无 daemon/autostart/log rotation（tracks/cli/serve_cmd.py:1-11），seed 仅说启动停止未要求后台化；若选 B 则范围显著扩大。请 Human 确认。
 >> **Scribe:** DRAFT 已将本问题收录为 §6 开放产品决定（推荐 A：沿用前台 serve 语义，见 BS-03），Human 可在评审阶段定夺；本线程关闭，后续以 §6 为准。
+>> **Aaron:** 不存在全局 trac 服务器。只在已安装 tracks 的项目目录下，允许运行 tracks 服务器。这个服务器在 macos/linux 下，应该是后台服务；在 windows 下暂不支持后台服务。
 
 ## 2. 用户意图
 
