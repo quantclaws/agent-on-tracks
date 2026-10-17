@@ -123,6 +123,8 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
   let items = Array.isArray(threads) ? threads.slice() : [];
   let overlay = null;
   let replyContext = { runId, doc, onReload };
+  // Unresolved-only is a TWO-STATE toggle (not a one-shot filter): the choice
+  // survives re-renders and thread reloads until toggled back to "show all".
   // Expanded reply forms + per-thread drafts (a re-render must not drop
   // what the user typed in another thread's box).
   const expanded = new Set();
@@ -140,10 +142,12 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
     "data-testid": "discussion-next",
     text: "Next",
   });
+  let unresolvedFilter = false;
   const unresolvedButton = element("button", {
     type: "button",
     class: "discussion-unresolved",
     "data-testid": "discussion-filter-unresolved",
+    "aria-pressed": "false",
     text: "Unresolved only",
   });
   const controls = element("div", { class: "discussion-controls" }, [
@@ -152,7 +156,10 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
   ]);
 
   nextButton.addEventListener("click", () => nextThread());
-  unresolvedButton.addEventListener("click", () => renderList(unresolvedOnly()));
+  // Two-state toggle: unresolved-only <-> show all. The state lives on the
+  // nav (not the DOM) so setThreads re-renders keep it; the button face
+  // (aria-pressed + label) always reflects the current state.
+  unresolvedButton.addEventListener("click", () => toggleUnresolvedFilter());
 
   // The overlay mounts only while shown: hiding removes it from the document
   // (the closed state owns no surface at all).
@@ -172,34 +179,80 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
     if (open) {
       if (!overlay) overlay = mount();
       if (!overlay.isConnected) host().append(overlay);
-      renderList(items);
+      syncUnresolvedButton();
+      renderList(visibleRows());
     } else if (overlay && overlay.isConnected) {
       overlay.remove();
     }
     return open;
   }
 
+  function isOpen() {
+    return open;
+  }
+
+  // The pane-bar quick-nav (↯/!) ensures the overlay is open rather than
+  // blindly flipping it — an already-open overlay must stay open.
+
   function host() {
     return document.querySelector('[data-testid="doc-editor"]') || document.body;
   }
 
+  // The rows the user currently sees — the full list, or the
+  // unresolved-only subset while the filter is on. Navigation walks THIS
+  // view (cycling), so Next and the pane-bar ↯ agree with the overlay.
+  function visibleRows() {
+    return unresolvedFilter ? unresolvedOnly() : items;
+  }
+
   function nextThread() {
-    if (!items.length) return null;
-    index = (index + 1) % items.length;
-    const thread = items[index];
-    renderList(items, thread.thread_id);
+    const rows = visibleRows();
+    if (!rows.length) return null;
+    index = (index + 1) % rows.length;
+    const thread = rows[index];
+    renderList(rows, thread.thread_id);
     if (onNavigate) onNavigate(thread.entry_line, thread);
     return thread;
+  }
+
+  // The pane-bar "!" control: jump straight to the next UNRESOLVED thread
+  // in the current view (no cursor wandering — one step, one landing).
+  function nextUnresolved() {
+    const rows = visibleRows();
+    if (!rows.length) return null;
+    for (let step = 1; step <= rows.length; step += 1) {
+      const candidate = rows[(index + step) % rows.length];
+      if (candidate && candidate.status !== "resolved") {
+        index = rows.indexOf(candidate);
+        renderList(rows, candidate.thread_id);
+        if (onNavigate) onNavigate(candidate.entry_line, candidate);
+        return candidate;
+      }
+    }
+    return null; // everything in view is resolved — stay put
   }
 
   function unresolvedOnly() {
     return items.filter((thread) => thread.status !== "resolved");
   }
 
+  function toggleUnresolvedFilter() {
+    unresolvedFilter = !unresolvedFilter;
+    index = -1;
+    syncUnresolvedButton();
+    renderList(visibleRows());
+    return unresolvedFilter;
+  }
+
+  function syncUnresolvedButton() {
+    unresolvedButton.setAttribute("aria-pressed", unresolvedFilter ? "true" : "false");
+    unresolvedButton.textContent = unresolvedFilter ? "Show all" : "Unresolved only";
+  }
+
   function setThreads(next) {
     items = Array.isArray(next) ? next.slice() : [];
     index = -1;
-    renderList(items);
+    renderList(visibleRows());
     return items.length;
   }
 
@@ -209,7 +262,7 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
       doc: next.doc ?? null,
       onReload: next.onReload ?? null,
     };
-    renderList(items);
+    renderList(visibleRows());
   }
 
   function renderList(rows, activeId) {
@@ -310,7 +363,7 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
         drafts.delete(id);
         expanded.delete(id);
         if (replyContext.onReload) await replyContext.onReload();
-        else renderList(items);
+        else renderList(visibleRows());
       } catch (error) {
         errorLine.textContent = error && error.message ? error.message : String(error);
         errorLine.hidden = false;
@@ -322,6 +375,6 @@ export function createDiscussionNav({ threads = [], onNavigate = null, runId = n
     return box;
   }
 
-  renderList(items);
-  return { toggle, nextThread, unresolvedOnly, setThreads, setReplyContext };
+  renderList(visibleRows());
+  return { toggle, isOpen, nextThread, nextUnresolved, unresolvedOnly, setThreads, setReplyContext };
 }

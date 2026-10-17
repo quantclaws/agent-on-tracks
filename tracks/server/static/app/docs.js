@@ -351,7 +351,11 @@ function createDocsWorkbench(projectId, versions) {
     // editor renders no toolbar row of its own.
     if (pane.editorSlot) pane.editorSlot.replaceChildren(editor.saveControl);
     pane.body.append(editor.root);
-    discussions = createDiscussionNav({ threads: [] });
+    // Discussion navigation lands IN the document: the overlay's Next and
+    // the pane-bar ↯/! controls scroll to the thread's anchor and flash it.
+    const navigateToThread = (entryLine, thread) =>
+      focusThreadAnchor(pane, thread, entryLine);
+    discussions = createDiscussionNav({ threads: [], onNavigate: navigateToThread });
     const reloadThreads = () =>
       loadThreads(projectId, version, docName, discussions).catch(() => null);
     discussions.setReplyContext({
@@ -366,17 +370,12 @@ function createDocsWorkbench(projectId, versions) {
       discussions.toggle();
     };
     pane.root.querySelector('[data-testid="pane-next-discussion"]').onclick = () => {
-      discussions.toggle();
+      if (!discussions.isOpen()) discussions.toggle();
       discussions.nextThread();
     };
     pane.root.querySelector('[data-testid="pane-next-unresolved"]').onclick = () => {
-      discussions.toggle();
-      // advance until the cursor lands on an unresolved thread (a full
-      // cycle gives up — everything may be resolved)
-      for (let step = 0; step < 32; step += 1) {
-        const thread = discussions.nextThread();
-        if (!thread || thread.status !== "resolved") break;
-      }
+      if (!discussions.isOpen()) discussions.toggle();
+      discussions.nextUnresolved();
     };
     // The ir host renders the body live: its markdown serialization is the
     // editable document. Any asset/init failure falls back to the editable
@@ -445,4 +444,102 @@ async function loadThreads(projectId, version, docName, discussions) {
   } catch (error) {
     discussions.setThreads([]);
   }
+}
+
+/**
+ * Discussion navigation landing (the ``onNavigate`` face): scroll the
+ * document to the thread's anchor and flash it. The thread projection
+ * carries ``summary`` (the root body prefix) as the content anchor plus
+ * ``entry_line`` (the 1-indexed root line) for the plain-text fallback.
+ * Every path is fail-closed silent — a missed anchor never throws.
+ */
+export function focusThreadAnchor(pane, thread, entryLine) {
+  try {
+    if (!pane || !pane.body || !thread) return false;
+    const needle = threadAnchorText(thread);
+    const host = pane.body.querySelector('[data-testid="vditor-ir-host"]');
+    if (host && needle) {
+      const hit = findBlockWithText(host, needle);
+      if (hit) {
+        hit.scrollIntoView({ block: "center" });
+        hit.classList.add("thread-flash");
+        globalThis.setTimeout(() => hit.classList.remove("thread-flash"), 1500);
+        return true;
+      }
+    }
+    // Textarea fallback (the source area or the no-vditor fallback): select
+    // the anchor line so the caret — and the scroll — land on the thread.
+    const area = pane.body.querySelector(
+      '[data-testid="doc-editor-content"], [data-testid="doc-editor-fallback"]'
+    );
+    if (area && typeof area.value === "string") {
+      const lines = area.value.split("\n");
+      const lineNo = anchorLineNo(lines, needle, entryLine);
+      if (lineNo !== null) {
+        const start = lines.slice(0, lineNo).join("\n").length + (lineNo > 0 ? 1 : 0);
+        const end = start + lines[lineNo].length;
+        if (typeof area.setSelectionRange === "function") {
+          area.setSelectionRange(start, Math.max(start, end));
+        }
+        if (typeof area.focus === "function") area.focus({ preventScroll: true });
+        if (area.value.length) {
+          area.scrollTop = Math.floor((area.scrollHeight * start) / area.value.length);
+        }
+        return true;
+      }
+    }
+  } catch (error) {
+    // locate hint only — the thread list stays usable without the landing
+  }
+  return false;
+}
+
+function threadAnchorText(thread) {
+  for (const key of ["summary", "anchor_text", "root_text"]) {
+    const value = thread ? thread[key] : null;
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function collapseWhitespace(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+// The smallest block containing the anchor text (the deepest match wins —
+// an ancestor's textContent always contains its children's, so the shortest
+// containing element is the tightest highlight target). Guarded against
+// pathological DOM sizes; null when nothing contains the anchor.
+function findBlockWithText(host, needle) {
+  const target = collapseWhitespace(needle).slice(0, 40);
+  if (!target || !host) return null;
+  let best = null;
+  let bestLen = Infinity;
+  let seen = 0;
+  const walker = document.createTreeWalker(host, NodeFilter.SHOW_ELEMENT);
+  let node = walker.nextNode();
+  while (node && seen < 20000) {
+    seen += 1;
+    const text = collapseWhitespace(node.textContent || "");
+    if (text && text.includes(target) && text.length < bestLen) {
+      best = node;
+      bestLen = text.length;
+    }
+    node = walker.nextNode();
+  }
+  return best;
+}
+
+// The 0-indexed line to select: first line containing the anchor text, else
+// the projected entry_line (1-indexed root line), else null.
+function anchorLineNo(lines, needle, entryLine) {
+  if (needle) {
+    const target = collapseWhitespace(needle).slice(0, 40);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (target && collapseWhitespace(lines[index]).includes(target)) return index;
+    }
+  }
+  const line = Number(entryLine);
+  if (Number.isInteger(line) && line >= 1 && line <= lines.length) return line - 1;
+  return null;
 }

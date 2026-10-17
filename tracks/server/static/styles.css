@@ -1062,6 +1062,14 @@ textarea {
   color: var(--danger);
 }
 
+/* the discussion-navigation landing flash (onNavigate): the anchored block
+   in the document highlights briefly after each Next/unresolved jump */
+.thread-flash {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  background: var(--bg-subtle);
+}
+
 /* -- run timeline (§1q) ----------------------------------------------------- */
 
 /* the run's identity opens the timeline face (no main header strip) */
