@@ -7,6 +7,8 @@ status: draft
 sha:
 ---
 
+> **Aaron:** 需要把我们近期 oob中所做的修改，择要加入 story，以便进行跟踪。
+
 # S-001: tracks 安装包与多版本安装：全局 trac 与 trac install <path>
 
 ## 1. 原始输入
