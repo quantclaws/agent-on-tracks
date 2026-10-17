@@ -1544,6 +1544,16 @@ textarea {
   color: var(--fg-muted);
 }
 
+.stage-round-live-caption {
+  margin: 0 0 var(--s-1);
+  color: var(--fg-muted);
+  font-size: var(--fs-caption);
+}
+
+.stage-round-live {
+  max-height: 240px;
+}
+
 .node-overlay {
   margin-top: var(--s-4);
   padding: var(--s-3);

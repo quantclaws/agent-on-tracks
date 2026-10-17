@@ -43,6 +43,8 @@ _STDERR_HEAD = 2000  # stderr display quota (chars, head)
 _SUMMARY_HEAD = 300  # round-list summary quota (chars)
 _THINKING_TAIL = 30  # thinking-item tail quota (matches intake face)
 _THINKING_HEAD = 1200  # per-thinking-item quota (matches intake face)
+_LIVE_TAIL = 40  # live-item tail quota (text/tool/step/reasoning, time-ordered)
+_LIVE_TEXT = 1200  # per-live-item text quota (matches intake face)
 _SESSION_SLOP_S = 120.0  # session min-ts tolerance before dispatch start
 
 
@@ -212,34 +214,85 @@ def _match_session(
     states: list[tuple[Path, Any]], version: str,
     start_ts: str, end_ts: str | None,
 ) -> tuple[str | None, dict[str, dict[str, Any]]]:
-    """Session whose items start closest to a dispatch start.
+    """Session whose items overlap a dispatch window, anchored at start.
 
-    Candidates are the ``runs[version]`` sessions whose items' minimum ts
-    falls in ``[start_ts-120s, end_ts+120s]`` (``+∞`` when the round is
-    still running); the winner minimizes ``|min_ts - start_ts`` subject
-    to ``min_ts >= start_ts-120s``.
+    Candidates are the ``runs[version]`` sessions with at least one item
+    in ``[start_ts-120s, end_ts+120s]`` (``+∞`` when the round is still
+    running). Preference goes to sessions active at or after the dispatch
+    start — the winner minimizes the gap of its first such item to the
+    start — so a round reusing a long-lived session still matches its own
+    live tail instead of being excluded by the session's old first item.
+    When no session reaches the start (clock skew), it falls back to the
+    closest pre-start floor within the 120s tolerance.
     """
     sessions = sorted(
         {item for _, state in states for item in state.runs.get(version, ())}
     )
     start = intake_activity._ts_key(start_ts)
     ceiling = intake_activity._ts_key(end_ts) + _SESSION_SLOP_S if end_ts else float("inf")
+    floor = start - _SESSION_SLOP_S
     best: str | None = None
     best_items: dict[str, dict[str, Any]] = {}
     best_gap: float | None = None
+    fallback: str | None = None
+    fallback_items: dict[str, dict[str, Any]] = {}
+    fallback_gap: float | None = None
     for session in sessions:
         items = _merged_items(states, session)
         if not items:
             continue
-        floor = min(
+        keys = [
             intake_activity._ts_key(item.get("ts", "")) for item in items.values()
-        )
-        if floor < start - _SESSION_SLOP_S or floor > ceiling:
+        ]
+        if not any(floor <= key <= ceiling for key in keys):
             continue
-        gap = abs(floor - start)
-        if best_gap is None or gap < best_gap:
-            best, best_items, best_gap = session, items, gap
-    return best, best_items
+        post = [key for key in keys if start <= key <= ceiling]
+        if post:
+            gap = min(post) - start
+            if best_gap is None or gap < best_gap:
+                best, best_items, best_gap = session, items, gap
+            continue
+        pre = [key for key in keys if key >= floor]
+        if pre:
+            gap = start - max(pre)
+            if fallback_gap is None or gap < fallback_gap:
+                fallback, fallback_items, fallback_gap = session, items, gap
+    if best is not None:
+        return best, best_items
+    return fallback, fallback_items
+
+
+def _live_tail(items: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Time-ordered tail (40) live session items for a running round.
+
+    All kinds (text/tool/step/thinking) are kept; each row is
+    ``{ts, kind, tool, label, text}`` with text clipped to 1200 chars.
+    The intake cache already stores this shape (text pre-clipped), so
+    this only re-clips defensively and sorts by timestamp.
+    """
+    ordered = sorted(
+        items.values(), key=lambda item: intake_activity._ts_key(item.get("ts", ""))
+    )
+    tail = ordered[-_LIVE_TAIL:]
+    rows: list[dict[str, Any]] = []
+    for item in tail:
+        kind = item.get("kind")
+        text = item.get("text")
+        text = text[:_LIVE_TEXT] if isinstance(text, str) else ""
+        tool = item.get("tool")
+        tool = tool if isinstance(tool, str) and tool else None
+        label = item.get("label")
+        label = label if isinstance(label, str) else ""
+        rows.append(
+            {
+                "ts": item.get("ts", ""),
+                "kind": kind if isinstance(kind, str) else "",
+                "tool": tool,
+                "label": label,
+                "text": text,
+            }
+        )
+    return rows
 
 
 def _assemble_round(
@@ -257,6 +310,7 @@ def _assemble_round(
     params = disp["params"]
     input_ref = agent.get("input_ref")
     output_ref = agent.get("output_ref")
+    assignment = params.get("assignment")
     return {
         "n": n,
         "command_id": disp["command_id"],
@@ -264,6 +318,9 @@ def _assemble_round(
         "substate": params.get("substate"),
         "review_round": params.get("review_round"),
         "attempt": params.get("attempt"),
+        "doc": params.get("doc"),
+        "objective": params.get("objective"),
+        "assignment": assignment if isinstance(assignment, dict) else None,
         "start_ts": disp["ts"],
         "end_ts": end_ts,
         "status": "ok" if outcome is not None else "running",
@@ -431,10 +488,16 @@ def round_detail(
     agent = payload.get("agent_io")
     agent = agent if isinstance(agent, dict) else {}
     end_ts = outcome.ts if outcome is not None else None
+    version = _run_version(repo, run_id, events)
     thinking, available = _detail_thinking(
-        repo, _run_version(repo, run_id, events), hit["ts"], end_ts
+        repo, version, hit["ts"], end_ts
     )
+    states = _sessions_view(repo)
+    session, items = _match_session(states, version, hit["ts"], end_ts)
+    live = _live_tail(items) if session is not None else []
     params = hit["params"]
+    assignment = params.get("assignment")
+    assignment = assignment if isinstance(assignment, dict) else None
     return {
         "command_id": command_id,
         "role": params.get("role"),
@@ -444,6 +507,17 @@ def round_detail(
         "start_ts": hit["ts"],
         "end_ts": end_ts,
         "status": "ok" if outcome is not None else "running",
+        "running": outcome is None,
+        "params": {
+            "role": params.get("role"),
+            "substate": params.get("substate"),
+            "review_round": params.get("review_round"),
+            "attempt": params.get("attempt"),
+            "doc": params.get("doc"),
+            "objective": params.get("objective"),
+            "assignment": assignment,
+        },
+        "live": live,
         "input": _detail_input(repo, agent),
         "output": _detail_output(repo, agent, outcome is not None),
         "thinking": thinking,

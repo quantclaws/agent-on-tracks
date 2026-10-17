@@ -1069,7 +1069,23 @@ function stageRoundsPanel(detail, stage) {
 }
 
 /** One round row: ``#N Role · SUBSTATE · 第R轮 · 尝试A · 耗时 · 状态``; the
- * four-zone detail fetches once on first expansion, cached per command_id. */
+ * four-zone detail fetches once on first expansion, cached per command_id.
+ * A running round (``running=true`` or legacy ``status=="running"``) polls
+ * its detail every 2.5s while expanded and refreshes the four zones in
+ * place; terminal rounds stay cached. Polling stops when the round ends,
+ * the row collapses, or the node leaves the DOM. */
+const ROUND_LIVE_POLL_MS = 2500;
+// Live text rows shown in the output zone while a round is running.
+const LIVE_TEXT_SHOWN = 5;
+
+/** ``true`` when a round detail is still running (new ``running`` flag,
+ * falling back to the legacy ``status`` for pre-restart payloads). */
+function isRunningRound(entry) {
+  if (entry && entry.running === true) return true;
+  if (entry && entry.running === false) return false;
+  return !!entry && entry.status === "running";
+}
+
 function stageRoundRow(runId, round, detailCache) {
   const n = round && round.n !== undefined ? round.n : "?";
   const role = round && round.role ? `${String(round.role).charAt(0).toUpperCase()}${String(round.role).slice(1)}` : "-";
@@ -1091,20 +1107,67 @@ function stageRoundRow(runId, round, detailCache) {
   const body = element("div", { class: "stage-round-body" });
   row.append(body);
   const commandId = round && round.command_id ? String(round.command_id) : "";
+  const roundUrl = `/api/runs/${encodeURIComponent(runId)}/rounds/${encodeURIComponent(commandId)}`;
+  const stopLive = () => {
+    if (row._liveTimer !== null && row._liveTimer !== undefined) {
+      globalThis.clearInterval(row._liveTimer);
+      row._liveTimer = null;
+    }
+  };
+  row._liveTimer = null;
+  const paint = (entry) => {
+    body.replaceChildren(...stageRoundZones(entry));
+  };
+  const fetchDetail = async (force) => {
+    // Terminal rounds stay cached; running rounds always refetch so the
+    // live tail advances (the cache is overwritten on each poll).
+    if (!force) {
+      const cached = detailCache.get(commandId);
+      if (cached && !isRunningRound(cached)) return cached;
+    }
+    const fresh = await requestJson(roundUrl);
+    detailCache.set(commandId, fresh);
+    return fresh;
+  };
+  const startLive = () => {
+    stopLive();
+    row._liveTimer = globalThis.setInterval(async () => {
+      if (!row.open || !row.isConnected) {
+        stopLive();
+        return;
+      }
+      try {
+        const fresh = await fetchDetail(true);
+        paint(fresh);
+        if (!isRunningRound(fresh)) stopLive();
+      } catch (error) {
+        /* keep the last painted zones; retry on the next beat */
+      }
+    }, ROUND_LIVE_POLL_MS);
+  };
   row.addEventListener("toggle", () => {
-    if (!row.open || row.dataset.loaded === "true" || row.dataset.loading === "true") return;
+    if (!row.open) {
+      stopLive();
+      return;
+    }
+    if (row.dataset.loading === "true") return;
+    // A cached terminal round never refetches; everything else (first
+    // open, or a round that was running when cached) fetches on expand.
+    const cached = detailCache.get(commandId);
+    if (cached && !isRunningRound(cached)) {
+      row.dataset.loaded = "true";
+      paint(cached);
+      return;
+    }
     row.dataset.loading = "true";
     void (async () => {
       try {
-        let entry = detailCache.get(commandId);
-        if (!entry) {
-          entry = await requestJson(
-            `/api/runs/${encodeURIComponent(runId)}/rounds/${encodeURIComponent(commandId)}`
-          );
-          detailCache.set(commandId, entry);
-        }
+        const entry = await fetchDetail(true);
+        if (!row.isConnected) return;
         row.dataset.loaded = "true";
-        body.replaceChildren(...stageRoundZones(entry));
+        row.dataset.loading = "false";
+        paint(entry);
+        if (isRunningRound(entry) && row.open) startLive();
       } catch (error) {
         row.dataset.loading = "false";
         body.replaceChildren(element("p", {
@@ -1139,29 +1202,76 @@ function stageRoundZones(entry) {
 function stageRoundZoneInput(entry) {
   const zone = element("div", { class: "stage-round-zone" });
   zone.append(element("h5", { class: "stage-round-zone-title", text: "输入" }));
+  // Params line first (always): dispatch params survive even while the
+  // input blob is still unarchived (running rounds have no outcome yet).
+  const shaped = roundParams(entry);
+  const metaText = [
+    `role=${shaped.role}`,
+    `substate=${shaped.substate}`,
+    `round=${shaped.review_round}`,
+    `attempt=${shaped.attempt}`,
+    `doc=${shaped.doc}`,
+    `objective=${shaped.objective}`,
+    `assignment=${shaped.assignmentKind}`,
+  ].join(" · ");
+  zone.append(element("p", { class: "stage-round-meta", text: metaText }));
   const input = entry && entry.input ? entry.input : null;
   const prompt = input && typeof input.prompt === "string" && input.prompt
-    ? input.prompt : "（暂无输入）";
-  zone.append(element("pre", { class: "stage-round-pre", text: prompt }));
-  const assignment = input && input.assignment && typeof input.assignment === "object"
-    ? Object.keys(input.assignment).length ? JSON.stringify(input.assignment, null, 2) : ""
+    ? input.prompt : "";
+  if (prompt) {
+    zone.append(element("pre", { class: "stage-round-pre", text: prompt }));
+  } else if (isRunningRound(entry)) {
+    zone.append(element("p", {
+      class: "stage-round-empty",
+      text: "派发进行中，prompt 将随结果归档",
+    }));
+  } else {
+    zone.append(element("p", { class: "stage-round-empty", text: "（暂无输入）" }));
+  }
+  const assignment = shaped.assignment && typeof shaped.assignment === "object"
+    ? Object.keys(shaped.assignment).length
+      ? JSON.stringify(shaped.assignment, null, 2) : ""
     : "";
   if (assignment) {
     zone.append(element("pre", { class: "stage-round-pre", text: assignment }));
   }
-  const metaText = [
-    `role=${(input && input.role) || (entry && entry.role) || "-"}`,
-    `substate=${(input && input.substate) || (entry && entry.substate) || "-"}`,
-    `round=${inputRoundOr(entry, input, "review_round")}`,
-    `attempt=${inputRoundOr(entry, input, "attempt")}`,
-    `doc=${(input && input.doc) || "-"}`,
-    `objective=${(input && input.objective) || "-"}`,
-  ].join(" · ");
-  zone.append(element("p", { class: "stage-round-meta", text: metaText }));
   return zone;
 }
 
+/** Dispatch params with blob/entry fallback (new ``params`` first, then
+ * the archived input blob, then the legacy top-level round fields). */
+function roundParams(entry) {
+  const params = entry && entry.params && typeof entry.params === "object" ? entry.params : {};
+  const input = entry && entry.input && typeof entry.input === "object" ? entry.input : {};
+  const pick = (key) => {
+    for (const source of [params, input, entry]) {
+      const value = source ? source[key] : undefined;
+      if (value !== undefined && value !== null && value !== "") return value;
+    }
+    return "-";
+  };
+  let assignment = params.assignment;
+  if (!assignment || typeof assignment !== "object") assignment = input.assignment;
+  if (!assignment || typeof assignment !== "object") assignment = null;
+  const kind = assignment && assignment.kind !== undefined &&
+    assignment.kind !== null && assignment.kind !== ""
+    ? assignment.kind : "-";
+  return {
+    role: pick("role"),
+    substate: pick("substate"),
+    review_round: pick("review_round"),
+    attempt: pick("attempt"),
+    doc: pick("doc"),
+    objective: pick("objective"),
+    assignment,
+    assignmentKind: kind,
+  };
+}
+
 function inputRoundOr(entry, input, key) {
+  const params = entry && entry.params && typeof entry.params === "object"
+    ? entry.params[key] : undefined;
+  if (params !== undefined && params !== null) return params;
   const fromInput = input ? input[key] : undefined;
   if (fromInput !== undefined && fromInput !== null) return fromInput;
   const fromEntry = entry ? entry[key] : undefined;
@@ -1169,16 +1279,52 @@ function inputRoundOr(entry, input, key) {
   return "-";
 }
 
+/** Live session items of one round detail (new ``live`` tail, else empty). */
+function liveItems(entry) {
+  const live = entry ? entry.live : null;
+  return Array.isArray(live) ? live : [];
+}
+
+/** Latest non-empty live text rows (oldest-first, tail quota). */
+function liveTextTail(entry, limit) {
+  const rows = [];
+  for (const item of liveItems(entry)) {
+    if (item && item.kind === "text" && typeof item.text === "string" && item.text) {
+      rows.push(item);
+    }
+  }
+  return rows.slice(-limit);
+}
+
 function stageRoundZoneOutput(entry) {
   const zone = element("div", { class: "stage-round-zone" });
   zone.append(element("h5", { class: "stage-round-zone-title", text: "输出" }));
   const output = entry && entry.output ? entry.output : null;
-  if (!output || output.unavailable) {
+  const text = output && typeof output.text === "string" && output.text ? output.text : "";
+  if (text) {
+    zone.append(element("pre", { class: "stage-round-pre", text }));
+    return zone;
+  }
+  // Running fallback: the newest live text stream (the output blob only
+  // archives at outcome.received, so a running round has no final text).
+  const tail = liveTextTail(entry, LIVE_TEXT_SHOWN);
+  if (tail.length) {
+    zone.append(element("p", { class: "stage-round-live-caption", text: "（进行中）" }));
+    const lines = tail.map((item) => {
+      const ts = item && item.ts ? `${fmtClock(item.ts)} ` : "";
+      return `${ts}${item.text}`;
+    });
+    zone.append(element("pre", {
+      class: "stage-round-pre stage-round-live",
+      text: lines.join("\n\n"),
+    }));
+    return zone;
+  }
+  if (!output || output.unavailable || !text) {
     zone.append(element("p", { class: "stage-round-empty", text: "（暂无输出）" }));
     return zone;
   }
-  const text = typeof output.text === "string" && output.text ? output.text : "（暂无输出）";
-  zone.append(element("pre", { class: "stage-round-pre", text }));
+  zone.append(element("pre", { class: "stage-round-pre", text: "（暂无输出）" }));
   return zone;
 }
 
@@ -1217,17 +1363,37 @@ function stageRoundZoneTools(entry) {
   zone.append(element("h5", { class: "stage-round-zone-title", text: "工具" }));
   const output = entry && entry.output ? entry.output : null;
   const calls = output && Array.isArray(output.tool_calls) ? output.tool_calls : [];
-  if (!calls.length) {
+  // Merge archived outcome tool counts with live session tool rows (a
+  // running round has no outcome yet, so live-only still counts).
+  const merged = new Map();
+  for (const call of calls) {
+    const tool = call && call.tool ? String(call.tool) : "unknown";
+    const n = call && call.n !== undefined && call.n !== null ? Number(call.n) || 0 : 1;
+    merged.set(tool, (merged.get(tool) || 0) + n);
+  }
+  for (const item of liveItems(entry)) {
+    if (!item || item.kind !== "tool") continue;
+    const tool = item.tool ? String(item.tool) : "unknown";
+    merged.set(tool, (merged.get(tool) || 0) + 1);
+  }
+  if (!merged.size) {
     zone.append(element("p", { class: "stage-round-empty", text: "（本轮未调用工具）" }));
     return zone;
   }
   const list = element("ul", { class: "stage-round-tools" });
-  for (const call of calls) {
-    const tool = call && call.tool ? String(call.tool) : "unknown";
-    const n = call && call.n !== undefined && call.n !== null ? call.n : 1;
+  for (const [tool, n] of [...merged.entries()].sort((a, b) => b[1] - a[1])) {
     list.append(element("li", { text: `${tool} ×${n}` }));
   }
   zone.append(list);
+  if (isRunningRound(entry)) {
+    const liveCount = liveItems(entry).filter((item) => item && item.kind === "tool").length;
+    if (liveCount) {
+      zone.append(element("p", {
+        class: "stage-round-meta",
+        text: `含实时工具事件 ${liveCount} 条（进行中）`,
+      }));
+    }
+  }
   return zone;
 }
 
