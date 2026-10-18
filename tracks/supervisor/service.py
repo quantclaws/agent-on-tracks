@@ -418,12 +418,16 @@ class Rejection(Exception):
 class CommandService:
     """Accept/persist/dedup/query commands; execution via workers (§1b)."""
 
-    def __init__(self, home: Path, db: Any, config: Any, scheduler: Any = None) -> None:
+    def __init__(
+        self, home: Path, db: Any, config: Any, scheduler: Any = None,
+        *, on_accept: Callable[[str, str], None] | None = None,
+    ) -> None:
         self.home = Path(home)
         self._db = db
         self.config = config
         self._scheduler = scheduler
         self._fallback: ServiceDB | None = None
+        self._on_accept = on_accept
 
     def _schedule(self) -> Any:
         """The schedule collaborator (§1i), built lazily over this service."""
@@ -1053,6 +1057,9 @@ class CommandService:
         self._record_acceptance(store, kind, request, actor, actor_class, surface, idempotency_key,
             digest, command_id, run_id=recorded_run_id, extras=extras)
         self._on_accepted(store, kind, request, actor)
+        if self._on_accept is not None:
+            with contextlib.suppress(Exception):
+                self._on_accept(kind, actor_class)
         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted",
             intake_id=extras.get("intake_id"), intake_outcome=extras.get("intake_outcome"))
 
