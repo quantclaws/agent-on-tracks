@@ -246,7 +246,7 @@ def test_decode_cursor_fails_closed_on_garbage():
 # AC-NFR0152-02@v0.9 TRACKS-TRACE IF-STREAM-001 poll batch serves the merged source
 def test_poll_batch_serves_merged_events_and_consistent_cursor(tmp_path: Path):
     repo, home = _seed_home(tmp_path, _RUN)
-    _seed_service_event(home, _RUN, _PAST_TS, "command.accepted", {"kind": "create_run"})
+    _seed_service_event(home, _RUN, _PAST_TS, "service.started", {})
     _seed_tracks_events(
         repo,
         _RUN,
@@ -259,7 +259,7 @@ def test_poll_batch_serves_merged_events_and_consistent_cursor(tmp_path: Path):
     assert set(payload) >= {"events", "cursor"}
     events = payload["events"]
     assert [event["type"] for event in events] == [
-        "command.accepted",
+        "service.started",
         "stage.entered",
         "task.started",
     ], "batch order must follow the merged (ts, source_rank, seq) key"
