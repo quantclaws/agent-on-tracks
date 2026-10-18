@@ -36,6 +36,7 @@ IF-DOCCENTER-001, IF-DOCSAVE-001, IF-RELEASES-001.
 from __future__ import annotations
 
 import contextlib
+import gzip
 import hashlib
 import sqlite3
 import time
@@ -131,6 +132,10 @@ def create_app(home: Path, service: Any, supervisor: Any, config: Any) -> Any:
         middleware=[
             Middleware(_AuthBoundary, home=home),
             Middleware(_AppModulesNoCache),
+            # Innermost: sees pristine StaticFiles headers (ETag untouched
+            # so 304 revalidation still works); _AppModulesNoCache appends
+            # Cache-Control outside of the re-emitted start.
+            Middleware(_StaticGzip),
         ],
     )
     app.state.home = home
@@ -425,6 +430,129 @@ def _name_collected(conn: sqlite3.Connection) -> bool:
     """Whether auth.display_name is collected (interfaces §1m.2)."""
     row = conn.execute("SELECT display_name FROM auth LIMIT 1").fetchone()
     return row is not None and isinstance(row[0], str) and bool(row[0].strip())
+
+
+class _StaticGzip:
+    """gzip for ``/static/`` text assets only (perf: vendor ~8.4MB -> ~2.5MB).
+
+    Why not the global ``GZipMiddleware``: it would also wrap the SSE
+    stream ``GET /api/runs/{id}/events`` (``text/event-stream``). Buffering
+    a never-ending event stream to compress it breaks real-time delivery
+    (first byte delayed until the stream ends, i.e. forever) and balloons
+    memory; hence this wrapper matches ``/static/`` paths only and every
+    other path (notably ``/api/**``) is byte-for-byte passthrough.
+    """
+
+    _MIN_BYTES = 1024
+    _SUFFIXES = (".js", ".mjs", ".css", ".html", ".json", ".svg", ".map")
+    _CT_HINTS = ("javascript", "css", "svg", "html", "json")
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self._app(scope, receive, send)
+            return
+        if str(scope.get("method", "GET")).upper() == "HEAD":
+            await self._app(scope, receive, send)
+            return
+        path = str(scope.get("path", ""))
+        if not path.startswith("/static/"):
+            await self._app(scope, receive, send)
+            return
+        if not _accepts_gzip(scope):
+            await self._app(scope, receive, send)
+            return
+        start: dict | None = None
+        chunks: list[bytes] = []
+
+        async def capture(message: Any) -> None:
+            nonlocal start
+            if message["type"] == "http.response.start":
+                start = message
+            elif message["type"] == "http.response.body":
+                chunks.append(bytes(message.get("body", b"")))
+                if message.get("more_body"):
+                    return
+            else:
+                # Trailers/background: nothing to compress, replay as-is.
+                if start is not None:
+                    await send(start)
+                    for piece in chunks:
+                        await send(
+                            {"type": "http.response.body", "body": piece,
+                             "more_body": True}
+                        )
+                await send(message)
+
+        await self._app(scope, receive, capture)
+        if start is None:
+            for piece in chunks:
+                await send(
+                    {"type": "http.response.body", "body": piece, "more_body": True}
+                )
+            await send({"type": "http.response.body", "body": b""})
+            return
+        body = b"".join(chunks)
+        compressed = self._maybe_compress(path, start, body)
+        if compressed is None:
+            await send(start)
+            if chunks:
+                for piece in chunks[:-1]:
+                    await send(
+                        {"type": "http.response.body", "body": piece,
+                         "more_body": True}
+                    )
+                await send({"type": "http.response.body", "body": chunks[-1],
+                                  "more_body": False})
+            else:
+                await send({"type": "http.response.body", "body": b""})
+            return
+        await send(compressed[0])
+        await send({"type": "http.response.body", "body": compressed[1]})
+
+    def _maybe_compress(
+        self, path: str, start: dict, body: bytes
+    ) -> tuple[dict, bytes] | None:
+        status = int(start.get("status", 200))
+        if not 200 <= status < 300:
+            return None
+        if len(body) < self._MIN_BYTES:
+            return None
+        raw = list(start.get("headers", []))
+        lowered = {k.decode("latin-1").lower(): v for k, v in raw}
+        if "content-encoding" in lowered:
+            return None
+        content_type = lowered.get("content-type", b"").decode("latin-1")
+        if not content_type:
+            return None
+        ct = content_type.lower()
+        if not any(h in ct for h in self._CT_HINTS) and not path.endswith(
+            self._SUFFIXES
+        ):
+            return None
+        data = gzip.compress(body, compresslevel=5)
+        kept = [
+            (k, v)
+            for k, v in raw
+            if k.decode("latin-1").lower() != "content-length"
+        ]
+        kept.append((b"content-encoding", b"gzip"))
+        kept.append((b"content-length", str(len(data)).encode("latin-1")))
+        vary = lowered.get("vary", b"").decode("latin-1")
+        if "accept-encoding" not in vary.lower():
+            kept.append((b"vary", b"Accept-Encoding"))
+        return ({**start, "headers": kept}, data)
+
+
+def _accepts_gzip(scope: Any) -> bool:
+    for key, value in scope.get("headers", []):
+        if bytes(key).decode("latin-1").lower() == "accept-encoding":
+            for token in bytes(value).decode("latin-1").split(","):
+                if token.split(";")[0].strip().lower() == "gzip":
+                    return True
+    return False
 
 
 class _AppModulesNoCache:
