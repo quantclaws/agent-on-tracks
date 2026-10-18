@@ -39,7 +39,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from tracks import __version__
+from tracks import __version__, paths
 from tracks.server import auth
 from tracks.server.app import create_app
 from tracks.supervisor import intake as intake_worker
@@ -396,11 +396,46 @@ def _drive_accepted(
             state.cooldown[run_id] = now
 
 
+def _run_awaiting(db: ServiceDB, run_id: str | None) -> str | None:
+    """Run-plane ``runs.awaiting`` for run_id, read-only (fail-open → None)."""
+    if not run_id:
+        return None
+    try:
+        project_id = db.find_run_project_id(str(run_id))
+        project = db.get_project(project_id)
+        repo_path = (project or {}).get("repo_path") or ""
+        if not repo_path:
+            return None
+        runtime_db = paths.db_path(paths.tracks_home(Path(repo_path)))
+        if not runtime_db.exists():
+            return None
+        conn = sqlite3.connect(f"file:{runtime_db}?mode=ro", uri=True)
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    try:
+        try:
+            row = conn.execute(
+                "SELECT awaiting FROM runs WHERE run_id = ?", (str(run_id),)
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None or row[0] is None or str(row[0]) == "":
+            return None
+        return str(row[0])
+    finally:
+        conn.close()
+
+
 def _accept_fresh_drive(
     db: ServiceDB, service: CommandService, worker: WorkerManager,
     worker_id: str, ttl: int, runnable: str, state: _DriveState, now: float,
 ) -> None:
     """Accept a new drive_run for the runnable run and hand it to a worker."""
+    # awaiting 期间 drive 是 no-op (drive_once 直达 await_human 边界退出):
+    # 跳过 fresh accept 以止住每 tick 的空转写/spawn;人工命令走
+    # _claim_accepted_gates 通道,gate 完成后 awaiting 清除、下个 tick 自动恢复.
+    if _run_awaiting(db, runnable):
+        return
     receipt = service.accept(
         "drive_run",
         {"run_id": runnable},
