@@ -4,7 +4,7 @@ story_id: S-001
 title: tracks 安装包与多版本安装：全局 trac 与 trac install <path>
 created: 2026-10-13
 status: draft
-sha:
+sha: 9c35c1dbaeb0e3ec88cc2386a76c4a010ec7e79711a5b8d7858f732fc6e93f0f
 ---
 
 > **Aaron [RESOLVED]:** 需要把我们近期 oob中所做的修改，择要加入 story，以便进行跟踪。
