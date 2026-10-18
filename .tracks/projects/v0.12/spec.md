@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 spec_id: SPEC-012
 created: 2026-10-18
 status: draft
-sha:
+sha: 39804c35a5fa9fe4f3ebdd048badcef083ccfa11cee6c2d2983b29bfb3411b59
 ---
 
 # tracks 安装包与多版本安装：全局 trac 与 trac install <path> — 需求规格
