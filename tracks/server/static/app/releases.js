@@ -429,6 +429,26 @@ async function firstProjectId() {
   return rows.length ? rows[0].project_id : "";
 }
 
+/** The create wizard's shared onDone (the empty-state ``releases-create``
+ * button and the always-visible sidebar ``releases-create-entry`` action
+ * both ride this): hotfix focuses the created run; feature+action
+ * refreshes for the executed decision's outcome; feature without a
+ * decision keeps the legacy Scribe evaluating panel path. */
+function createWizardDone(body, pid) {
+  return (result) => {
+    if (!result) return;
+    if (result.kind === "hotfix") focusHotfixRun(result.runId);
+    else if (result.kind === "feature" && result.intakeId) {
+      // The wizard third page already executed the decision before
+      // onDone: refresh so the outcome (backlog/version/archive)
+      // presents. The intakeId-only fallback keeps the legacy Scribe
+      // panel path (no decision yet) reachable.
+      if (result.action) refreshReleasesWindow();
+      else showScribePanel(body, pid, result.intakeId);
+    }
+  };
+}
+
 /** The no-active-run face: a hint plus the醒目 "+" entry that opens the
  * create wizard. The wizard's onDone lands back in this window (Scribe
  * panel for a feature seed, focused run for a hotfix). */
@@ -451,21 +471,7 @@ function emptyState(body, pid) {
     text: "+",
   });
   create.addEventListener("click", () => {
-    openCreateWizard({
-      projectId: pid,
-      onDone: (result) => {
-        if (!result) return;
-        if (result.kind === "hotfix") focusHotfixRun(result.runId);
-        else if (result.kind === "feature" && result.intakeId) {
-          // The wizard third page already executed the decision before
-          // onDone: refresh so the outcome (backlog/version/archive)
-          // presents. The intakeId-only fallback keeps the legacy Scribe
-          // panel path (no decision yet) reachable.
-          if (result.action) refreshReleasesWindow();
-          else showScribePanel(body, pid, result.intakeId);
-        }
-      },
-    });
+    openCreateWizard({ projectId: pid, onDone: createWizardDone(body, pid) });
   });
   wrap.append(create);
   body.append(wrap);
@@ -550,6 +556,16 @@ export async function renderReleasesView(body, context = {}) {
     title: "releases",
     nodes: [],
     groups: sidebarGroups(payload, faces.nodes),
+    // Always-visible create entry (v0.12 OOB): with an active run the
+    // main area shows the timeline and the empty state's "+" is absent,
+    // so the sidebar heading carries the wizard's second entry point.
+    action: {
+      label: "+",
+      testid: "releases-create-entry",
+      ariaLabel: "创建新的开发",
+      onClick: () =>
+        openCreateWizard({ projectId: pid, onDone: createWizardDone(body, pid) }),
+    },
   });
   wireSidebarSelections(sidebar);
 

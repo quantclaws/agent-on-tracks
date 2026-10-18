@@ -439,6 +439,43 @@ textarea {
   color: var(--accent-fg);
 }
 
+/* sidebar heading action (v0.12 OOB): the releases "+" create entry rides
+   the heading row beside the unchanged h2 — a small token-styled button
+   that never squeezes the title (the heading ellipsizes instead) */
+.sidebar-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.sidebar-heading-row .sidebar-heading {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-action {
+  flex: 0 0 auto;
+  width: var(--control-h-xs);
+  height: var(--control-h-xs);
+  min-height: var(--control-h-xs);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-size: var(--fs-title);
+  line-height: 1;
+}
+
+.sidebar-action:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
 /* version groups (louke Dev Docs tree, #221): one collapsible block per
    version directory, its documents indented beneath the summary */
 .sidebar-group-wrap {

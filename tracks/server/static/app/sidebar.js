@@ -17,13 +17,33 @@ export function renderSidebar(model = {}, root = document) {
   const host = sidebarRoot(root);
   if (!host) return null;
   clear(host);
-  host.append(
-    element("h2", {
-      class: "sidebar-heading",
-      "data-testid": "sidebar-heading",
-      text: model.title || "unknown",
-    })
-  );
+  const heading = element("h2", {
+    class: "sidebar-heading",
+    "data-testid": "sidebar-heading",
+    text: model.title || "unknown",
+  });
+  if (model.action) {
+    // Optional heading action (releases "+" create entry, v0.12 OOB): the
+    // heading row wraps the unchanged h2 beside a small action button.
+    // Without a model.action the bare h2 append above stays the only
+    // branch — every other window renders byte-identical output.
+    const action = model.action;
+    const actionButton = element("button", {
+      type: "button",
+      class: "sidebar-action",
+      "data-testid": action.testid || "sidebar-action",
+      "aria-label": action.ariaLabel || action.label || "action",
+      text: action.label || "+",
+    });
+    if (typeof action.onClick === "function") {
+      actionButton.addEventListener("click", () => action.onClick());
+    }
+    host.append(
+      element("div", { class: "sidebar-heading-row" }, [heading, actionButton])
+    );
+  } else {
+    host.append(heading);
+  }
   // Releases-window sidebar container (§1e.2): the three groups (registry /
   // backlog / archive) ride this landmark. Plain trees (docs·runs switching
   // surfaces) keep the bare list without the container, so the releases
