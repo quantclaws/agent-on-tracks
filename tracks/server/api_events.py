@@ -123,7 +123,7 @@ def _start_key(cursor: str | None) -> tuple[str, int, int] | None:
 
 
 def _rows_after(home: Path, run_id: str, start: tuple[str, int, int] | None) -> list[dict]:
-    rows = projections.project_timeline(home, run_id)["events"]
+    rows = projections.project_timeline(home, run_id, include_internal=False)["events"]
     if start is not None:
         rows = [row for row in rows if _row_key(row) > start]
     return rows

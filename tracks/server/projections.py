@@ -1107,7 +1107,7 @@ def project_timeline(
     home: Path, run_id: str,
     *,
     command_id: str | None = None, task_id: str | None = None, ac_id: str | None = None,
-    after_seq: str | None = None, slim: bool = False,
+    after_seq: str | None = None, slim: bool = False, include_internal: bool = True,
 ) -> dict:
     """Merged tracks.db + service_events timeline with cursor + stage order (§1e)."""
     conn = _service_db(home)
@@ -1116,7 +1116,7 @@ def project_timeline(
         if project is None:
             return {"events": [], "cursor": "", "stage_order": _stage_order()}
         repo_path = project["repo_path"]
-        rows = _timeline_rows(conn, repo_path, run_id, slim=slim)
+        rows = _timeline_rows(conn, repo_path, run_id, slim=slim, include_internal=include_internal)
         rows = _filter_timeline(rows, command_id, task_id, ac_id)
         rows = _after_cursor(rows, after_seq)
         if slim and len(rows) > _SLIM_MAX_ROWS:
@@ -1128,7 +1128,8 @@ def project_timeline(
 
 
 def _timeline_rows(
-    conn: sqlite3.Connection | None, repo_path: str, run_id: str, *, slim: bool = False
+    conn: sqlite3.Connection | None, repo_path: str, run_id: str, *, slim: bool = False,
+    include_internal: bool = True,
 ) -> list[dict]:
     rows = []
     if slim:
@@ -1153,7 +1154,7 @@ def _timeline_rows(
                     "attempt": payload.get("attempt"),
                     "payload_ref": "",
                 })
-    if slim:
+    if slim or not include_internal:
         service = _rows(conn,
             "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
                 "WHERE run_id = ? AND type NOT IN (?, ?) ORDER BY seq",
