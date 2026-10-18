@@ -1119,6 +1119,8 @@ def project_timeline(
         rows = _timeline_rows(conn, repo_path, run_id, slim=slim)
         rows = _filter_timeline(rows, command_id, task_id, ac_id)
         rows = _after_cursor(rows, after_seq)
+        if slim and len(rows) > _SLIM_MAX_ROWS:
+            rows = rows[-_SLIM_MAX_ROWS:]
         return {"events": rows, "cursor": _cursor_of(rows), "stage_order": _stage_order()}
     finally:
         if conn is not None:
@@ -1151,10 +1153,16 @@ def _timeline_rows(
                     "attempt": payload.get("attempt"),
                     "payload_ref": "",
                 })
-    service = _rows(conn,
-        "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
-            "WHERE run_id = ? ORDER BY seq",
-        (run_id,))
+    if slim:
+        service = _rows(conn,
+            "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
+                "WHERE run_id = ? AND type NOT IN (?, ?) ORDER BY seq",
+            (run_id, *_SLIM_EXCLUDED_SERVICE_TYPES))
+    else:
+        service = _rows(conn,
+            "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
+                "WHERE run_id = ? ORDER BY seq",
+            (run_id,))
     for seq, ts, type_, run, command, raw in service:
         parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
@@ -1187,6 +1195,20 @@ def _event_ac_refs(payload: dict) -> list[str]:
 _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
     "area", "next"})
+
+# Slim-mode service-plane noise exclusion (read-face load shedding only; the
+# writer is untouched): ``command.accepted`` + ``lease.acquired`` are the
+# supervisor's internal command-lifecycle pairs emitted on every poll tick
+# (~one pair per 5s while idling — 129k of 129k rows in the reference run),
+# not user-timeline semantics. ``lease.released`` stays (rare, a meaningful
+# lease boundary), as do ``command.rejected`` and every other service type.
+_SLIM_EXCLUDED_SERVICE_TYPES = ("command.accepted", "lease.acquired")
+
+# Slim-mode backstop cap: even after the noise exclusion, the response keeps
+# only the newest N merged rows. The UI renders the stage path / current card
+# from recent workflow facts, so an unbounded tail is pure serialization cost;
+# the non-slim path (full-history audit face) is never capped.
+_SLIM_MAX_ROWS = 20000
 
 # command.issued params allowlist for slim mode: the dispatch identity the
 # stage workflow diagram renders (role/substate/attempt/review_round/…).
