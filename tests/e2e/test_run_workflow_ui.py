@@ -125,9 +125,9 @@ def test_stage_path_states_times_and_gate_wait(ui_serve, page):
         page.get_by_test_id("timeline-node-M-SPEC").get_attribute("data-state")
         == "attention"
     )
-    status = page.get_by_test_id("card-status")
-    expect(status).to_be_visible()
-    assert "已等待" in status.inner_text(), "the current gate shows its wait"
+    action = page.get_by_test_id("card-action")
+    expect(action).to_be_visible()
+    assert "已等" in action.inner_text(), "the current gate shows its wait"
 
     page.get_by_test_id("timeline-node-M-START").click()
     detail = page.get_by_test_id("node-detail")
@@ -259,13 +259,13 @@ def test_run_card_local_time_and_heartbeat_not_reset(ui_serve, page):
     business event — a heartbeat does not reset it."""
     _seed_run(ui_serve, "run-card", seed_heartbeat_wait, project_id="proj-card")
     _login_and_open_run(ui_serve, page, "run-card")
-    for field in ("card-owner", "card-attempt", "card-duration", "card-status"):
+    for field in ("card-owner", "card-attempt", "card-duration", "card-action", "card-status"):
         assert page.get_by_test_id(field).count() == 1, field
     duration = page.get_by_test_id("card-duration").inner_text()
     assert duration.startswith("已运行"), duration
-    status = page.get_by_test_id("card-status").inner_text()
-    assert _waiting_seconds(status) >= 60, (
-        f"the wait must start at the last business event, not the heartbeat: {status!r}"
+    action = page.get_by_test_id("card-action").inner_text()
+    assert _waiting_seconds(action) >= 60, (
+        f"the wait must start at the last business event, not the heartbeat: {action!r}"
     )
 
     page.get_by_test_id("timeline-node-M-STORY").click()

@@ -2471,3 +2471,15 @@ textarea {
   border-color: var(--accent);
   background: var(--bg-subtle);
 }
+
+.stage-node-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}

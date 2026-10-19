@@ -106,18 +106,36 @@ def test_return_confirm_face(tmp_path, host_repo, page):
         )
         pointers.first.click()
 
-        # the confirm face: target + consequences + explicit confirmation
+        # the decision is a modal; no target is preselected (no destructive
+        # default) and confirm is disabled until the Human chooses.
+        modal = page.get_by_test_id("return-modal")
+        expect(modal).to_be_visible()
         face = page.get_by_test_id("return-confirm-face")
         expect(face).to_be_visible()
+        options = page.locator("[data-testid^='return-target-option-']")
+        assert options.count() >= 1, "the modal lists the legal targets"
+        confirm = page.get_by_test_id("return-confirm-button")
+        assert confirm.is_disabled(), "confirm must wait for an explicit target"
         expect(page.get_by_test_id("return-target")).to_be_visible()
+
+        # Escape closes the dialog and restores the page (no stuck overlay).
+        page.keyboard.press("Escape")
+        expect(modal).to_have_count(0)
+        pointers.first.click()
+        expect(page.get_by_test_id("return-modal")).to_be_visible()
+
+        # choosing a target shows its consequences and enables confirmation.
+        first = page.locator("[data-testid^='return-target-option-']").first
+        first.click()
         consequences = page.get_by_test_id("return-consequences")
         expect(consequences).to_be_visible()
         assert consequences.inner_text().strip(), (
             "the already-executed consequences must be readable before confirm"
         )
+        assert not confirm.is_disabled(), "an explicit target enables confirm"
 
         # the explicit confirmation executes the return (§1m.2)
-        page.get_by_test_id("return-confirm-button").click()
+        confirm.click()
         verdict = page.get_by_test_id("return-verdict")
         expect(verdict).to_be_visible()
         assert "失败" not in verdict.inner_text(), (

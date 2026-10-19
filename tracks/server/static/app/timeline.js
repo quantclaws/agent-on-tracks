@@ -795,7 +795,7 @@ function currentCard(detail, events, state) {
   const substate = (detail && detail.substate) || (detail && detail.control_state) || "-";
   const control = detail && detail.control_state;
   const waitBasis = lastBusinessEvent(events || []);
-  const wait = awaiting ? ` · 已等待 ${waitingElapsed(waitBasis)}` : "";
+  const wait = awaiting ? `已等待 ${waitingElapsed(waitBasis)}` : "";
   const controlNote = control && control !== substate ? control : "";
   const card = element("section", {
     class: "current-card",
@@ -806,7 +806,7 @@ function currentCard(detail, events, state) {
     element("p", {
       class: "card-status",
       "data-testid": "card-status",
-      text: `当前阶段：${stage} · ${substate}${wait}`,
+      text: `当前阶段：${stage} · ${substate}`,
     })
   );
   const metrics = [
@@ -814,7 +814,13 @@ function currentCard(detail, events, state) {
     span("card-attempt", `累计派发 ${attempt} 次`, { title: "本 run 已发生的派发次数" }),
     span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
   ];
-  if (controlNote) {
+  // card-action is a stable card field (v0.12 contract): the wait while
+  // awaiting, otherwise the run's control state. No duplicate of the stage.
+  const actionText = awaiting
+    ? wait || "等待人工决定"
+    : controlNote || "推进中";
+  metrics.push(span("card-action", actionText, { title: "等待时间 / 控制状态" }));
+  if (awaiting && controlNote) {
     metrics.push(
       span("card-control", `控制状态：${controlNote}`, { title: "run 的控制状态" })
     );
@@ -937,25 +943,43 @@ function failureSummary(failure) {
   if (!failure) return "";
   const check = String(failure.check || "");
   const reason = String(failure.reason || "");
-  if (check === "island" || /missing from closure/.test(reason)) {
+  if (check === "island" || /missing from closure|reach check failed/.test(reason)) {
     const count = reason
       .split(";")
       .filter((part) => /missing from closure/.test(part)).length;
-    return `实现计划没有覆盖全部接口契约（${count} 个接口未被任务覆盖）。请重试当前阶段，或回退到设计阶段修正接口契约。`;
+    if (count > 0) {
+      return `实现计划没有覆盖全部接口契约（${count} 个接口未被任务覆盖）。请重试当前步骤，或回退到设计阶段修正接口契约。`;
+    }
+    if (/reach|unreachable|not reachable/i.test(reason)) {
+      return "实现计划的可达性校验未通过：部分任务无法从入口到达。请重试当前步骤，或回退到设计阶段调整任务依赖。";
+    }
+    return "实现计划的接口闭包校验未通过。请重试当前步骤，或回退到设计阶段修正接口契约。";
+  }
+  if (check === "test_tasks") {
+    return "计划任务校验未通过。请重试当前步骤。";
+  }
+  if (check === "test_defect" || check === "full_suite") {
+    return "测试或实现校验未通过（测试失败）。请重试当前步骤。";
+  }
+  if (check === "lineage") {
+    return "阶段追溯/血缘校验未通过。请重试当前步骤，或回退到更早阶段。";
+  }
+  if (["reply_format_error", "manifest_malformed", "evidence_malformed"].includes(check)) {
+    return "Agent 回复格式不符合协议（通常是机械性错误）。请重试当前步骤。";
   }
   if (check === "tasks_md_projection") {
-    return "计划文件生成方式不正确（tasks.md 应由 tasks.json 自动生成，不能手工修改）。请重试当前阶段。";
+    return "计划文件生成方式不正确（tasks.md 应由 tasks.json 自动生成，不能手工修改）。请重试当前步骤。";
   }
   if (check === "test_freeze_contamination") {
-    return "测试基线被未提交的测试改动阻止冻结。请清理工作树后重试。";
+    return "测试基线被未提交的测试改动阻止冻结。请清理工作树后重试当前步骤。";
   }
   if (check === "collect_defect" || check === "contract_error") {
-    return "测试执行没有产出可读结果（环境或采集问题）。请重试当前阶段。";
+    return "测试执行没有产出可读结果（环境或采集问题）。请重试当前步骤。";
   }
   if (check === "trace") {
-    return "阶段追溯校验未通过。请重试当前阶段，或回退到更早阶段。";
+    return "阶段追溯校验未通过。请重试当前步骤，或回退到更早阶段。";
   }
-  return "本阶段校验未通过。请重试当前阶段，或回退到更早阶段重做。";
+  return "本阶段校验未通过。请重试当前步骤，或回退到更早阶段重做。";
 }
 
 function gateSummary(gate, events) {
@@ -1003,7 +1027,10 @@ function returnConsequences(target) {
   if (target === "M-STORY") {
     return "story、spec、验收、设计、测试与实现全部作废并重做。";
   }
-  return "目标阶段之后的产出全部作废并重做。";
+  if (target === "M-IMPL") {
+    return "保留设计与测试；实现及后续发布阶段作废并重做。";
+  }
+  return "目标阶段及其之后的产出全部作废并重做。";
 }
 
 /** Rough redo cost from this run's own stage durations (last visits).
@@ -1034,9 +1061,20 @@ function estimateReturnCost(events, target, current, order) {
   return `粗略估计：约 ${formatSpan(total)}（含历史等待，实际取决于评审与执行）`;
 }
 
+let returnModalFocus = null;
+let returnModalKeydown = null;
+
 function closeReturnModal() {
   const existing = document.querySelector('[data-testid="return-modal"]');
   if (existing) existing.remove();
+  if (returnModalKeydown) {
+    document.removeEventListener("keydown", returnModalKeydown);
+    returnModalKeydown = null;
+  }
+  if (returnModalFocus && typeof returnModalFocus.focus === "function") {
+    returnModalFocus.focus();
+  }
+  returnModalFocus = null;
 }
 
 /** The return decision is a modal, not a row of buttons: pick a target,
@@ -1059,9 +1097,11 @@ function openReturnModal(detail, events, encoded, order) {
     role: "dialog",
     "aria-modal": "true",
     "aria-labelledby": "return-modal-title",
+    tabindex: "-1",
   });
   const current = detail && detail.stage ? String(detail.stage) : "";
-  let selected = targets[0];
+  // No destructive default: the Human must choose a target explicitly.
+  let selected = null;
   const title = element("h2", {
     id: "return-modal-title",
     class: "return-modal-title",
@@ -1077,7 +1117,7 @@ function openReturnModal(detail, events, encoded, order) {
   close.addEventListener("click", closeReturnModal);
   const intro = element("p", {
     class: "return-modal-intro",
-    text: "回退会作废目标阶段之后的所有产出，并从该阶段重新执行。请选择一个目标；后果与耗时估计如下。",
+    text: "回退会作废目标阶段及其之后的所有产出，并从该阶段重新执行。请选择一个目标；后果与耗时估计如下。",
   });
   const list = element("div", { class: "return-target-list", "data-testid": "return-target-list" });
   const face = element("div", { class: "return-confirm-face", "data-testid": "return-confirm-face" });
@@ -1105,11 +1145,19 @@ function openReturnModal(detail, events, encoded, order) {
     text: "取消",
   });
   const renderSelection = () => {
+    if (!selected) {
+      targetLine.textContent = "请选择一个回退目标";
+      consequences.textContent = "选择后显示后果与耗时估计。";
+      confirm.disabled = true;
+      confirm.textContent = "确认回退";
+      return;
+    }
     targetLine.textContent = `将回退到 ${selected.stage}`;
+    confirm.disabled = false;
     const cost = estimateReturnCost(events, selected.stage, current, order);
     const executed = Array.isArray(selected.already_executed) ? selected.already_executed : [];
     const span = order.indexOf(selected.stage) >= 0 && order.indexOf(current) >= 0
-      ? `需重走 ${Math.max(0, order.indexOf(current) - order.indexOf(selected.stage))} 个阶段。`
+      ? `需重走 ${Math.max(0, order.indexOf(current) - order.indexOf(selected.stage) + 1)} 个阶段。`
       : "";
     consequences.textContent =
       `${span}${cost ? `${cost}。` : ""}` +
@@ -1130,7 +1178,7 @@ function openReturnModal(detail, events, encoded, order) {
       name: "return-target",
       value: target.stage,
     });
-    radio.checked = target === selected;
+    radio.checked = false;
     radio.addEventListener("change", () => {
       selected = target;
       renderSelection();
@@ -1181,7 +1229,13 @@ function openReturnModal(detail, events, encoded, order) {
   );
   modal.append(title, close, intro, list, face);
   backdrop.append(modal);
+  returnModalFocus = document.activeElement;
+  returnModalKeydown = (event) => {
+    if (event.key === "Escape") closeReturnModal();
+  };
+  document.addEventListener("keydown", returnModalKeydown);
   document.body.append(backdrop);
+  modal.focus();
 }
 
 /**
@@ -1839,18 +1893,25 @@ function stageTrack(stages, events, detail) {
       "data-testid": `timeline-node-${stage}`,
       "data-stage": stage,
       "data-state": nodeState,
-      "aria-pressed": "false",
       ...(nodeState === "active" || nodeState === "attention"
         ? { "data-active": "true", "data-state-active": "true" }
         : {}),
-      role: "button",
-      tabindex: "0",
       "aria-label": `${stage} (${nodeState})`,
     });
-    node.append(
+    // A native button inside the list item carries selection/keyboard; the
+    // retry/return buttons are SIBLINGS, never nested in a role=button
+    // element (screen readers would flatten them).
+    const select = element("button", {
+      type: "button",
+      class: "stage-node-select",
+      "aria-pressed": "false",
+      "aria-label": `${stage} (${nodeState})`,
+    });
+    select.append(
       element("span", { class: "node-icon", text: STATE_ICONS[nodeState] || "·" }),
       element("span", { class: "stage-label", text: stage })
     );
+    node.append(select);
     // One compact attempt badge (the count), not one chip per attempt: a
     // rollback re-entry resets the numbering, so only dispatches at/after
     // the current visit's start count.
@@ -1888,8 +1949,8 @@ function stageTrack(stages, events, detail) {
         type: "button",
         class: "stage-node-action",
         "data-testid": "stage-action-retry",
-        title: "重新执行本阶段当前步骤（已完成的阶段产出保留）",
-        text: "重试本阶段",
+        title: "重新派发当前步骤（保留本阶段已产出）",
+        text: "重试当前步骤",
       });
       retry.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -1925,12 +1986,9 @@ function stageTrack(stages, events, detail) {
       nodeActions.append(back);
     }
     if (nodeActions.childElementCount) node.append(nodeActions);
-    node.addEventListener("click", () => selectNode(node, stage, detail, events));
-    node.addEventListener("keydown", (event) => {
-      if (event && (event.key === "Enter" || event.key === " ")) {
-        event.preventDefault();
-        selectNode(node, stage, detail, events);
-      }
+    node.addEventListener("click", (event) => {
+      if (event.target.closest(".stage-node-actions")) return;
+      selectNode(node, stage, detail, events);
     });
     track.append(node);
   });
@@ -2171,11 +2229,13 @@ function selectNode(node, stage, detail, events) {
   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
     other.removeAttribute("data-state-selected");
     other.removeAttribute("data-selected");
-    other.setAttribute("aria-pressed", "false");
+    const otherSelect = other.querySelector(".stage-node-select");
+    if (otherSelect) otherSelect.setAttribute("aria-pressed", "false");
     other.classList.remove("stage-node-selected");
   }
   node.setAttribute("data-state-selected", "true");
-  node.setAttribute("aria-pressed", "true");
+  const select = node.querySelector(".stage-node-select");
+  if (select) select.setAttribute("aria-pressed", "true");
   // the visible selection face (same marker triple as the sidebar focus):
   // data-selected + class hook + an aria mark so the choice reads aloud.
   node.setAttribute("data-selected", "true");
@@ -2240,7 +2300,7 @@ function nodeDetail(stage, detail, events) {
         element("summary", { text: "技术详情" }),
         element("pre", {
           class: "detail-error-raw",
-          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}`,
+          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}${failure.evidence ? `\n\n证据：${failure.evidence}` : ""}`,
         })
       );
       box.append(details);
@@ -2441,7 +2501,7 @@ export function gateActionPanel(detail, gate, events = []) {
       details.append(
         element("pre", {
           "data-testid": "gate-failure-detail",
-          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}`,
+          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}${failure.evidence ? `\n\n证据：${failure.evidence}` : ""}`,
         })
       );
     }
@@ -2457,12 +2517,26 @@ export function gateActionPanel(detail, gate, events = []) {
     panel.append(face._body);
   } else if (action === "retry" || action === "return") {
     // Retry / return are stage-level decisions: the buttons live on the
-    // active stage node (one retry, one return modal), not here.
+    // active stage node (one retry, one return modal), not here. Only
+    // point at controls that this gate actually renders.
+    const returnAllowed = !!(
+      detail &&
+      detail.return_options &&
+      detail.return_options.allowed
+    );
+    let hint = "请在下方当前阶段节点上选择「重试当前步骤」。";
+    if (action === "return") {
+      hint = returnAllowed
+        ? "请在下方当前阶段节点上选择「回退…」。"
+        : "回滚目标只能通过 CLI 确认（见下方指引）。";
+    } else if (returnAllowed) {
+      hint = "请在下方当前阶段节点上选择「重试当前步骤」或「回退…」。";
+    }
     panel.append(
       element("p", {
         class: "gate-node-hint",
         "data-testid": "gate-node-hint",
-        text: "请在下方当前阶段节点上选择「重试本阶段」或「回退…」。",
+        text: hint,
       })
     );
   } else {
