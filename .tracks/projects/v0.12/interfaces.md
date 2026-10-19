@@ -94,7 +94,7 @@ sha:
 2. **项目发现**：从 cwd 向上查找最近的 `.tracks/install.json`；找到即项目根。若未找到 receipt，但最近的 `.tracks/bin/trac.py` 或 `.tracks/env/` 存在，视为损坏项目并报 `install_corrupt`（不退化全局版本）；否则按项目外处理。`install`/`version`/`--help` 始终全局处理；`serve` 由 `cmd_serve` 外层处理（§1d.4）；其余命令在 `TRAC_PROJECT_ACTIVE` 未设置时，以项目根为 cwd、`TRAC_PROJECT_ACTIVE=1` 执行 `.tracks/bin/trac.py`；项目外按全局版本既有行为。receipt/site-packages 损坏 → `install_corrupt`，不退化为全局版本。
 3. **`trac version`**：项目内读 receipt 并校验 `<site_packages>/tracks/__init__.py` 的 `__version__`；输出 `trac <version> (project <path>)`；`--json` 输出 `{"scope":"project","version":"...","project_root":"...","site_packages":"..."}`。项目外输出 `trac <global-version> (global)` 或 `{"scope":"global","version":"..."}`。版本不一致 → `install_corrupt`。
 4. **服务入口**：`trac serve` 的用户面在 `TRAC_CLI_ENTRY=1`（由 `main` 设置）时要求 receipt；无 receipt → `not_installed`，不启动 uvicorn。直接 import `serve_cmd.cmd_serve` 的调用面不经过该前置（测试/管理后门）。
-5. **版本归属**：项目 `/healthz` 的 `version` 字段来自项目 `tracks.__version__`；`service.started` payload 的 `version` 同源；`trac serve --status` 输出 receipt version。三者与 receipt 一致是 AC-FR0350-01/AC-FR0353-01 的可观察闭合。
+5. **版本归属**：项目 `/healthz` 的 `version` 字段来自项目 `tracks.__version__`；`trac serve --status` 输出 receipt version；`trac version` 读 receipt/site-packages。上述用户可观察出口与 receipt 一致是 AC-FR0350-01/AC-FR0353-01 的闭合。`service.started` payload 的 `version` 仍由实现写入（继承事件观察点），但不属 v0.12 断言基线，不构成测试承诺。
 
 ### 1e. 项目服务器生命周期（IF-SERVERLIFE-001）
 
@@ -173,7 +173,7 @@ sha:
 | 2 | `GET /api/runs/{run_id}/stages/{stage}/rounds` | path | 200 §1f.1 | 404 | 只读 |
 | 3 | `GET /api/runs/{run_id}/rounds/{command_id}` | path | 200 §1f.2 | 404 | 只读 |
 | 4 | `GET /api/runs/{run_id}/activity` | path | 200 `{run_id, version, stage, substate, awaiting, stage_entered_at, role, sessions, items}` | 404 | 继承遗留读面；API 语义不变，**不属 v0.12 断言基线**（无 AC/IF/测试承诺） |
-| 5 | `POST /api/runs/{run_id}/review` | `{action, comments?}` | 202 `{command_id}` | 422 `validation_failed` / `awaiting_mismatch` | §1h；CSRF + Idempotency-Key |
+| 4 | `POST /api/runs/{run_id}/review` | `{action, comments?}` | 202 `{command_id}` | 422 `validation_failed` / `awaiting_mismatch` | §1h；CSRF + Idempotency-Key |
 | 6 | `GET /static/app/*`、`GET /static/*.{css,js,mjs,html,json,txt,map}` | — | 200/304 + `Cache-Control: no-cache` | — | §1i |
 | 7 | 既有 #1-44 端点 | 不变 | 不变 | 不变 | 逐字继承 |
 
@@ -227,14 +227,14 @@ sha:
 | 1 | `GET /healthz` | `version` 等于项目锁定版本；status/projects/uptime 既有字段 |
 | 2 | `GET /api/runs/{run_id}/stages/{stage}/rounds` | schema §1f.1；轮数=dispatch 数；无窗口空列表 |
 | 3 | `GET /api/runs/{run_id}/rounds/{command_id}` | schema §1f.2；input/output/thinking/tool_calls；缺失降级 |
-| 5 | `POST /api/runs/{run_id}/review` | 202/422；CSRF/幂等；`human.review` payload comments/doc/thread_id |
-| 6 | 文档讨论块 | review 退回后新增根线程可解析；正文=comments |
-| 7 | 静态响应头 | `Cache-Control: no-cache`；ETag 未变更 304；API 无该头 |
-| 8 | `service.started` | payload version 等于项目版本 |
+| 4 | `POST /api/runs/{run_id}/review` | 202/422；CSRF/幂等；`human.review` payload comments/doc/thread_id |
+| 5 | 文档讨论块 | review 退回后新增根线程可解析；正文=comments |
+| 6 | 静态响应头 | `Cache-Control: no-cache`；ETag 未变更 304；API 无该头 |
 
-注：`GET /api/runs/{run_id}/activity`（run 版）是继承的未消费遗留读面；v0.12 只保留既有 API 语义，它不在本断言表内，无 AC/IF/测试承诺。
+注：`GET /api/runs/{run_id}/activity`（run 版）是继承的未消费遗留读面；v0.12 只保留既有 API 语义，它不在本断言表内，无 AC/IF/测试承诺。`service.started` payload 的 `version` 是继承事件观察点；v0.12 实现继续写入该字段，但不纳入断言基线，无 v0.12 测试承诺。
 
 > **Prism:** 【阻塞 finding PRISM-D13-03 · DESIGN-5 / DESIGN-1 interfaces↔test-plan 闭包】§1d.5（行 97）与 §4b#8（行 233）把 `service.started` 的 payload `version` 声明为 v0.12 版本归属断言出口，IF-VERSIONVIS-001（行 292）也写明「trac version / healthz version / service.started version / receipt version 三者一致」；test-plan §1.2（行 33）同样把 `service.started` version 列入可观察对象，§8 的 AC-FR0350-01 与 AC-FR0353-01 行也引用了 IF-VERSIONVIS-001。但 test-plan 全文没有任何测试名或旅程绑定该断言：§8 的 `test_background_survives_shell_and_reports_locked_version` 只断言 stdout/healthz/--status，`test_global_upgrade_keeps_locked_project` 只断言 version/status；§9.1/§9.2 未提该事件；§10 #15/#19 也只覆盖「无 service.started」与 healthz/stop，从未读取事件 payload 的 version。全仓 tests/ 对 service.started 也无 version 断言。因此该外部出口无测试覆盖，DESIGN-5 的 interfaces↔test-plan 闭包不成立。请二选一收口：(a) 在 §8/§9 明确绑定一个测试（可扩展现有 lifecycle 测试，读取 service 事件存储并断言 service.started.payload.version == receipt.version，并更新 §8.1 守卫/锚点表）；或 (b) 若该事件不属于 AC-FR0350-01/0353-01 的 v0.12 断言基线，像 run `/activity` 一样在 interfaces §1d.5/§4b#8 与 test-plan §1.2 显式标注为继承观察点、不纳入 v0.12 测试承诺。
+>> **Archer:** 采纳 (b) 收口：interfaces §1d.5 改为只把 /healthz version、trac version、trac serve --status 与 receipt 作为 AC-FR0350-01/AC-FR0353-01 的用户可观察闭合；service.started payload version 标注为实现继续写入的继承事件观察点，不属 v0.12 断言基线。§4b 移除该行并把 service.started 与 run /activity 一并注明为继承观察点；IF-VERSIONVIS-001 合同同步收窄为 trac version / healthz / receipt 三者一致。test-plan §1.2/§1.3 同步标注 service.started 不纳入 v0.12 断言基线，§8/§9/§10 的现有 healthz/version/status 断言不变。请复核。
 
 > **Prism [RESOLVED]:** 【阻塞 finding PRISM-D12-01 · DESIGN-5 interfaces↔test-plan 闭包】interfaces.md §4b#4（并 §2c#4）把 GET /api/runs/{run_id}/activity 登记为 v0.12 外部出口并声明断言（schema、活动 items 时间序）；architecture.md 行 25 把该系列面列入「补齐可观察合同与测试」，test-plan §1.1/§1.2 也把 activity 列为 v0.12 对应出口——但 test-plan §8 的 24 条 AC 锚点无任何 activity 测试，全仓 tests/ 对该端点零引用（run 版端点的 UI 消费方已在 ffaeed4 移除，现存 activity 引用只是 wizard.js 的 intake 版端点），且无 AC/IF 文本承载该出口。结论：DESIGN-5 的「每个外部出口都有测试覆盖」不成立。请二选一收口：(a) 为该出口补测试（FR-0140 trace 门禁要求每个测试引用至少一个 AC；若无 AC 可承载，需先显式收窄注册）；(b) 在 interfaces/test-plan 显式标注该出口不属 v0.12 断言基线（未消费遗留读面），使其不再构成合同承诺。本轮其余核验（24 条 required AC 闭包与六元组、Scaffold 宣言与实物、quality registry digest、project.toml 合同、arrival-green 象限、OOB testid/schema 登记）均通过，无其它阻塞。
 >> **Archer:** 采纳 (b) 收口，已修订三处：interfaces §0/§0.1 明确 run `/activity` 为未消费遗留读面、不纳入 v0.12 断言基线；§2c#4 保留既有 API 语义但标注“无 AC/IF/测试承诺”；§4b 移除该行并加注说明。test-plan §1.1/§1.2 已移除 activity 出口；architecture §0.2/§1.0.1/§1.1 同步标注为继承遗留、不新增断言。没有新增 activity 测试，rounds/round-detail 断言不变。请复核。
@@ -291,7 +291,7 @@ sha:
 
 ### IF-VERSIONVIS-001 版本可观察合同
 
-- **合同**：§1d.3/§1e——`trac version`（global/project scope、JSON）；healthz version；service.started version；receipt version；三者一致。
+- **合同**：§1d.3/§1e——`trac version`（global/project scope、JSON）；healthz version；receipt version；三者一致。`service.started` payload version 为继承事件观察点，不纳入 v0.12 断言基线。
 - **modules**：tracks/cli/install_cmd.py, tracks/project_runtime.py, tracks/server/api_query.py。
 - **关联**：FR-0350、FR-0353。
 

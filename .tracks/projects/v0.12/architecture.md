@@ -89,7 +89,7 @@ sha:
 4. `trac serve ...`：由 `cmd_serve` 的外层逻辑处理（§1.0.4）；项目外拒绝，项目内前台委派。
 5. 其余命令：若 cwd 位于已安装项目（向上查找最近的 `.tracks/install.json`），把 cwd 切到项目根并以 `TRAC_PROJECT_ACTIVE=1` 执行 `.tracks/bin/trac.py`；若未找到 receipt 但最近的 `.tracks/bin/trac.py` 或 `.tracks/env/` 存在，视为损坏项目并拒绝；否则按全局版本执行（既有行为保留）。项目 launcher 运行的是 receipt 指向的 site-packages，因此 `run/status/triage/...` 全部使用项目锁定版本。receipt 损坏或 site-packages 缺失时返回 `install_corrupt` 并指引重装，不退化为全局版本。
 
-`trac version --json` 的项目形态输出 `{"scope":"project","version":"0.11.0","project_root":"...","site_packages":"..."}`；全局形态输出 `{"scope":"global","version":"0.12.0"}`。项目服务连接后 `/healthz` 的 `version` 字段来自该项目 `tracks.__version__`，是“连接后版本归属”的第二出口（AC-FR0350-01/AC-FR0353-01）。
+`trac version --json` 的项目形态输出 `{"scope":"project","version":"0.11.0","project_root":"...","site_packages":"..."}`；全局形态输出 `{"scope":"global","version":"0.12.0"}`。项目服务连接后 `/healthz` 的 `version` 字段来自该项目 `tracks.__version__`，是“连接后版本归属”的第二出口（AC-FR0350-01/AC-FR0353-01）。`service.started` payload 的 `version` 继续由实现写入，但它是继承事件观察点；v0.12 的断言基线只取 `trac version`、`/healthz`、`trac serve --status` 与 receipt，不承诺测试读取该事件 payload。
 
 ### 1.0.4 项目内服务器生命周期
 
