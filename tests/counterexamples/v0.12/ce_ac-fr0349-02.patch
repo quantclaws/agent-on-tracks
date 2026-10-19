@@ -1,0 +1,14 @@
+diff --git a/tracks/cli/serve_cmd.py b/tracks/cli/serve_cmd.py
+index 7be9c4a..b1b8f35 100644
+--- a/tracks/cli/serve_cmd.py
++++ b/tracks/cli/serve_cmd.py
+@@ -645,6 +645,9 @@ def _log(level: str, msg: str) -> None:
+ 
+ def cmd_serve(repo: Path, *args: str) -> int:
+     """Parse serve flags and run the service until stopped (interfaces §2a)."""
++    if "--repo" in args:
++        print("trac serve: mutation: counterexample", file=sys.stderr)
++        return 1
+     del repo  # the command context; the serve scope comes from --repo flags
+     try:
+         opts = _parse_serve_args(list(args))

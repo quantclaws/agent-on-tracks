@@ -1,0 +1,14 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..c11eb0a 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -889,8 +889,7 @@ function nodeStateOf(stage, detail, facts) {
+   if (facts.invalidated.has(stage)) return "void";
+   const activeStage = detail && detail.stage;
+   if (stage === activeStage) {
+-    const gate = detail && detail.awaiting_gate;
+-    return gate ? "attention" : "active";
++    return facts.entered.has(stage) ? "done" : "pending";
+   }
+   return facts.entered.has(stage) ? "done" : "pending";
+ }

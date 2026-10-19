@@ -1,0 +1,13 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..cb83cb2 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -563,7 +563,7 @@ export function stageWorkflowSummary(detail, events, stage) {
+   const firstTs = window.length ? window[0].ts : null;
+   const running = !!detail && detail.stage === stage && !(detail.status && isTerminalStatus(detail.status));
+   const duration = firstTs ? durationOf(firstTs).replace(/^已运行 /, "") : "—";
+-  return `派发 ${dispatches} 次 · 交互轮次 ${roundText} · 人工动作 ${human} · ${running ? `进行中 ${duration}` : `用时 ${duration}`}`;
++  return `派发 0 次 · 交互轮次 ${roundText} · 人工动作 ${human} · ${running ? `进行中 ${duration}` : `用时 ${duration}`}`;
+ }
+ 
+ // Document type stack (mirrors styles.css :root --font-sans) + body size

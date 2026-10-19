@@ -1,0 +1,1 @@
+{"timestamp": "__TS__", "type": "message.part.updated", "payload": {"properties": {"sessionID": "ses-v012", "part": {"id": "part-thinking-__INDEX__", "type": "reasoning", "text": "thinking round __INDEX__ while reading .tracks/projects/__VERSION__/test-plan.md"}}}}

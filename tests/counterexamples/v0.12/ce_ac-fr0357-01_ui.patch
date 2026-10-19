@@ -1,0 +1,14 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..8607412 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -1035,6 +1035,9 @@ function stageRoundsPanel(detail, stage) {
+   const body = element("div", { class: "stage-rounds-body" });
+   outer.append(body);
+   const state = { loaded: false, loading: false, detailCache: new Map() };
++  if (runId) {
++    void requestJson(`/api/runs/${encodeURIComponent(runId)}/stages/${encodeURIComponent(stage)}/rounds`);
++  }
+   outer.addEventListener("toggle", () => {
+     if (!outer.open || state.loaded || state.loading) return;
+     state.loading = true;

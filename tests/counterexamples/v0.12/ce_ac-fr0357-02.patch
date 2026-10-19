@@ -1,0 +1,13 @@
+diff --git a/tracks/server/run_rounds.py b/tracks/server/run_rounds.py
+index c343c46..2010995 100644
+--- a/tracks/server/run_rounds.py
++++ b/tracks/server/run_rounds.py
+@@ -455,7 +455,7 @@ def _detail_thinking(
+     states = _sessions_view(repo_path)
+     session, items = _match_session(states, version, start_ts, end_ts)
+     if session is None:
+-        return None, False
++        return None, True
+     thinking = [item for item in items.values() if item.get("kind") == "thinking"]
+     thinking.sort(key=lambda item: intake_activity._ts_key(item.get("ts", "")))
+     return [_thinking_entry(item) for item in thinking[-_THINKING_TAIL:]], True

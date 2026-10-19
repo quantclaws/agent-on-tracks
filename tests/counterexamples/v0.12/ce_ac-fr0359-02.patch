@@ -1,0 +1,12 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..fc7f928 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -1781,6 +1781,7 @@ const GATE_EXCEPTION_TYPES = new Set([
+   "rollback",
+   "hotfix_triage",
+   "review_pending_threads",
++  "review",
+ ]);
+ 
+ // 门上待 Human 回答的讨论线程提示：gate.pending_human_threads 非空时渲染

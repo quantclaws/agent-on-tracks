@@ -1,0 +1,15 @@
+diff --git a/tracks/server/app.py b/tracks/server/app.py
+index 9828e93..8b38597 100644
+--- a/tracks/server/app.py
++++ b/tracks/server/app.py
+@@ -583,9 +583,7 @@ class _AppModulesNoCache:
+ 
+     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+         path = str(scope.get("path", "")) if scope.get("type") == "http" else ""
+-        if path.startswith("/static/app/") or (
+-            path.startswith("/static/") and path.endswith(self._TEXT_SUFFIXES)
+-        ):
++        if scope.get("type") == "http":
+             from starlette.datastructures import MutableHeaders
+ 
+             async def send_no_cache(message: Any) -> None:

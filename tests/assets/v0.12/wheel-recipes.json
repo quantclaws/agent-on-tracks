@@ -1,0 +1,8 @@
+{
+  "incomplete": {
+    "agents": "tracks/agents",
+    "skills": "tracks/skills",
+    "templates": "tracks/templates",
+    "opencode_json": "tracks/assets/opencode.json"
+  }
+}

@@ -1,0 +1,13 @@
+diff --git a/tracks/cli/run_cmd.py b/tracks/cli/run_cmd.py
+index 15a28be..1495d19 100644
+--- a/tracks/cli/run_cmd.py
++++ b/tracks/cli/run_cmd.py
+@@ -531,7 +531,7 @@ def _review_checkpoint(
+         has_comments=bool(comments and comments.strip()),
+     )
+     payload: dict = {"actor": actor_name}
+-    if comments is not None and params["verdict"] == "comment":
++    if False and comments is not None and params["verdict"] == "comment":
+         payload["comments"] = comments
+     return _HumanCheckpoint(
+         label="review",

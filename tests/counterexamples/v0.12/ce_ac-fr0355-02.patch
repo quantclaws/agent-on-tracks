@@ -1,0 +1,16 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..089e5a8 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -1643,7 +1643,10 @@ function nodeDetail(stage, detail, events) {
+   );
+   if (!ofStage.length) {
+     box.append(
+-      degradedMessage(`no recorded events for ${stage || "this node"} yet`, "NoEvents")
++      element("p", {
++        class: "detail-line",
++        text: `start/end: ${fmtTs(new Date().toISOString())} → ${fmtTs(new Date().toISOString())}`,
++      })
+     );
+   } else {
+     box.append(

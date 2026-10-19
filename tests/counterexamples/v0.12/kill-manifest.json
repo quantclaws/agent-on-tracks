@@ -1,0 +1,278 @@
+{
+ "version": "v0.12",
+ "contract": "one counterexample per required test (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
+ "verification": {
+  "write_head_session": "2026-10-19 M-TEST WRITE retry at base add1a57. The implementation tree is pre-v0.12: install/version/serve lifecycle/review thread write are legal Red. Arrival-green OOB nodes were re-run green and their counterexample kills were re-executed at this head; red-window patches bind the not-yet-delivered command/lifecycle/thread seams and are applied/re-anchored at the delivered tree.",
+  "apply_check": "every patch passes git apply --check at the WRITE head; after each kill session the product file was restored with git checkout -- <product file> and git status shows only tests/** changes",
+  "guard_kill_session": "killed at the WRITE head: AC-FR0348-01 (integration declaration + wheel), AC-FR0349-01 (usage parity integration + e2e), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02 (integration + UI), AC-FR0358-01, AC-FR0359-02, AC-FR0360-01 (no-cache + API), AC-NFR0160-01. Each mutation produced the bound test's behavioral assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
+  "red_window_kill_session": "the remaining bindings are legal Red at the WRITE head by design (test-plan §8.1: install/version/lifecycle/review-thread nodes are waiting for Devon). Their patches are minimal single-seam deviations against the declared implementation seams; at the delivered tree the same apply -> run bound node -> assert behavioral failure -> revert cycle is required (and re-anchored if context drifted)."
+ },
+ "test_bindings": [
+  {
+   "ac": "AC-FR0348-01",
+   "test": "tests/integration/test_install_package.py::test_scaffold_package_resources_declared",
+   "patch": "ce_ac-fr0348-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: package-data must declare assets/opencode.json -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0348-01",
+   "test": "tests/integration/test_install_package.py::test_wheel_carries_capability_resources",
+   "patch": "ce_ac-fr0348-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: tracks/assets/opencode.json missing from the built wheel -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0348-01",
+   "test": "tests/e2e/test_install_journey.py::test_install_from_official_wheel",
+   "patch": "ce_ac-fr0348-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (trac install not delivered); the package-data deviation is re-anchored at the delivered tree, where the bound journey fails before the success line"
+  },
+  {
+   "ac": "AC-FR0348-02",
+   "test": "tests/integration/test_install_package.py::test_incomplete_wheel_rejected",
+   "patch": "ce_ac-fr0348-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0349-01",
+   "test": "tests/integration/test_install_package.py::test_global_trac_help_zero_repo",
+   "patch": "ce_ac-fr0349-01_usage.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: usage must advertise install -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0349-01",
+   "test": "tests/integration/test_install_package.py::test_subcommand_tokens_registered",
+   "patch": "ce_ac-fr0349-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: TRAC_SUBCOMMANDS must register install -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0349-01",
+   "test": "tests/e2e/test_install_journey.py::test_global_trac_available_anywhere",
+   "patch": "ce_ac-fr0349-01_usage.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: usage must advertise install -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0349-02",
+   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "patch": "ce_ac-fr0349-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (serve install precondition not delivered); the serve-entry seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0350-01",
+   "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_and_reports_locked_version",
+   "patch": "ce_ac-fr0350-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0350-01",
+   "test": "tests/e2e/test_install_journey.py::test_project_server_background_roundtrip",
+   "patch": "ce_ac-fr0350-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0350-02",
+   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "patch": "ce_ac-fr0350-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (serve install precondition not delivered); the serve-entry seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0351-01",
+   "test": "tests/integration/test_install_versions.py::test_explicit_version_and_global_project_split",
+   "patch": "ce_ac-fr0351-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install/version not delivered); the version-face seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0351-01",
+   "test": "tests/e2e/test_install_journey.py::test_install_old_version_while_global_new",
+   "patch": "ce_ac-fr0351-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install/version not delivered); the version-face seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0351-02",
+   "test": "tests/integration/test_install_targets.py::test_empty_dir_and_existing_project",
+   "patch": "ce_ac-fr0351-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0352-01",
+   "test": "tests/integration/test_install_overwrite.py::test_managed_files_replaced_user_files_byte_identical",
+   "patch": "ce_ac-fr0352-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0352-02",
+   "test": "tests/integration/test_install_overwrite.py::test_user_modified_managed_file_overwritten",
+   "patch": "ce_ac-fr0352-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0353-01",
+   "test": "tests/integration/test_install_versions.py::test_global_upgrade_keeps_locked_project",
+   "patch": "ce_ac-fr0353-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install/version not delivered); the version-face seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0353-01",
+   "test": "tests/e2e/test_install_journey.py::test_upgrade_global_project_stays_old",
+   "patch": "ce_ac-fr0353-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install/version not delivered); the version-face seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0353-02",
+   "test": "tests/integration/test_install_versions.py::test_no_auto_upgrade_or_lock_change",
+   "patch": "ce_ac-fr0353-02.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install/version not delivered); the version-face seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0354-01",
+   "test": "tests/integration/test_install_versions.py::test_failure_semantics_and_retry",
+   "patch": "ce_ac-fr0354-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0354-01",
+   "test": "tests/integration/test_install_overwrite.py::test_reinstall_idempotent",
+   "patch": "ce_ac-fr0354-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (install face not delivered); the install-disabled seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0355-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
+   "patch": "ce_ac-fr0355-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: the path must render a attention node -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0355-02",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable",
+   "patch": "ce_ac-fr0355-02.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: no recorded events line missing while a fabricated start/end rendered -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0356-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds",
+   "patch": "ce_ac-fr0356-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: expected '派发 4 次', got '派发 0 次' -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0357-01",
+   "test": "tests/integration/test_run_rounds.py::test_rounds_list_and_detail",
+   "patch": "ce_ac-fr0357-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: [] == [1, 2] -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0357-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_per_round_detail_lazy_accordion",
+   "patch": "ce_ac-fr0357-01_ui.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: the rounds list must not load before the first expansion -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0357-02",
+   "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
+   "patch": "ce_ac-fr0357-02.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: thinking_available True is not False -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0357-02",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_round_thinking_missing_message",
+   "patch": "ce_ac-fr0357-02.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: the rotated-log explanation disappeared from the UI -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0358-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_run_card_local_time_and_heartbeat_not_reset",
+   "patch": "ce_ac-fr0358-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: wait was 5s (heartbeat) instead of >=60s (business event) -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0359-01",
+   "test": "tests/integration/test_review_decision_contract.py::test_return_writes_thread_then_review_event",
+   "patch": "ce_ac-fr0359-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (review thread write not delivered); the review-checkpoint seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0359-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_review_two_decisions_thread_and_continue",
+   "patch": "ce_ac-fr0359-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (review thread write not delivered); the review-checkpoint seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0359-02",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure",
+   "patch": "ce_ac-fr0359-02.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: a normal review gate must not stack template reason text -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0360-01",
+   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
+   "patch": "ce_ac-fr0360-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: Cache-Control is None instead of no-cache -> reverted clean"
+  },
+  {
+   "ac": "AC-FR0360-01",
+   "test": "tests/integration/test_static_cache.py::test_api_semantics_unchanged",
+   "patch": "ce_ac-fr0360-01_api.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: API routes must not receive the static no-cache header -> reverted clean"
+  },
+  {
+   "ac": "AC-NFR0159-01",
+   "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_exit_and_stop_unreachable",
+   "patch": "ce_ac-nfr0159-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-NFR0159-01",
+   "test": "tests/integration/test_server_lifecycle.py::test_windows_foreground_branch",
+   "patch": "ce_ac-nfr0159-01.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at WRITE (windows/background branch not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+  },
+  {
+   "ac": "AC-NFR0160-01",
+   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
+   "patch": "ce_ac-fr0360-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: Cache-Control is None instead of no-cache -> reverted clean"
+  },
+  {
+   "ac": "AC-NFR0160-01",
+   "test": "tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint",
+   "patch": "ce_ac-nfr0160-01.patch",
+   "result": "killed",
+   "kill_evidence": "applied at the WRITE head -> AssertionError: the first paint must not fetch per-round data -> reverted clean"
+  }
+ ]
+}

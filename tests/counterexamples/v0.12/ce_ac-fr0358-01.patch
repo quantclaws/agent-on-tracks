@@ -1,0 +1,14 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+index 99fd2a6..4f9c09e 100644
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -817,8 +817,7 @@ function durationOf(firstTs) {
+ function lastBusinessEvent(events) {
+   for (let index = events.length - 1; index >= 0; index -= 1) {
+     const event = events[index];
+-    const type = (event && event.type) || "";
+-    if (!HEARTBEAT_EVENT_TYPES.has(type)) return event;
++    return event;
+   }
+   return events.length ? events[events.length - 1] : null;
+ }

@@ -1,0 +1,13 @@
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index 054bf17..9267b41 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -463,7 +463,7 @@ def cmd_discuss(repo: Path, *args) -> int:
+ 
+ 
+ USAGE = (
+-    "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
++    "usage: trac init <path> [--version <v>] [--wheel <path>]"
+     "|version [--json]|start <version>"
+     "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
+     "|triage <decision> [--actor NAME]"

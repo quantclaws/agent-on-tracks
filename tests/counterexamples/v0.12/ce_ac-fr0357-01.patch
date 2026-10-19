@@ -1,0 +1,12 @@
+diff --git a/tracks/server/run_rounds.py b/tracks/server/run_rounds.py
+index c343c46..7e15c23 100644
+--- a/tracks/server/run_rounds.py
++++ b/tracks/server/run_rounds.py
+@@ -338,6 +338,7 @@ def rounds_for_stage(
+     repo_path: str | Path, run_id: str, stage: str
+ ) -> list[dict[str, Any]]:
+     """Ordered round-list items of one run stage (no HTTP needed)."""
++    return []
+     repo = str(repo_path)
+     events = api_query._run_events(repo, run_id)
+     window = _stage_window(events, stage)

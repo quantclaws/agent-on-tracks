@@ -15,6 +15,28 @@ from tests._support.fixtures import (  # noqa: F401  re-export
     steps,
     trac,
 )
+from tests._support.v012_install import (  # noqa: F401  re-export
+    OLD_VERSION,
+    build_wheel,
+    install_global,
+)
+
+
+@pytest.fixture(scope="session")
+def v012_wheels(tmp_path_factory):
+    """Candidate wheels for the install/version contract tests (built once)."""
+    root = tmp_path_factory.mktemp("v012-wheels")
+    return {
+        "current": build_wheel(root / "current"),
+        "old": build_wheel(root / "old", version=OLD_VERSION),
+    }
+
+
+@pytest.fixture(scope="session")
+def v012_global(v012_wheels, tmp_path_factory):
+    """Isolated global prefix carrying the current wheel (§2.5)."""
+    prefix = tmp_path_factory.mktemp("v012-global")
+    return install_global(prefix, v012_wheels["current"])
 
 
 @pytest.fixture(autouse=True)

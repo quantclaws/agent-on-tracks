@@ -124,6 +124,13 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
     console = _run(["trac", "status"], console_host, console_env)
     assert console.returncode == 0, console.stderr
     assert "no runs yet" in console.stdout
+    # v0.12 (test-plan §11 row 5): the installed console entry answers
+    # --help outside any repository context and advertises the new commands.
+    helped = _run(["trac", "--help"], console_host, console_env)
+    assert helped.returncode == 0, helped.stderr
+    assert "usage: trac" in helped.stdout
+    for token in ("install", "version", "serve"):
+        assert token in helped.stdout
 
     probe_host = tmp_path / "probe-host"
     probe_host.mkdir()
