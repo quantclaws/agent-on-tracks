@@ -264,7 +264,11 @@ function stageWorkflowWindow(events, stage) {
   let start = -1;
   for (let index = list.length - 1; index >= 0; index -= 1) {
     const event = list[index];
-    if (event && event.type === "stage.entered" && stageOf(event) === stage) {
+    if (
+      event &&
+      (event.type === "stage.entered" || event.type === "stage.recovered") &&
+      stageOf(event) === stage
+    ) {
       start = index;
       break;
     }
@@ -273,7 +277,13 @@ function stageWorkflowWindow(events, stage) {
   let end = list.length;
   for (let index = start + 1; index < list.length; index += 1) {
     const event = list[index];
-    if (event && event.type === "stage.exited") {
+    if (!event) continue;
+    // Any exit, rollback or a recovery into another stage ends this window.
+    if (event.type === "stage.exited" || event.type === "stage.rolled_back") {
+      end = index + 1;
+      break;
+    }
+    if (event.type === "stage.recovered" && stageOf(event) !== stage) {
       end = index + 1;
       break;
     }
@@ -608,16 +618,27 @@ export function stageOrder(timeline) {
 }
 
 export function groupAttempts(timeline) {
-  const groups = new Map();
-  for (const event of (timeline && timeline.events) || []) {
-    const key =
-      event.attempt === undefined || event.attempt === null
-        ? event.task_id || "current"
-        : event.attempt;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(event);
-  }
-  return groups;
+  // stage -> (attempt -> [{event, index}]). The dispatch attempt lives in
+  // ``command.params.attempt`` on slim rows (not on the row itself), and a
+  // rollback re-entry resets the numbering, so callers filter by visit.
+  const stages = new Map();
+  const events = (timeline && timeline.events) || [];
+  events.forEach((event, index) => {
+    if (!event || event.type !== "command.issued") return;
+    const params = dispatchParams(event) || {};
+    const kind = dispatchKind(event);
+    const stage = stageOf(event) || params.stage || null;
+    if (!stage) return;
+    if (kind !== "dispatch_agent" && !params.role) return;
+    const raw = params.attempt !== undefined ? params.attempt : event.attempt;
+    const attempt = Number(raw);
+    if (!Number.isFinite(attempt)) return;
+    if (!stages.has(stage)) stages.set(stage, new Map());
+    const byAttempt = stages.get(stage);
+    if (!byAttempt.has(attempt)) byAttempt.set(attempt, []);
+    byAttempt.get(attempt).push({ event, index });
+  });
+  return stages;
 }
 
 export function renderTimelineView(body, context = {}) {
@@ -762,7 +783,8 @@ function currentCard(detail, events, state) {
   const awaiting = !!gate;
   const actionFace = actionOf(detail, state, events);
   const stage = (detail && detail.stage) || "-";
-  const substate = (detail && detail.control_state) || "-";
+  const substate = (detail && detail.substate) || (detail && detail.control_state) || "-";
+  const control = detail && detail.control_state;
   const card = element("section", {
     class: "current-card",
     "data-testid": "current-node-card",
@@ -772,7 +794,7 @@ function currentCard(detail, events, state) {
     element("p", {
       class: "card-status",
       "data-testid": "card-status",
-      text: `当前阶段：${stage} · ${substate}${awaiting ? " · 等待人工裁决" : ""}`,
+      text: `当前阶段：${stage} · ${substate}${control && control !== substate ? ` · ${control}` : ""}${awaiting ? " · 等待人工裁决" : ""}`,
     })
   );
   card.append(
@@ -793,6 +815,18 @@ function currentCard(detail, events, state) {
     : null;
   if (gate) card.append(gateActionPanel(detail, gate));
   const options = detail && detail.return_options;
+  // A rollback gate (M-TEST/M-IMPL) is answered by `approve`, not `return`;
+  // the web worker cannot bind the CLI --to choice, so surface the exact
+  // escape instead of leaving a dead primary action.
+  if (gate && gate.type === "rollback" && (!options || !options.allowed)) {
+    card.append(
+      element("p", {
+        class: "gate-rollback-guidance",
+        "data-testid": "gate-rollback-guidance",
+        text: "回滚门需要 CLI 确认目标：trac approve --to M-ACC|M-SPEC|M-DESIGN（M-TEST 的 stub_gap 预设 M-DESIGN）",
+      })
+    );
+  }
   if (options && options.allowed) {
     const pointer = returnPointer(detail);
     if (pointer) card.append(pointer);
@@ -818,14 +852,17 @@ function ownerOf(detail) {
 }
 
 function attemptCount(events) {
-  const ids = new Set(
-    events.map((event) =>
-      event.attempt === undefined || event.attempt === null
-        ? event.task_id || "current"
-        : String(event.attempt)
-    )
-  );
-  return ids.size || 1;
+  // Count real dispatches: the slim face carries the attempt inside
+  // ``command.params`` (the row-level ``attempt`` is usually null), and the
+  // per-stage numbering resets on rollback — the card's "尝试 N 次" is the
+  // run's total dispatch count.
+  let count = 0;
+  for (const event of events || []) {
+    if (!event || event.type !== "command.issued") continue;
+    const params = dispatchParams(event) || {};
+    if (dispatchKind(event) === "dispatch_agent" || params.role) count += 1;
+  }
+  return count || 1;
 }
 
 function durationOf(firstTs) {
@@ -899,11 +936,11 @@ function foldStageFacts(events) {
   const repairs = [];
   const backEdges = [];
   let current = null;
-  const openVisit = (stage) => {
+  const openVisit = (stage, index) => {
     if (!visits.has(stage)) visits.set(stage, []);
-    visits.get(stage).push({ state: "open" });
+    visits.get(stage).push({ state: "open", startIndex: index, endIndex: null });
   };
-  const closeVisit = (stage, state) => {
+  const closeVisit = (stage, state, index) => {
     const list = visits.get(stage);
     if (!list || !list.length) return;
     const latest = list[list.length - 1];
@@ -911,17 +948,29 @@ function foldStageFacts(events) {
     // that a rollback already voided. A rollback marks the latest visit.
     if (state === "done" && latest.state !== "open") return;
     latest.state = state;
+    latest.endIndex = index;
   };
-  for (const event of events) {
-    if (event.type === "stage.entered") {
+  const list = Array.isArray(events) ? events : [];
+  for (let index = 0; index < list.length; index += 1) {
+    const event = list[index];
+    if (!event) continue;
+    if (event.type === "stage.entered" || event.type === "stage.recovered") {
       const stage = stageOf(event) || current;
-      if (stage) {
-        openVisit(stage);
-        current = stage;
+      if (!stage) continue;
+      if (event.type === "stage.recovered") {
+        // stage.recovered is a real entry boundary (kernel maps it onto
+        // _on_stage_entered): close the stage we came from, then open the
+        // recovered stage's visit. Without this the next rollback's
+        // from_stage fell back to a stale ``current`` and the edge vanished.
+        const payload = event.payload || {};
+        const from = payload.from_stage || payload.from || event.from_stage || current;
+        if (from && from !== stage) closeVisit(from, "done", index);
       }
+      openVisit(stage, index);
+      current = stage;
     } else if (event.type === "stage.exited") {
       const stage = stageOf(event) || current;
-      if (stage) closeVisit(stage, "done");
+      if (stage) closeVisit(stage, "done", index);
     } else if (event.type === "stage.rolled_back") {
       const payload = event.payload || {};
       const from =
@@ -933,14 +982,20 @@ function foldStageFacts(events) {
           ? payload.reason
           : (typeof payload.summary === "string" ? payload.summary : null);
       const repair = !!(payload.operator_repair || event.operator_repair);
-      if (repair || (from && to && from === to)) {
-        repairs.push({ from, to, reason });
+      const human = reason === "human_return";
+      if (repair || (from && to && from === to && human)) {
+        // Operator repair / human re-do of the current stage: a note on the
+        // live visit, never a void and never a back edge.
+        repairs.push({ from, to, reason, index });
         continue;
       }
-      if (from) closeVisit(from, "void");
+      if (from) closeVisit(from, "void", index);
       if (from && to) {
-        backEdges.push({ from, to, reason });
-        openVisit(to);
+        // A self rollback (from === to, e.g. an automatic diagnose re-entry)
+        // voids the old visit and opens a new one; a back-edge to the same
+        // node has no meaningful geometry, so only real past edges render.
+        if (from !== to) backEdges.push({ from, to, reason, index });
+        openVisit(to, index);
         current = to;
       }
     }
@@ -1534,17 +1589,21 @@ function stageTrack(stages, events, detail) {
       element("span", { class: "node-icon", text: STATE_ICONS[nodeState] || "·" }),
       element("span", { class: "stage-label", text: stage })
     );
-    // Every dispatch attempt keeps its own badge (the attempt groups are
-    // never folded). Attempts after the first one for this stage are the
-    // retry re-dispatches: badge + self-loop face, not a new node.
+    // Attempt badges are per VISIT: a rollback re-entry resets the attempt
+    // numbering, so only dispatches at/after the current visit's start
+    // count. Attempts past the first are retry re-dispatches — badge +
+    // self-loop face on the same stage node, never a new node.
+    const byAttempt = attempts.get(stage) || new Map();
+    const visit = (facts.visits.get(stage) || []).slice(-1)[0] || null;
+    const visitStart = visit ? visit.startIndex : -1;
     const stageAttempts = [];
-    for (const [attempt, group] of attempts) {
-      if (group.some((event) => stageOf(event) === stage)) {
+    for (const [attempt, entries] of byAttempt) {
+      if (entries.some((entry) => visitStart < 0 || entry.index >= visitStart)) {
         stageAttempts.push(attempt);
       }
     }
-    stageAttempts.forEach((attempt, index) => {
-      const retry = index > 0;
+    stageAttempts.sort((a, b) => a - b).forEach((attempt) => {
+      const retry = attempt > 1;
       node.append(
         element("span", {
           class: retry ? "stage-attempt stage-attempt-loop" : "stage-attempt",
@@ -1649,6 +1708,8 @@ function svgElement(tag, attributes = {}) {
  * horizontally scrolling content as the track, so it follows the scroll;
  * it re-measures on window resize and track reflow.
  */
+let backEdgeSeq = 0;
+
 function backEdgeLayer(edges, track) {
   if (!edges.length) return null;
   const layer = svgElement("svg", {
@@ -1658,8 +1719,24 @@ function backEdgeLayer(edges, track) {
     "aria-label": "回退线",
   });
   const height = 40;
+  const markerId = `timeline-back-arrow-${(backEdgeSeq += 1)}`;
   let frame = 0;
+  let observer = null;
+  const detachIfStale = () => {
+    if (layer.isConnected) return false;
+    globalThis.removeEventListener("resize", schedule);
+    if (observer) {
+      try {
+        observer.disconnect();
+      } catch (error) {
+        /* already disconnected */
+      }
+      observer = null;
+    }
+    return true;
+  };
   const layout = () => {
+    if (detachIfStale()) return;
     const trackRect = track.getBoundingClientRect();
     const width = Math.max(
       1,
@@ -1671,7 +1748,7 @@ function backEdgeLayer(edges, track) {
     layer.setAttribute("viewBox", `0 0 ${width} ${height}`);
     layer.replaceChildren();
     const marker = svgElement("marker", {
-      id: "timeline-back-arrow",
+      id: markerId,
       markerWidth: "6",
       markerHeight: "6",
       refX: "3",
@@ -1708,7 +1785,7 @@ function backEdgeLayer(edges, track) {
       group.append(svgElement("path", {
         class: "back-edge-path",
         d: `M ${sx} 2 C ${sx} 32, ${tx} 32, ${tx} 2`,
-        "marker-end": "url(#timeline-back-arrow)",
+        "marker-end": `url(#${markerId})`,
       }));
       const label = svgElement("text", {
         class: "back-edge-label",
@@ -1735,7 +1812,10 @@ function backEdgeLayer(edges, track) {
   globalThis.addEventListener("resize", schedule);
   if (typeof globalThis.ResizeObserver === "function") {
     try {
-      const observer = new globalThis.ResizeObserver(schedule);
+      observer = new globalThis.ResizeObserver(() => {
+        if (detachIfStale()) return;
+        schedule();
+      });
       observer.observe(track);
     } catch (error) {
       /* resize listener still repositions the layer */
@@ -1779,9 +1859,11 @@ function selectNode(node, stage, detail, events) {
   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
     other.removeAttribute("data-state-selected");
     other.removeAttribute("data-selected");
+    other.setAttribute("aria-pressed", "false");
     other.classList.remove("stage-node-selected");
   }
   node.setAttribute("data-state-selected", "true");
+  node.setAttribute("aria-pressed", "true");
   // the visible selection face (same marker triple as the sidebar focus):
   // data-selected + class hook + an aria mark so the choice reads aloud.
   node.setAttribute("data-selected", "true");
@@ -2268,7 +2350,7 @@ export function primaryActionFace(encoded, action, actionsEl) {
     mount.append(
       element("span", {
         class: "gate-action-hint",
-        text: "请在下方回退区确认回退目标",
+        text: "请在 run 级回退区确认回退目标",
       })
     );
   } else {
@@ -2375,7 +2457,17 @@ function _gateAction(detail) {
 export function returnPointer(detail) {
   const options = detail && detail.return_options;
   const targets = options && Array.isArray(options.targets) ? options.targets : [];
-  if (!options || !options.allowed || !targets.length) return null;
+  if (!options || !options.allowed || !targets.length) {
+    // Keep the stable testid without claiming an action: the server's
+    // return gate is the single legality source (author stages at
+    // approval/escalation, release stages' FR-0287 universal return).
+    return element("p", {
+      class: "return-pointer return-pointer-empty",
+      "data-testid": "return-pointer",
+      hidden: true,
+      text: "无回退入口",
+    });
+  }
   const runId = encodeURIComponent((detail && detail.run_id) || "");
   const currentStage = detail && detail.stage ? String(detail.stage) : "";
   const box = element("div", {
@@ -2386,7 +2478,7 @@ export function returnPointer(detail) {
     element("p", {
       class: "return-targets-scope",
       "data-testid": "return-targets-scope",
-      text: "run 级回退（仅等待人工裁决时可用）",
+      text: "run 级回退（服务端返回合法目标时可用）",
     }),
     element("p", {
       class: "return-targets",
@@ -2396,7 +2488,7 @@ export function returnPointer(detail) {
     element("p", {
       class: "return-hint",
       "data-testid": "return-hint",
-      text: "重试（retry）：保留本阶段已产出，只重派当前步骤（不记回退）｜重做当前阶段：作废本阶段本次产出，从阶段入口重来（记一次回退）",
+      text: "重试（retry）：保留本阶段已产出，只重派当前步骤（不记回退）｜重做当前阶段：人工让本阶段从入口重来（人工治理，不计入自动回退）",
     }),
     element("p", {
       class: "return-test-note",
@@ -2411,7 +2503,7 @@ export function returnPointer(detail) {
       class: "return-pointer-button",
       "data-testid": `return-pointer-${target.stage}`,
       text: isCurrent ? `重做 ${target.stage}（当前阶段）` : `回退到 ${target.stage}`,
-      ...(isCurrent ? { title: `回到 ${target.stage} 阶段入口重新走；本阶段已产生的中间结果不保留` } : {}),
+      ...(isCurrent ? { title: `从 ${target.stage} 阶段入口重新进入；人工治理动作，不计入自动回退` } : {}),
     });
     pointer.addEventListener("click", () => {
       openReturnConfirm(box, runId, target, currentStage);

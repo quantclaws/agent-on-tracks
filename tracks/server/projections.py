@@ -1194,6 +1194,12 @@ def _event_ac_refs(payload: dict) -> list[str]:
 # 30KB–2.2MB evidence blobs never contribute them (737 $ref rows in the
 # reference run carry no stage, 8 carry attempt).
 _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
+    # Rollback edges / visit boundaries: the client must see where a
+    # ``stage.rolled_back`` came FROM and whether it was an operator repair
+    # (a self-rollback or a repair must not void the current visit). Dropping
+    # these made the slim face lose the edge whenever ``current`` did not
+    # happen to be the source stage (recovery/truncation paths).
+    "from_stage", "from", "operator_repair",
     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
     "area", "next"})
 
@@ -1224,7 +1230,11 @@ _SLIM_COMMAND_PARAM_KEYS = frozenset({"role", "substate", "attempt", "review_rou
 # stage graph empty and the summary at 0 dispatches. Every OTHER ref type
 # (the reference run's 737 rows) carries no stage facts, so its blob stays
 # unread — slim mode remains bounded to this small workflow set.
-_SLIM_REF_TYPES = frozenset({"command.issued", "outcome.received", "red.validated"})
+_SLIM_REF_TYPES = frozenset({"command.issued", "outcome.received", "red.validated",
+    # Visit/edge facts can carry long reasons (recovery narratives) and are
+    # stored as blobs once over the inline threshold; both stay rare, so
+    # reading their blobs is bounded.
+    "stage.rolled_back", "stage.recovered"})
 
 
 def _slim_payload(type_: str, parsed: dict) -> dict:

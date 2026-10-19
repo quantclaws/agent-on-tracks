@@ -573,3 +573,29 @@ def test_overview_run_title_falls_back_to_run_id(tmp_path: Path):
     assert rows[0]["title"] == run_id, (
         "a run without a story title falls back to the run id"
     )
+
+
+def test_slim_payload_keeps_rollback_source_and_repair_flag():
+    """The slim timeline face must carry the rollback edge's source and the
+    operator-repair flag: dropping ``from_stage``/``operator_repair`` made the
+    client fall back to a stale ``current`` and lose the edge (or void the
+    live visit) whenever the source was not the last entered stage."""
+    slim = projections._slim_payload(
+        "stage.rolled_back",
+        {
+            "from_stage": "M-DESIGN",
+            "to_stage": "M-DESIGN",
+            "reason": "stub_gap",
+            "operator_repair": "stale red.validated after rollback",
+        },
+    )
+    assert slim["from_stage"] == "M-DESIGN"
+    assert slim["operator_repair"] == "stale red.validated after rollback"
+    assert slim["to_stage"] == "M-DESIGN"
+
+    recovered = projections._slim_payload(
+        "stage.recovered",
+        {"from_stage": "M-DESIGN", "stage": "M-IMPL", "reason": "fresh re-entry"},
+    )
+    assert recovered["from_stage"] == "M-DESIGN"
+    assert recovered["stage"] == "M-IMPL"

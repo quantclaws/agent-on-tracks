@@ -208,8 +208,9 @@ def test_stage_review_completed_in_panel(trac, tmp_path, page):
 # AC-FR0343-02@v0.11 TRACKS-TRACE non awaiting nodes carry no gate entry
 def test_no_dangling_stage_review(trac, tmp_path, page):
     """AC-FR0343-02: nodes that are not awaiting render only their details —
-    no gate action entry anywhere — so the Review removal leaves no dangling
-    review surface."""
+    no gate action entry in the node's pane — so the Review removal leaves no
+    dangling review surface on a non-awaiting node. The run-level gate action
+    lives in the current-node card and is selection-invariant."""
     repo = _prepared_repo(trac)
     with _gate_run(tmp_path, repo, "dangling") as (base, run_id):
         _login(page, base)
@@ -222,11 +223,19 @@ def test_no_dangling_stage_review(trac, tmp_path, page):
         assert page.locator("[data-testid^='gate-action-']").count() >= 1, (
             "the awaiting run presents its gate panel on load"
         )
-        # a completed (non-awaiting) node: details only, never a gate entry
+        # a completed (non-awaiting) node: details only; the run-level gate
+        # action stays in the current-node card (selection-invariant).
         nodes.first.click()
         expect(page.get_by_test_id("detail-pane")).to_be_visible()
-        assert page.locator("[data-testid^='gate-action-']").count() == 0, (
-            "a non-awaiting node must not present a gate action entry"
+        assert page.locator(
+            "[data-testid='detail-pane'] [data-testid^='gate-action-']"
+        ).count() == 0, (
+            "a non-awaiting node's detail pane must not present a gate action"
+        )
+        assert page.locator(
+            "[data-testid='current-node-card'] [data-testid^='gate-action-']"
+        ).count() >= 1, (
+            "the run-level gate action stays in the current-node card"
         )
 
 
