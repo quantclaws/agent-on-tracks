@@ -160,6 +160,12 @@ def test_failure_semantics_and_retry(
     """AC-FR0354-01: each failure class exits non-zero with its closed-set
     reason and leaves no receipt; the fixed target then installs cleanly and
     a same-version retry stays successful."""
+    def empty_target(name: str) -> Path:
+        """A fresh target per failure class (no failure-order coupling)."""
+        target = tmp_path / name
+        target.mkdir()
+        return target
+
     target_file = tmp_path / "target-file"
     target_file.write_text("not a directory\n", encoding="utf-8")
     cases: list[tuple[str, list[str], Path]] = [
@@ -173,28 +179,32 @@ def test_failure_semantics_and_retry(
     non_git.mkdir()
     (non_git / "user.txt").write_text("user\n", encoding="utf-8")
     cases.append(("not_a_git_repo", [str(non_git)], non_git))
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    cases.append(("version_invalid", [str(empty), "--version", "1.2"], empty))
-    cases.append(("version_unavailable", [str(empty), "--version", OLD_VERSION], empty))
+    invalid = empty_target("version-invalid")
+    cases.append(("version_invalid", [str(invalid), "--version", "1.2"], invalid))
+    unavailable = empty_target("version-unavailable")
+    cases.append(
+        ("version_unavailable", [str(unavailable), "--version", OLD_VERSION], unavailable)
+    )
+    mismatch = empty_target("version-mismatch")
     cases.append(
         (
             "version_mismatch",
             [
-                str(empty),
+                str(mismatch),
                 "--version",
                 CURRENT_VERSION,
                 "--wheel",
                 str(v012_wheels["old"]),
             ],
-            empty,
+            mismatch,
         )
     )
+    missing_dependency = empty_target("dependency-missing")
     cases.append(
         (
             "dependency_missing",
-            [str(empty), "--wheel", str(dependency_wheel)],
-            empty,
+            [str(missing_dependency), "--wheel", str(dependency_wheel)],
+            missing_dependency,
         )
     )
     missing_parent = tmp_path / "missing-parent" / "child"
