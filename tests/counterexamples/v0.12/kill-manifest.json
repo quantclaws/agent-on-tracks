@@ -2,8 +2,8 @@
  "version": "v0.12",
  "contract": "one counterexample per required test (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
  "verification": {
-  "write_head_session": "2026-10-19 M-TEST WRITE revision at head 2cb5871 (Prism revise 01M59JRMVS1QSCSZXWGNJJ1YTG): re-anchored AC-FR0355-02 at the current timeline.js no-events branch, extended AC-FR0356-01 with the human-gate terminal, restored the §11 rows 1-4 awaiting_ui face and bound the four selected nodes to the v0.12 review-thread write (legal Red), and re-executed every guard kill at this head.",
-  "apply_check": "every patch passes git apply --check at the WRITE head 2cb5871; after each kill session the product file was restored with git checkout -- <product file> and git status shows only tests/** changes",
+  "write_head_session": "2026-10-19 M-TEST WRITE revision at head 8e41475 (after the M-DESIGN pass): the design fixes rewrote timeline.js nodeStateOf, so the AC-FR0355-01 counterexample was re-anchored to the current gate-attention seam and re-killed; the 18 arrival-green guards were re-run green and the remaining red-window bindings retain their legal Red status. The revised test-plan's prefix install layout and e2e collect marker already match tests/_support/v012_install.py and project.toml.",
+  "apply_check": "every patch passes git apply --check at the WRITE head 8e41475; after the AC-FR0355-01 kill the product file was restored with git checkout -- and git status shows only tests/** changes",
   "guard_kill_session": "killed at the WRITE head: AC-FR0348-01 (integration declaration + wheel), AC-FR0349-01 (usage parity integration + e2e), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02 (integration + UI), AC-FR0358-01, AC-FR0359-02, AC-FR0360-01 (no-cache + API), AC-NFR0160-01. Each mutation produced the bound test's behavioral assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
   "red_window_kill_session": "the remaining bindings are legal Red at the WRITE head by design (test-plan §8.1: install/version/lifecycle/review-thread nodes are waiting for Devon). Their patches are minimal single-seam deviations against the declared implementation seams; at the delivered tree the same apply -> run bound node -> assert behavioral failure -> revert cycle is required (and re-anchored if context drifted)."
  },
@@ -160,7 +160,7 @@
    "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
    "patch": "ce_ac-fr0355-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the path must render a attention node -> reverted clean"
+   "kill_evidence": "applied at 8e41475 -> AssertionError: the path must render a attention node -> reverted clean"
   },
   {
    "ac": "AC-FR0355-02",
