@@ -25,6 +25,7 @@ from typing import Any
 
 from tracks import paths
 from tracks.baseline import revision_digest
+from tracks.cli.common import writer_lock
 from tracks.cli.gate_cmd import _retry_gate_error, _return_gate
 from tracks.cli.release_cmd import (
     _already_executed_ops,
@@ -670,6 +671,8 @@ class CommandService:
             _apply_backlog_disposed(store, request, actor, command_id)
         elif kind == "return_stage":
             self._apply_return_stage(store, request, command_id)
+        elif kind == "retry_run":
+            self._apply_retry(store, request, actor, command_id)
 
     def _apply_edit(
         self, store: ServiceDB, request: dict, actor: str, surface: str, command_id: str
@@ -996,6 +999,73 @@ class CommandService:
                 })
         finally:
             run_store.close()
+
+    def _apply_retry(
+        self, store: ServiceDB, request: dict, actor: str, command_id: str
+    ) -> None:
+        """Execute ``retry_run`` synchronously at acceptance (FR-0311).
+
+        ``_bind_retry`` already validated the legal repair/escape position;
+        the same ``human.retry`` event the CLI face appends is written under
+        the run writer lock, then the command row is marked completed. A
+        repeat acceptance with the same idempotency key returns before this
+        path (dedup), so the event is never written twice.
+        """
+        run_id = str(request.get("run_id") or "")
+        project = self._project_for_run(store, run_id)
+        if project is None:
+            return
+        repo = Path(str(project["repo_path"]))
+        home = paths.tracks_home(repo)
+        run_store = Store(home)
+        try:
+            with writer_lock(home):
+                state = run_store.state(run_id)
+                run_store.append(
+                    run_id,
+                    str(state.version or project.get("version") or ""),
+                    "human.retry",
+                    {
+                        "actor": actor,
+                        "clear_evidence": bool(request.get("clear_evidence")),
+                    },
+                    command_id=command_id,
+                )
+        except Exception as exc:
+            # The command has no worker face to retry it: never leave a
+            # half-executed row in ``accepted`` (a dedup replay would then
+            # silently skip execution forever).
+            self._complete_accepted_command(
+                store,
+                command_id,
+                {"kind": "retry_failed", "reason": str(exc)},
+                status="failed",
+            )
+            raise
+        finally:
+            run_store.close()
+        self._complete_accepted_command(store, command_id, {"kind": "retry_recorded"})
+
+    @staticmethod
+    def _complete_accepted_command(
+        store: ServiceDB, command_id: str, outcome: dict, *, status: str = "completed"
+    ) -> None:
+        """Finish a synchronously executed command (accept face).
+
+        ServiceDB's ``complete_command`` CAS targets worker claims; accept-time
+        execution owns an ``accepted`` row, so the same row is transitioned
+        under the matching status guard (a dedup/rejection never reaches here).
+        """
+        connect = getattr(store, "_connect", None)
+        if not callable(connect):
+            return
+        with contextlib.closing(connect()) as conn:
+            conn.execute(
+                "UPDATE commands SET status = ?, result_json = ?, updated_at = ?"
+                " WHERE command_id = ? AND status = 'accepted'",
+                (status, json.dumps(outcome), _now_iso(), command_id),
+            )
+            conn.commit()
 
     def _resume_stage(self, store: ServiceDB, run_id: Any) -> str | None:
         state = self._run_state(store, run_id)

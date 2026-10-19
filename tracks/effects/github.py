@@ -18,6 +18,7 @@ import json
 import os
 import re
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,13 @@ _AC_HEAD = re.compile(r"^### (AC-N?FR\d{4}-\d+)[ \t]*(.*)$")
 
 # HTTP status -> GithubIssuesError classification (shared by _request/_get).
 _HTTP_ERROR_CLASSES = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}
+
+# Transient transport retry (live GitHub reached over flaky TLS/connections:
+# observed ssl.UNEXPECTED_EOF on the direct channel). Bounded: three total
+# attempts with 0.5s/1s backoff; HTTP status errors are never retried and
+# keep their existing classification.
+_NETWORK_ATTEMPTS = 3
+_NETWORK_BACKOFF_S = (0.5, 1.0)
 
 
 class GithubIssuesError(RuntimeError):
@@ -199,6 +207,38 @@ class FakeIssueBackend:
         )
 
 
+def _is_transient_transport_error(exc: Exception) -> bool:
+    """True for SSL/connection/timeout failures worth a bounded retry.
+
+    ``HTTPError`` is deliberately excluded (its 4xx/5xx classification is
+    terminal at this layer), and a ``URLError`` wrapping an HTTP error never
+    reaches here because ``HTTPError`` is caught first.
+    """
+    return isinstance(exc, (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def _urlopen_transport_retry(req: urllib.request.Request):
+    """urlopen with bounded retry on transient transport errors.
+
+    Non-transient errors keep the pre-existing classification path; the
+    final transport failure is classified ``network`` exactly as before.
+    """
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(
+                req, timeout=30, context=_tls_ssl_context()
+            ) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError:
+            raise
+        except (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            attempt += 1
+            if attempt >= _NETWORK_ATTEMPTS or not _is_transient_transport_error(exc):
+                raise
+            time.sleep(_NETWORK_BACKOFF_S[attempt - 1])
+
+
 class GithubBackend:
     """Live channel: GitHub REST via GITHUB_TOKEN / TRAC_GITHUB_REPO (owner/name);
     Project association via TRAC_GITHUB_PROJECT."""
@@ -213,17 +253,18 @@ class GithubBackend:
     def _urlopen(self, req: urllib.request.Request) -> dict:
         """Perform a JSON request and classify HTTP/URL errors (shared by
         ``_request``/``_get``); raises ``GithubIssuesError`` classified.
-        Every call carries the explicit IF-TLS-001 verifying SSL context."""
+        Every call carries the explicit IF-TLS-001 verifying SSL context.
+        Transient SSL/connection/timeout failures are retried a bounded
+        number of times before the existing ``network`` classification."""
         try:
-            with urllib.request.urlopen(
-                req, timeout=30, context=_tls_ssl_context()
-            ) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+            return _urlopen_transport_retry(req)
         except urllib.error.HTTPError as e:
             cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
             raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
         except urllib.error.URLError as e:
             raise GithubIssuesError("network", str(e.reason)) from e
+        except (ssl.SSLError, TimeoutError, ConnectionError) as e:
+            raise GithubIssuesError("network", str(e)) from e
 
     def _request(self, url: str, payload: dict) -> dict:
         req = urllib.request.Request(

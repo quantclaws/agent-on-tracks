@@ -20,6 +20,40 @@ from tracks.effects.github import (
     select_issue_backend,
 )
 
+_ISSUE_TOKEN_NEXT = (
+    "export GITHUB_TOKEN (and TRAC_GITHUB_REPO) then re-run;"
+    " no silent Fake fallback is consumed"
+)
+_ISSUE_NETWORK_NEXT = (
+    "GitHub was unreachable after bounded retries; the run parks here —"
+    " retry once connectivity is restored"
+)
+
+
+class IssueCreationFailure(RuntimeError):
+    """Structured ``create_issues`` failure boundary for the drive layer.
+
+    ``failure_class`` rides the harness vocabulary read by
+    ``drive._failure_from_exception``: ``network`` maps onto
+    ``recoverable_external`` (durable wait), anything else fails closed as
+    unrecoverable. The message carries the reason and the operator next hint.
+    """
+
+    def __init__(
+        self,
+        failure_class: str,
+        reason: str,
+        next_hint: str = "",
+        detail: str = "",
+    ) -> None:
+        self.failure_class = failure_class
+        self.reason = reason
+        self.next = next_hint
+        message = f"{reason}: {detail}" if detail else reason
+        if next_hint:
+            message = f"{message} (next: {next_hint})"
+        super().__init__(message)
+
 
 class ExecReleaseTailMixin:
     """preview/approval/create-issues command handlers."""
@@ -209,6 +243,39 @@ class ExecReleaseTailMixin:
         )
         return issue_id
 
+    def _raise_issue_failure(
+        self, cmd, task_id, failure_class, reason, detail, next_hint
+    ):
+        """Surface an actionable attention and fail the drive boundary.
+
+        The attention carries the reason/next hint; ``outcome.received``
+        keeps the kernel's per-attempt accounting advancing (3rd escalates
+        to Human). The structured raise makes the drive layer report
+        ``failed`` instead of re-issuing ``create_issues`` in a hot loop.
+        """
+        self._emit(
+            "attention.required",
+            {
+                "area": "issue_creation",
+                "reason": reason,
+                "detail": detail,
+                "next": next_hint,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "outcome.received",
+            {
+                "role": "github",
+                "status": "failed",
+                "failure_class": reason,
+                "self_report": detail or reason,
+            },
+            command_id=cmd.command_id,
+        )
+        raise IssueCreationFailure(failure_class, reason, next_hint, detail)
+
     def _do_create_issues(self, cmd, state, task_id, reconcile):
         """(F) M-REQ-APPROVAL ISSUES execution path (IF-ISSUE-001).
 
@@ -218,6 +285,11 @@ class ExecReleaseTailMixin:
         create_issue_verified + persist_issue_mapping (authoritative map,
         crash-idempotent dedup by item id); unverified real-channel
         artifacts are rejected fake_rejected + blocked.
+
+        Credential and network/SSL failures are durable drive boundaries:
+        they emit the failed outcome (attempt accounting/escalation) and
+        raise ``IssueCreationFailure`` so the loop stops instead of
+        re-issuing ``create_issues`` until the step budget burns out.
         """
         digest = cmd.params["digest"]
         if reconcile and state.issues_created:
@@ -229,20 +301,14 @@ class ExecReleaseTailMixin:
                 self._issue_backend = select_issue_backend(self.repo, self.version)
             except GithubIssuesError as exc:
                 if exc.classification == "missing_token":
-                    self._emit(
-                        "attention.required",
-                        {
-                            "area": "issue_creation",
-                            "reason": "missing_token",
-                            "next": (
-                                "export GITHUB_TOKEN (and TRAC_GITHUB_REPO) then "
-                                "re-run; no silent Fake fallback is consumed"
-                            ),
-                        },
-                        command_id=cmd.command_id,
-                        task_id=task_id,
+                    self._raise_issue_failure(
+                        cmd,
+                        task_id,
+                        "missing_token",
+                        "missing_token",
+                        str(exc),
+                        _ISSUE_TOKEN_NEXT,
                     )
-                    return
                 raise
         backend = self._issue_backend
         # D-06 breakpoint resume: item_ids already logged are never rebuilt.
@@ -263,7 +329,19 @@ class ExecReleaseTailMixin:
                 done[item_id] = issue_id
         except GithubIssuesError as e:
             # NFR-0030 style: no half-written summary; the reducer counts the
-            # failed outcome as an attempt (3rd escalates to Human).
+            # failed outcome as an attempt (3rd escalates to Human). Network
+            # failures are a durable boundary: the bounded transport retries
+            # inside the effects layer already ran, so re-issuing the command
+            # here would only burn the step budget.
+            if e.classification == "network":
+                self._raise_issue_failure(
+                    cmd,
+                    task_id,
+                    "network",
+                    "network",
+                    str(e),
+                    _ISSUE_NETWORK_NEXT,
+                )
             self._emit(
                 "outcome.received",
                 {
