@@ -156,7 +156,7 @@ class _TamperBackend:
 
 
 @pytest.mark.integration
-def test_tamper_turn_rejected_and_restored(tmp_path: Path):
+def test_tamper_turn_auto_corrected_without_human_gate(tmp_path: Path):
     repo, home, store, run_id, vdir, ex = _setup_m_impl(tmp_path)
 
     # Prepare a tampering backend that writes wrong tasks.md
@@ -220,7 +220,10 @@ def test_tamper_turn_rejected_and_restored(tmp_path: Path):
 
     events = list(store.events(run_id))
     fails = [e for e in events if e.type == "verdict.failed" and e.payload.get("check") == "tasks_md_projection"]
-    assert fails, "tampering turn should be rejected with tasks_md_projection"
+    assert not fails, (
+        "writing the derived tasks.md is a mechanical error: the runtime must "
+        "auto-restore it, never raise a human-gated verdict"
+    )
     restored = [e for e in events if e.type == "tasks_md.restored"]
     assert restored, "should emit tasks_md.restored"
     # File should be restored to correct rendering

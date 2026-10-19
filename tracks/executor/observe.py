@@ -223,9 +223,10 @@ and the remaining surface via self."""
     def _handle_tasks_md_projection(self, cmd, state, task_id, params: dict) -> str:
         """OOB b89 OB-4 incremental attribution guard.
 
-        Returns ``violation`` (fail-closed, already emitted ``verdict.failed`` +
-        ``tasks_md.restored``), ``repaired`` (emitted ``tasks_md.system_repaired``),
-        ``ok`` (no action), or ``skipped`` (tasks.json unparsable).
+        Returns ``repaired`` (the derived tasks.md was restored — an agent
+        writing a runtime projection is a mechanical, uniquely-solvable error
+        and MUST NOT become a human gate), ``ok`` (no action), or ``skipped``
+        (tasks.json unparsable).
 
         The guard is evaluated on every dispatch that could touch
         ``.tracks/projects/<version>/tasks.{json,md}``.  It is a pure
@@ -293,26 +294,10 @@ and the remaining surface via self."""
         pre_contains = self._is_path_in_diff(rel_md, pre, post_snapshot)
         decision = classify_tasks_md_guard(pre_contains, guard.rendered, guard.post_md)
         if decision == "violation":
-            # Fail-closed: this turn's diff introduced the mismatch
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "tasks_md_projection",
-                    "reason": (
-                        "tasks.md is a runtime projection of tasks.json; "
-                        "modify tasks.json instead"
-                    ),
-                    "evidence": (
-                        "tasks.md mismatch: expected render of tasks.json but "
-                        "got different content; diff contains tasks.md "
-                        "(attributed to this turn)"
-                    ),
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
-            # Restore in the same command (audited, idempotent)
+            # Mechanical error with exactly one correct outcome: the agent
+            # wrote a derived file. Restore it and CONTINUE the turn — never
+            # ask the Human to adjudicate a runtime projection. (The source
+            # of truth tasks.json is the agent's real deliverable.)
             self._restore_tasks_md(
                 guard.path, guard.rendered, "tasks_md restore failed"
             )
@@ -320,12 +305,15 @@ and the remaining surface via self."""
                 "tasks_md.restored",
                 {
                     "path": "tasks.md",
-                    "reason": "tasks_md_projection violation — restored to render(tasks.json)",
+                    "reason": (
+                        "agent wrote a derived file — auto-restored to "
+                        "render(tasks.json); no human gate"
+                    ),
                 },
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return "violation"
+            return "repaired"
         if decision == "system_repaired":
             # Inherited dirty (crash, checkout residual): self-heal without violation
             self._restore_tasks_md(

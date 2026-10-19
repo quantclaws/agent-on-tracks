@@ -424,8 +424,9 @@ the envelope/failure faces stay re-exported by executor.py."""
         self._emit_dispatch_parity_success(result, cmd, task_id, ctx.assignment)
         # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
         # Must run before any early-return handling so attribution is correct
-        # and restoration is performed in the same command_id. A violation
-        # fail-closes the turn; a system_repaired heals inherited dirty state.
+        # and restoration is performed in the same command_id. Both a
+        # violation (agent wrote the derived file this turn) and inherited
+        # dirty state are auto-restored; neither is a human gate.
         _guard = self._handle_tasks_md_projection(cmd, state, task_id, p)
         if _guard == "violation":
             return
