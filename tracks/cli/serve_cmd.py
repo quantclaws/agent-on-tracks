@@ -91,16 +91,47 @@ _INTAKE_STALE_S = 600.0
 _BUSY_POLL_S = 0.25
 
 
-def _human_accept_poke(poke: threading.Event):
+class _Wake:
+    """Counting wake-up channel: a notify between waits is never lost."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._count = 0
+        self._seen = 0
+
+    @property
+    def count(self) -> int:
+        with self._cond:
+            return self._count
+
+    def notify(self) -> None:
+        with self._cond:
+            self._count += 1
+            self._cond.notify_all()
+
+    def wait(
+        self, timeout: float, stop_event: threading.Event, seen: int | None = None
+    ) -> int:
+        with self._cond:
+            if seen is None:
+                seen = self._seen
+            self._cond.wait_for(
+                lambda: self._count != seen or stop_event.is_set(), timeout
+            )
+            self._seen = self._count
+            return self._count
+
+
+def _human_accept_wake(wake: _Wake):
     """The serve accept hook: wake the loop on human accepts only.
 
-    System drive/swap accepts must not self-poke (no self-excitation).
+    System drive/swap accepts must not self-wake (no self-excitation).
     """
 
     def _hook(kind: str, actor_class: str) -> None:
         del kind
         if actor_class == "human":
-            poke.set()
+            wake.notify()
 
     return _hook
 
@@ -259,7 +290,7 @@ class _AnnouncingServer:
         db: ServiceDB,
         stop: threading.Event,
         thread: threading.Thread,
-        poke: threading.Event | None = None,
+        wake: _Wake | None = None,
     ):
         import uvicorn
 
@@ -268,7 +299,7 @@ class _AnnouncingServer:
         self._home = home
         self._stop = stop
         self._thread = thread
-        self._poke = poke
+        self._wake = wake
         self._started_at = time.monotonic()
         outer = self
 
@@ -291,8 +322,8 @@ class _AnnouncingServer:
         """Finish the graceful stop: bookkeeping, then exit 0 (§2a)."""
         del sig, frame
         self._stop.set()
-        if self._poke is not None:
-            self._poke.set()
+        if self._wake is not None:
+            self._wake.notify()
         self._thread.join(timeout=2)
         try:
             self._db.append_event(
@@ -341,7 +372,7 @@ def _bound_port(server: Any, fallback: int) -> int:
 def _supervisor_loop(
     db: ServiceDB, service: CommandService, scheduler: Scheduler,
     worker: WorkerManager, config: Any, stop: threading.Event,
-    poke: threading.Event | None = None,
+    wake: _Wake | None = None,
 ) -> None:
     """Background drive task of the serve process (architecture §1.1).
 
@@ -349,7 +380,7 @@ def _supervisor_loop(
     them) and accepts a fresh drive for the runnable run, one attempt per
     poll interval per run — never a hot loop (NFR-0152).
 
-    ``poke`` wakes the loop early on human accepts (and on stop, paired
+    ``wake`` wakes the loop early on human accepts (and on stop, paired
     with every ``stop.set``); a reaped worker re-ticks immediately to
     drive the just-freed run, and a busy loop polls at ``_BUSY_POLL_S``.
     """
@@ -357,6 +388,7 @@ def _supervisor_loop(
     ttl = int(getattr(config, "lease_ttl_s", 30) or 30)
     worker_id = f"supervisor-{os.getpid()}"
     state = _DriveState()
+    seen = wake.count if wake is not None else 0
     while not stop.is_set():
         try:
             reaped = _supervisor_tick(db, service, scheduler, worker, worker_id, ttl, interval,
@@ -368,13 +400,10 @@ def _supervisor_loop(
             continue  # drive the just-freed run at once; poll() fires once so no hot loop
         busy = bool(state.in_flight or state.gate_in_flight or state.intake_in_flight)
         wait_s = min(interval, _BUSY_POLL_S) if busy else interval
-        if poke is None:
+        if wake is None:
             stop.wait(wait_s)
         else:
-            poke.clear()  # clear-before-wait: no stale poke busy-loops
-            if stop.is_set():
-                break  # paired stop+poke may have raced the clear — exit at once
-            poke.wait(wait_s)
+            seen = wake.wait(wait_s, stop, seen)
 
 
 @dataclass
@@ -640,18 +669,18 @@ def cmd_serve(repo: Path, *args: str) -> int:
 def _serve(opts: dict, home: Path, db: ServiceDB) -> int:
     _log("info", f"startup recovery: {json.dumps(recover_on_startup(db))}")
     config = _build_config(opts, home)
-    poke = threading.Event()
-    service = CommandService(home, db, config, on_accept=_human_accept_poke(poke))
+    wake = _Wake()
+    service = CommandService(home, db, config, on_accept=_human_accept_wake(wake))
     scheduler = Scheduler(db)
     worker = WorkerManager(db, scheduler, config)
     supervisor = SimpleNamespace(db=db, scheduler=scheduler, worker=worker)
     app = create_app(home, service, supervisor, config)
-    stop, thread = _start_supervisor(db, service, scheduler, worker, config, poke)
+    stop, thread = _start_supervisor(db, service, scheduler, worker, config, wake)
     _start_cache_warmup(home)
-    server = _AnnouncingServer(app, opts, home, db, stop, thread, poke)
+    server = _AnnouncingServer(app, opts, home, db, stop, thread, wake)
     if not server.run():
         stop.set()
-        poke.set()
+        wake.notify()
         thread.join(timeout=2)
         print(
             f"trac serve: could not serve http://{opts['host']}:{opts['port']}"
@@ -689,13 +718,13 @@ def _start_cache_warmup(home: Path) -> threading.Thread:
 
 def _start_supervisor(
     db: ServiceDB, service: CommandService, scheduler: Scheduler,
-    worker: WorkerManager, config: Any, poke: threading.Event | None = None,
+    worker: WorkerManager, config: Any, wake: _Wake | None = None,
 ) -> tuple[threading.Event, threading.Thread]:
     """Run the drive loop as a background task of the serve process (§1.1)."""
     stop = threading.Event()
     thread = threading.Thread(
         target=_supervisor_loop,
-        args=(db, service, scheduler, worker, config, stop, poke),
+        args=(db, service, scheduler, worker, config, stop, wake),
         name="trac-supervisor",
         daemon=True,
     )

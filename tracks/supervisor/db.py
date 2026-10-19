@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,15 @@ _SCHEMA_SCRIPT = (
     " issue INTEGER NULL, origin_entry TEXT NULL, status TEXT,"
     " report_json TEXT NULL, decision TEXT NULL, decided_at TEXT NULL,"
     " created_at TEXT, updated_at TEXT);"
+    # Performance indexes over the append-only service log. The supervisor
+    # tick resolves the active run's latest pause event on every poll, and
+    # the hotfix check scans the schedule.changed kind; both stay off the
+    # full-log replay through these idempotent CREATE INDEX statements
+    # (existing stores gain them at startup, rows untouched).
+    "CREATE INDEX IF NOT EXISTS idx_service_events_run_type"
+    " ON service_events(run_id, type);"
+    "CREATE INDEX IF NOT EXISTS idx_service_events_type"
+    " ON service_events(type);"
 )
 
 # v0.10 schema evolution (interfaces §1c #6): the auth table's nullable
@@ -200,8 +210,19 @@ class ServiceDB:
             conn.commit()
             return int(cursor.lastrowid)
 
-    def read_events(self, *, run_id: str | None = None, after_seq: int = 0) -> list:
-        """Read service events in seq order (read-only consumers)."""
+    def read_events(
+        self,
+        *,
+        run_id: str | None = None,
+        after_seq: int = 0,
+        types: Iterable[str] | None = None,
+    ) -> list:
+        """Read service events in seq order (read-only consumers).
+
+        ``types`` narrows the read in SQL so a consumer interested in one
+        event kind (the scheduler's hotfix check) never replays — or
+        payload-parses — the rest of the log.
+        """
         sql = (
             "SELECT seq, ts, type, project_id, run_id, command_id, payload"
             " FROM service_events WHERE seq > ?"
@@ -210,6 +231,12 @@ class ServiceDB:
         if run_id is not None:
             sql += " AND run_id = ?"
             args.append(run_id)
+        if types is not None:
+            wanted = tuple(types)
+            if not wanted:
+                return []
+            sql += f" AND type IN ({', '.join('?' for _ in wanted)})"
+            args.extend(wanted)
         sql += " ORDER BY seq"
         with contextlib.closing(self._connect()) as conn:
             rows = conn.execute(sql, args).fetchall()
@@ -221,6 +248,26 @@ class ServiceDB:
                 event["payload"] = json.loads(raw) if raw else {}
             events.append(event)
         return events
+
+    def latest_event_type(self, run_id: str, types: Iterable[str]) -> str | None:
+        """Latest event type among ``types`` for one run (single indexed probe).
+
+        The supervisor tick asks this every poll for the active run; the
+        ``(run_id, type)`` index keeps the probe off the append-only log and
+        only the ``type`` column is read — payloads are never parsed.
+        """
+        wanted = tuple(types)
+        if not wanted:
+            return None
+        marks = ", ".join("?" for _ in wanted)
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT type FROM service_events"
+                f" WHERE run_id = ? AND type IN ({marks})"
+                " ORDER BY seq DESC LIMIT 1",
+                (run_id, *wanted),
+            ).fetchone()
+        return None if row is None else str(row["type"])
 
     def register_command(self, command: dict) -> str:
         """Persist a command row (status=accepted) and return command_id."""

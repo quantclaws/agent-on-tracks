@@ -142,19 +142,15 @@ class Scheduler:
         keeps it blocked; only a later ``run.resumed`` lifts the block
         (interfaces §1a #19-21).
         """
-        latest = None
-        for event in self._db.read_events(run_id=run_id):
-            if event.get("type") in _PAUSE_EVENTS:
-                latest = event
-        return latest is not None and latest.get("type") in _PAUSE_BLOCKING
+        latest = self._db.latest_event_type(run_id, _PAUSE_EVENTS)
+        return latest is not None and latest in _PAUSE_BLOCKING
 
     def _preempted(self, run_id: str) -> bool:
         """True when run_id took the active slot via a hotfix preemption."""
-        for event in self._db.read_events():
+        for event in self._db.read_events(types=("schedule.changed",)):
             payload = event.get("payload") or {}
             if (
-                event.get("type") == "schedule.changed"
-                and payload.get("reason") == "hotfix_preemption"
+                payload.get("reason") == "hotfix_preemption"
                 and payload.get("active_run") == run_id
             ):
                 return True
@@ -208,11 +204,10 @@ class Scheduler:
         hotfix create_run opened the swap (§1i actor=提交人). None when the
         run was never paused on the service plane."""
         submitter = None
-        for event in self._db.read_events(run_id=run_id):
-            if event.get("type") == "run.pause_requested":
-                actor = (event.get("payload") or {}).get("actor")
-                if actor:
-                    submitter = str(actor)
+        for event in self._db.read_events(run_id=run_id, types=("run.pause_requested",)):
+            actor = (event.get("payload") or {}).get("actor")
+            if actor:
+                submitter = str(actor)
         return submitter
 
     def _write(self, active_run: str | None, queue: list[str]) -> None:
