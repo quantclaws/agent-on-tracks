@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass
 from typing import Literal
+
+# A trailing parenthesised annotation appended to a planned node id, e.g.
+# ``tests/integration/a.py::t（守卫，§8.1）``. Node ids never contain parens
+# after ``::``, so stripping from the tail is safe.
+_TRAILING_ANNOTATION = re.compile(r"\s*[（(][^（）()]*[）)]\s*$")
 
 
 @dataclass(frozen=True)
@@ -93,9 +99,24 @@ def _planned_node_parts(planned_node: str) -> list[str]:
     v0.9 web AC bound to an integration case plus the e2e journey). The scan
     must classify each member on its own — treating the joined cell as one
     id never matched any collected node and blocked phase0 on the first
-    baseline that carries such rows (run 01M3E7SAANXKW1V73W8B8Q3G86)."""
+    baseline that carries such rows (run 01M3E7SAANXKW1V73W8B8Q3G86).
+
+    Run bd0c68eb: some cells append a human annotation after the id, e.g.
+    ``tests/...::test_x（守卫，§8.1）``. That suffix is not part of the node
+    id and must be stripped (half- or full-width parens, repeated, trailing
+    whitespace tolerated) or the collect inventory never matches and phase0
+    blocks forever on a test that does exist."""
     parts = [part.strip() for part in str(planned_node).split(" + ")]
-    return [part for part in parts if part] or [str(planned_node)]
+    cleaned: list[str] = []
+    for part in parts:
+        while part:
+            stripped = _TRAILING_ANNOTATION.sub("", part).strip()
+            if stripped == part:
+                break
+            part = stripped
+        if part:
+            cleaned.append(part)
+    return cleaned or [str(planned_node)]
 
 
 def judge_real_coverage(

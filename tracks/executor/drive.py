@@ -190,6 +190,23 @@ def drive_once(repo: Path, run_id: str, *, config: DriveConfig) -> DriveResult:
         except Exception as exc:  # noqa: BLE001 - structured failure boundary
             return _error_result(run_id, state.stage, exc)
         state = store.state(run_id)
+        # SM-01.3: a drive that ends BLOCKED parses as a human gate, not as
+        # "no boundary reached". The resume preflight fires once per
+        # run_loop; without this check the supervisor loop keeps re-entering
+        # drive_once, re-issuing phase0_validate forever (run bd0c68eb).
+        if getattr(state, "phase0_status", None) == "BLOCKED":
+            reason = getattr(state, "phase0_blocked_reason", None) or "unknown"
+            return DriveResult(
+                kind="await_human",
+                run_id=run_id,
+                stage=state.stage,
+                wait=None,
+                failure=None,
+                detail=(
+                    f"run {run_id} phase0 blocked: {reason} "
+                    f"at {_detail_suffix(state)}"
+                ),
+            )
         if not _is_boundary(state) and _last_seq(store, run_id) <= before_seq:
             return _failed_result(
                 run_id,
