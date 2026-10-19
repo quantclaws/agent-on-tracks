@@ -22,7 +22,7 @@ sha:
 - 既有 CLI 子命令集合与语义不变：`init/start/run/hotfix/triage/review/approve/return/recover/retry/status/replay/report/validate/validate-reply/discuss/check/release/abandon/serve` 的参数面与退出码逐字继承。`trac serve` 的前台行为与 `serve_cmd.cmd_serve` 的直接调用面不变（测试夹具继续直接 import 该函数）；v0.12 只在外层 CLI 入口追加项目安装前置与生命周期 flag。
 - `.tracks/projects/project.toml` 的 `[unit]/[integration]/[e2e]/[nightly]/[adapter]/[layout]/[lint]/[host-contract.*]` 段逐字继承；v0.12 不修改该文件。测试并发、JUnit 参数、`ui` marker 通道隔离、质量守卫阈值与 required checks 七名全部继承。
 - v0.9 服务面：HTTP API 基底约定（认证、CSRF + Idempotency-Key、错误封装）、命令服务、supervisor 单活动 run 串行、SSE、redaction、本机单用户边界全部继承。v0.10/v0.11 的 PAGES 六名、五 tab、Releases 投影、时间线/ac-chain、awaiting_gate/return_options、评审轮写入通道全部继承。
-- v0.12 OOB 已落地的读取面与 UI 面按现状纳入合同：`GET /api/runs/{run_id}/activity`、`GET /api/runs/{run_id}/stages/{stage}/rounds`、`GET /api/runs/{run_id}/rounds/{command_id}`；`timeline.js` 的阶段轨道、阶段实际工作流聚合图、按轮手风琴、可读卡片与本地时间、评审两决策面；`_AppModulesNoCache` 的静态文本 no-cache。这些面不重做设计，只补齐可观察合同与测试（§1.0.7/§1.0.8）。
+- v0.12 OOB 已落地的读取面与 UI 面按现状纳入合同：`GET /api/runs/{run_id}/stages/{stage}/rounds`、`GET /api/runs/{run_id}/rounds/{command_id}`；`timeline.js` 的阶段轨道、阶段实际工作流聚合图、按轮手风琴、可读卡片与本地时间、评审两决策面；`_AppModulesNoCache` 的静态文本 no-cache。这些面不重做设计，只补齐可观察合同与测试（§1.0.7/§1.0.8）。`GET /api/runs/{run_id}/activity`（run 版）是未消费遗留读面，仅继承既有 API 语义，不纳入 v0.12 断言基线。
 - `tracks/agents`、`tracks/skills`、`tracks/templates` 的 canonical 内容与 agent materialization 语义不变；v0.12 只是把同一份资源纳入官方 wheel 承诺并由项目安装复制到宿主 `.opencode/`（agents/skills/templates），根 `opencode.json` 仅 seeded。
 - 发布闭环、version gate bindings、`release-evidence` milestone、reference host、三旅程合同、security scan、build/smoke 合同全部继承。v0.12 设计期把 `pyproject.toml` 与 `tracks/__init__.py` bump 到 `0.12.0`（version gate 绑定对象，§2/§4.2）。
 - 质量守卫八类与 canonical registry 机制不变；CI required checks 七名（lint/coverage/test/deliverables/trace/reach/ui-e2e）不变。`pyproject.toml` 的 bytes 变化（版本 + package-data）使六条 pyproject-backed `config_digest` 重锚（§4.2）；`.tracks/projects/project.toml` 与 `.flake8` 未变化，digest 继承。
@@ -55,10 +55,9 @@ sha:
 | 9 | `tracks/supervisor/gate_exec.py` + `tracks/cli/run_cmd.py` + `tracks/executor/result_checkpoint.py` | review 退回的文档线程写入 + comments 保留（**待实现 Devon**） | FR-0359 | IF-REVIEWDECISION-001, IF-DOCSWRITE-001 |
 | 10 | `tracks/server/static/app/timeline.js` | review 决策面提示文案（线程 + Scribe 双通道）；OOB 其余面不变 | FR-0359 | IF-REVIEWDECISION-001, IF-WEBUI-001 |
 | 11 | `tracks/server/run_rounds.py` | OOB 按轮读取面（已交付，本版只补合同/测试） | FR-0357/NFR-0160 | IF-ROUNDS-001, IF-QUERY-001 |
-| 12 | `tracks/server/run_activity.py` | OOB 运行活动面（已交付，继承） | FR-0358 | IF-RUNCARD-001 |
-| 13 | `tracks/server/app.py` | `_AppModulesNoCache` 静态文本 no-cache（已交付，本版只补测试） | FR-0360/NFR-0160 | IF-STATICCACHE-001 |
-| 14 | `tracks/server/projections.py` | `awaiting_gate` 的 reason/impact/pending threads（已交付，继承）；v0.12 无新增字段 | FR-0358/0359 | IF-AWAIT-001, IF-RUNCARD-001 |
-| 15 | `.tracks/projects/project.toml` | 不变（测试执行合同与 layout 逐字继承） | — | IF-MTEST-001 |
+| 12 | `tracks/server/app.py` | `_AppModulesNoCache` 静态文本 no-cache（已交付，本版只补测试） | FR-0360/NFR-0160 | IF-STATICCACHE-001 |
+| 13 | `tracks/server/projections.py` | `awaiting_gate` 的 reason/impact/pending threads（已交付，继承）；v0.12 无新增字段 | FR-0358/0359 | IF-AWAIT-001, IF-RUNCARD-001 |
+| 14 | `.tracks/projects/project.toml` | 不变（测试执行合同与 layout 逐字继承） | — | IF-MTEST-001 |
 
 ### 1.0.2 安装包、项目布局与版本锁定
 
@@ -162,7 +161,7 @@ Web 面（继承）
   -> create_app -> _AuthBoundary / _AppModulesNoCache / _StaticGzip
   -> /api/runs/{run_id}/stages/{stage}/rounds -> run_rounds.stage_rounds
   -> /api/runs/{run_id}/rounds/{command_id}   -> run_rounds.round_detail_view
-  -> /api/runs/{run_id}/activity              -> run_activity
+  -> /api/runs/{run_id}/activity              -> run_activity（继承遗留；不属 v0.12 断言基线）
   -> /healthz                                 -> {status, projects, version, uptime_s}
 ```
 

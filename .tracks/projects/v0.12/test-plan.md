@@ -18,7 +18,7 @@ sha:
 This test plan only declares test methods that are **observable from outside the system**. Observable objects are limited to:
 
 - CLI endpoints（`trac install`、`trac version`、`trac serve`、既有子命令与退出码）
-- Web service / HTTP endpoints（`/healthz`、rounds/round-detail/activity、review 写端点、静态资源响应头）
+- Web service / HTTP endpoints（`/healthz`、rounds/round-detail、review 写端点、静态资源响应头）
 - UI entry points（Playwright + `data-testid`：阶段轨道、节点详情、阶段工作流、按轮手风琴、运行卡片、评审决策面）
 - Persisted data files（`.tracks/install.json`、`.tracks/env/**`、`.tracks/bin/trac.py`、`.opencode/**`、pidfile/log、版本文档讨论块）
 - Database tables / events（`human.review` payload、`service.started` version；既有事件序）
@@ -30,7 +30,7 @@ This test plan only declares test methods that are **observable from outside the
 - Intermediate data structures（安装 staging 内部布局、worker 内部调用栈）
 - Implementation details（具体复制方式、内部缓存、私有函数）
 
-**Observable contract**: Any internal state that acceptance validation needs must be provided by the implementation layer via dump/log/DB observation points. This is the responsibility of **interfaces.md** — if an AC needs to observe internal state, interfaces.md must have a corresponding outlet (see §6.5). v0.12 的对应出口：receipt/site-packages/launcher（§1b）、`trac version`/healthz/service.started（§1d/§1e）、rounds/activity（§1f）、UI testid（§4c）、`human.review` payload 与文档线程（§1h/§1j）、静态响应头（§1i）。
+**Observable contract**: Any internal state that acceptance validation needs must be provided by the implementation layer via dump/log/DB observation points. This is the responsibility of **interfaces.md** — if an AC needs to observe internal state, interfaces.md must have a corresponding outlet (see §6.5). v0.12 的对应出口：receipt/site-packages/launcher（§1b）、`trac version`/healthz/service.started（§1d/§1e）、rounds/round-detail（§1f）、UI testid（§4c）、`human.review` payload 与文档线程（§1h/§1j）、静态响应头（§1i）。
 
 ### 1.3. Cheating Patterns (CI enforced interception)
 

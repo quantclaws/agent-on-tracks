@@ -20,7 +20,7 @@ sha:
 - `.tracks/projects/project.toml` 的测试执行合同、layout、lint、adapter、host-contract 段逐字继承；本版不修改该文件。
 - 认证边界、CSRF + Idempotency-Key、错误封装 `{"error": {"reason", "detail"}}`、redaction、本机单用户边界、SSE 合并序/游标补读全部继承；全部新读取面与既有查询面同一响应封装。
 - v0.10/v0.11 的 PAGES 六名、五 tab、Releases 投影、run detail 的 `awaiting_gate`/`return_options`、评审轮写入通道、`ui` marker 通道隔离、`data-testid` 绑定纪律全部继承。
-- OOB 读取面（`/activity`、`/stages/{stage}/rounds`、`/rounds/{command_id}`）与 UI 面（阶段轨道、阶段工作流、按轮手风琴、卡片、评审两决策、静态 no-cache）按当前已交付实现登记；不改变既有 API 语义与 testid。
+- OOB 读取面：`/stages/{stage}/rounds` 与 `/rounds/{command_id}` 按当前已交付实现登记为 v0.12 外部合同；`/activity`（run 版）是**未消费的遗留读面**，仅保留既有 API 语义，不纳入 v0.12 断言基线（无 AC/IF 承载、无 v0.12 测试义务）。UI 面（阶段轨道、阶段工作流、按轮手风琴、卡片、评审两决策、静态 no-cache）按当前已交付实现登记；不改变既有 API 语义与 testid。
 - 发布闭环、version gate bindings、security scan、build/artifact、smoke、M-TEST/M-IMPL/M-VERIFY 合同全部继承。设计期版本为 `0.12.0`（§1a）。
 
 ### 0.1 v0.12 合同变更清单（显式声明）
@@ -33,7 +33,7 @@ sha:
 | 4 | 项目服务范围 | serve 可对任意 `--repo` 启动 | 用户面 `trac serve` 要求 `--repo` 为已安装项目；未安装拒绝 `not_installed`，无全局版本兜底（§1e/§2） | FR-0350 |
 | 5 | 全局/项目版本 | 全局版本唯一 | 项目 receipt + site-packages 锁定；全局 CLI 委派；`trac version` 报 scope（§1c/§1d） | FR-0353 |
 | 6 | review 退回 | `human.review.comments` 仅随事件直达 Scribe（HEAD c6dc3f8） | `action=comment` 必须在 worker 内先写文档根线程，再落 `human.review`（comments/doc/thread_id 保留）（§1h） | FR-0359 / BS-12 |
-| 7 | OOB 读取面 | `/activity`、rounds 面已实现但未登记；UI 仅实现 | 登记 `/stages/{stage}/rounds`、`/rounds/{command_id}`、`/activity` schema 与 testid/静态头（§1f/§1g/§1i） | FR-0355..0360 |
+| 7 | OOB 读取面 | `/activity`、rounds 面已实现但未登记；UI 仅实现 | 登记 `/stages/{stage}/rounds`、`/rounds/{command_id}` schema 与 testid/静态头（§1f/§1g/§1i）；run `/activity` 保留为继承遗留面，不纳入 v0.12 断言基线 | FR-0355..0360 |
 | 8 | CLI token 集合 | `TRAC_SUBCOMMANDS` 与 USAGE 无 install/version | 两处同步登记 `install`/`version`（scaffold）；`main` 的 handler 与委派钩子待实现（§2/§5） | FR-0348/0349 |
 
 ## 1. 跨模块合同
@@ -172,7 +172,7 @@ sha:
 | 1 | `GET /healthz` | — | 200 `{status, projects, version, uptime_s}` | 503 | 公开；version 为项目版本 |
 | 2 | `GET /api/runs/{run_id}/stages/{stage}/rounds` | path | 200 §1f.1 | 404 | 只读 |
 | 3 | `GET /api/runs/{run_id}/rounds/{command_id}` | path | 200 §1f.2 | 404 | 只读 |
-| 4 | `GET /api/runs/{run_id}/activity` | path | 200 `{run_id, version, stage, substate, awaiting, stage_entered_at, role, sessions, items}` | 404 | 只读（OOB 登记） |
+| 4 | `GET /api/runs/{run_id}/activity` | path | 200 `{run_id, version, stage, substate, awaiting, stage_entered_at, role, sessions, items}` | 404 | 继承遗留读面；API 语义不变，**不属 v0.12 断言基线**（无 AC/IF/测试承诺） |
 | 5 | `POST /api/runs/{run_id}/review` | `{action, comments?}` | 202 `{command_id}` | 422 `validation_failed` / `awaiting_mismatch` | §1h；CSRF + Idempotency-Key |
 | 6 | `GET /static/app/*`、`GET /static/*.{css,js,mjs,html,json,txt,map}` | — | 200/304 + `Cache-Control: no-cache` | — | §1i |
 | 7 | 既有 #1-44 端点 | 不变 | 不变 | 不变 | 逐字继承 |
@@ -227,13 +227,15 @@ sha:
 | 1 | `GET /healthz` | `version` 等于项目锁定版本；status/projects/uptime 既有字段 |
 | 2 | `GET /api/runs/{run_id}/stages/{stage}/rounds` | schema §1f.1；轮数=dispatch 数；无窗口空列表 |
 | 3 | `GET /api/runs/{run_id}/rounds/{command_id}` | schema §1f.2；input/output/thinking/tool_calls；缺失降级 |
-| 4 | `GET /api/runs/{run_id}/activity` | schema §2c #4；活动 items 时间序 |
 | 5 | `POST /api/runs/{run_id}/review` | 202/422；CSRF/幂等；`human.review` payload comments/doc/thread_id |
 | 6 | 文档讨论块 | review 退回后新增根线程可解析；正文=comments |
 | 7 | 静态响应头 | `Cache-Control: no-cache`；ETag 未变更 304；API 无该头 |
 | 8 | `service.started` | payload version 等于项目版本 |
 
+注：`GET /api/runs/{run_id}/activity`（run 版）是继承的未消费遗留读面；v0.12 只保留既有 API 语义，它不在本断言表内，无 AC/IF/测试承诺。
+
 > **Prism:** 【阻塞 finding PRISM-D12-01 · DESIGN-5 interfaces↔test-plan 闭包】interfaces.md §4b#4（并 §2c#4）把 GET /api/runs/{run_id}/activity 登记为 v0.12 外部出口并声明断言（schema、活动 items 时间序）；architecture.md 行 25 把该系列面列入「补齐可观察合同与测试」，test-plan §1.1/§1.2 也把 activity 列为 v0.12 对应出口——但 test-plan §8 的 24 条 AC 锚点无任何 activity 测试，全仓 tests/ 对该端点零引用（run 版端点的 UI 消费方已在 ffaeed4 移除，现存 activity 引用只是 wizard.js 的 intake 版端点），且无 AC/IF 文本承载该出口。结论：DESIGN-5 的「每个外部出口都有测试覆盖」不成立。请二选一收口：(a) 为该出口补测试（FR-0140 trace 门禁要求每个测试引用至少一个 AC；若无 AC 可承载，需先显式收窄注册）；(b) 在 interfaces/test-plan 显式标注该出口不属 v0.12 断言基线（未消费遗留读面），使其不再构成合同承诺。本轮其余核验（24 条 required AC 闭包与六元组、Scaffold 宣言与实物、quality registry digest、project.toml 合同、arrival-green 象限、OOB testid/schema 登记）均通过，无其它阻塞。
+>> **Archer:** 采纳 (b) 收口，已修订三处：interfaces §0/§0.1 明确 run `/activity` 为未消费遗留读面、不纳入 v0.12 断言基线；§2c#4 保留既有 API 语义但标注“无 AC/IF/测试承诺”；§4b 移除该行并加注说明。test-plan §1.1/§1.2 已移除 activity 出口；architecture §0.2/§1.0.1/§1.1 同步标注为继承遗留、不新增断言。没有新增 activity 测试，rounds/round-detail 断言不变。请复核。
 
 ### 4c. 浏览器可观察出口（UI e2e，IF-WEBUI-001 继承）
 
