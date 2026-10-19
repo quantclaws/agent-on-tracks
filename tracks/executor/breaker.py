@@ -6,7 +6,8 @@ r1 实证（run 01M0AMKV，2026-08-19/20）：最后 10 小时零任务进展仍
 即 awaiting_human/escalation 并附损耗摘要，停止派发等待人工。
 
 条件（环境变量可调，0 = 关闭该条件）：
-- ``TRAC_BREAKER_ROLLBACKS``（默认 2）：run 内累计 stage.rolled_back 数；
+- ``TRAC_BREAKER_ROLLBACKS``（默认 2）：run 内累计真实/自动
+  stage.rolled_back 数（运维修复、原地自回退、人工 human_return 不计）；
 - ``TRAC_BREAKER_TASK_FAILURES``（默认 6）：同一 task 的 verdict.failed
   累计数（与单 substate 的 3-attempt 预算区分——r1 的灾难正是跨 substate
   /跨阶段反复失败从未被 run 级看到）；
@@ -74,7 +75,7 @@ class RunBreaker:
             self._reset()
             return
         if type == "stage.rolled_back":
-            self._on_rollback()
+            self._on_rollback(payload)
             return
         if type == "command.issued":
             self._on_command(payload)
@@ -83,7 +84,17 @@ class RunBreaker:
             self._on_verdict_failed(payload)
             return
 
-    def _on_rollback(self) -> None:
+    def _on_rollback(self, payload: dict) -> None:
+        # 只计自动/真实回退。operator_repair 是运维就地修复；from == to
+        # 是原地自回退；human_return 是治理者的人工回退。它们都不是
+        # 自治损耗，不应消耗 breaker 预算或加速人工升级。
+        if payload.get("operator_repair"):
+            return
+        from_stage = payload.get("from_stage")
+        if from_stage is not None and from_stage == payload.get("to_stage"):
+            return
+        if payload.get("reason") == "human_return":
+            return
         self.rollbacks += 1
 
     def _on_command(self, payload: dict) -> None:

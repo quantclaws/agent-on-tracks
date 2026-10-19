@@ -47,6 +47,70 @@ def test_note_counts_rollbacks_dispatches_failures():
     assert b.failure_classes == {"impl_defect": 2, "manifest": 1}
 
 
+def test_real_stub_gap_rollback_counts():
+    b = RunBreaker()
+    b.note(
+        "stage.rolled_back",
+        {"from_stage": "M-TEST", "to_stage": "M-DESIGN", "reason": "stub_gap"},
+    )
+    assert b.rollbacks == 1
+
+
+def test_operator_repair_self_rollback_not_counted():
+    b = RunBreaker()
+    b.note(
+        "stage.rolled_back",
+        {
+            "from_stage": "M-DESIGN",
+            "to_stage": "M-DESIGN",
+            "reason": "stub_gap",
+            "operator_repair": "stale red.validated after rollback",
+        },
+    )
+    assert b.rollbacks == 0
+
+
+def test_self_rollback_without_operator_repair_not_counted():
+    b = RunBreaker()
+    b.note(
+        "stage.rolled_back",
+        {"from_stage": "M-DESIGN", "to_stage": "M-DESIGN", "reason": "scope_overflow"},
+    )
+    assert b.rollbacks == 0
+
+
+def test_human_return_rollback_not_counted():
+    b = RunBreaker()
+    b.note(
+        "stage.rolled_back",
+        {"from_stage": "M-RELEASE", "to_stage": "M-VERIFY", "reason": "human_return"},
+    )
+    assert b.rollbacks == 0
+
+
+def test_human_retry_resets_window_after_filtered_rollbacks():
+    b = RunBreaker()
+    _note_seq(
+        b,
+        [
+            ("stage.rolled_back", {"from_stage": "M-TEST", "to_stage": "M-DESIGN", "reason": "stub_gap"}),
+            ("stage.rolled_back", {"from_stage": "M-DESIGN", "to_stage": "M-DESIGN"}),
+            (
+                "stage.rolled_back",
+                {"from_stage": "M-RELEASE", "to_stage": "M-VERIFY", "reason": "human_return"},
+            ),
+        ],
+    )
+    assert b.rollbacks == 1
+    b.note("human.retry", {"actor": "Maestro"})
+    assert b.rollbacks == 0
+    b.note(
+        "stage.rolled_back",
+        {"from_stage": "M-TEST", "to_stage": "M-DESIGN", "reason": "stub_gap"},
+    )
+    assert b.rollbacks == 1
+
+
 def test_human_retry_resets_window():
     b = RunBreaker()
     _note_seq(
