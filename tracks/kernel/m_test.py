@@ -102,6 +102,16 @@ def _on_test_collected(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_red_validated(s: State, p: dict, ev: EventEnvelope) -> None:
+    # Fail-closed ownership guard: red.validated is an M-TEST-stage fact. A
+    # stale concurrent worker after rollback can still append it while the run
+    # already sits in another stage (run bd0c68eb: verdict.failed rolled back
+    # to M-DESIGN on stub_gap at 08:37:02, then a lingering worker added five
+    # red.validated events, whose DIAGNOSE projection silently overwrote the
+    # rolled-back M-DESIGN substate). Stale/concurrent events must never rewrite
+    # an already-rolled-back stage projection, so ignore them entirely: touch
+    # neither red_findings/red_validated nor substate.
+    if s.stage != "M-TEST":
+        return
     # D-41 v3 timing: valid -> PRISM_REVIEW (Prism consumes the current-tree
     # red evidence); invalid -> DIAGNOSE. The FR-0244 empty-Shield hotfix
     # increment bypass (emitted at the WRITE dispatch, basis=unit-only) keeps
