@@ -73,7 +73,7 @@ def test_run_timeline_view(ui_serve, page):
     assert (heading.inner_text() or "").strip() == "v1.0", (
         "the deep-linked run detail carries the run's identity (run-heading)"
     )
-    for field in ("card-owner", "card-attempt", "card-duration", "card-action"):
+    for field in ("card-owner", "card-attempt", "card-duration", "card-status"):
         assert page.get_by_test_id(field).count() == 1, (
             f"the current-node card must show {field}"
         )

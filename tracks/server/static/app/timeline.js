@@ -423,7 +423,7 @@ function foldSubstateGraph(window, stage, detail) {
     nodes.push({
       key: "__gate__",
       title: "人工门",
-      lines: [`人工门：等待裁决（已等 ${waitingElapsed(basis)}）`],
+      lines: ["人工门：等待裁决"],
       tone: "attention",
     });
     endKey = "__gate__";
@@ -791,10 +791,12 @@ function currentCard(detail, events, state) {
   const attempt = attemptCount(events);
   const gate = detail && detail.awaiting_gate;
   const awaiting = !!gate;
-  const actionFace = actionOf(detail, state, events);
   const stage = (detail && detail.stage) || "-";
   const substate = (detail && detail.substate) || (detail && detail.control_state) || "-";
   const control = detail && detail.control_state;
+  const waitBasis = lastBusinessEvent(events || []);
+  const wait = awaiting ? ` · 已等待 ${waitingElapsed(waitBasis)}` : "";
+  const controlNote = control && control !== substate ? control : "";
   const card = element("section", {
     class: "current-card",
     "data-testid": "current-node-card",
@@ -804,26 +806,24 @@ function currentCard(detail, events, state) {
     element("p", {
       class: "card-status",
       "data-testid": "card-status",
-      text: `当前阶段：${stage} · ${substate}${control && control !== substate ? ` · ${control}` : ""}${awaiting ? " · 等待人工裁决" : ""}`,
+      text: `当前阶段：${stage} · ${substate}${wait}`,
     })
   );
-  card.append(
-    element("div", { class: "card-metrics" }, [
-      span("card-owner", ownerDisplay, { title: ownerRaw }),
-      span("card-attempt", `尝试 ${attempt} 次`, { title: "本 run 已发生的任务尝试次数" }),
-      span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
-      awaiting
-        ? span("card-action", actionFace.text, {
-            title: "正在等待人工处理该门",
-            class: "card-action-awaiting",
-          })
-        : span("card-action", actionFace.text),
-    ])
-  );
+  const metrics = [
+    span("card-owner", ownerDisplay, { title: ownerRaw }),
+    span("card-attempt", `累计派发 ${attempt} 次`, { title: "本 run 已发生的派发次数" }),
+    span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
+  ];
+  if (controlNote) {
+    metrics.push(
+      span("card-control", `控制状态：${controlNote}`, { title: "run 的控制状态" })
+    );
+  }
+  card.append(element("div", { class: "card-metrics" }, metrics));
   const gateAction = gate
     ? (GATE_ACTIONS.includes(gate.primary_action) ? gate.primary_action : "guidance")
     : null;
-  if (gate) card.append(gateActionPanel(detail, gate));
+  if (gate) card.append(gateActionPanel(detail, gate, events));
   const options = detail && detail.return_options;
   // A rollback gate (M-TEST/M-IMPL) is answered by `approve`, not `return`;
   // the web worker cannot bind the CLI --to choice, so surface the exact
@@ -839,10 +839,6 @@ function currentCard(detail, events, state) {
       })
     );
   }
-  // Always mount (the pointer renders a hidden placeholder when the
-  // server exposes no legal target) so the stable testid never vanishes.
-  const pointer = returnPointer(detail);
-  if (pointer) card.append(pointer);
   // guidance gates already mount the owning-surface entry inside their
   // action face; every other face gets exactly one explicit entry here.
   if (gateAction !== "guidance") {
@@ -922,15 +918,270 @@ function waitingElapsed(basis) {
   return parts.join("");
 }
 
-function actionOf(detail, state, events = []) {
-  const gate = detail && detail.awaiting_gate;
-  if (gate) {
-    const basis = lastBusinessEvent(events && events.length ? events : (state && state.last ? [state.last] : []));
-    return { text: `等待人工裁决（已等 ${waitingElapsed(basis)}）` };
+/** Last verdict.failed payload in the visible window (the raw technical
+ * evidence lives ONLY in the folded details; the headline is human). */
+function lastFailure(events) {
+  const list = Array.isArray(events) ? events : [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const event = list[index];
+    if (event && event.type === "verdict.failed") {
+      return event.payload && typeof event.payload === "object" ? event.payload : {};
+    }
   }
-  const action = (detail && detail.control_state) || (detail && detail.stage);
-  if (action) return { text: String(action) };
-  return { text: (state && state.last && (state.last.type || "unknown")) || "-" };
+  return null;
+}
+
+/** One-sentence, decision-oriented failure summary. The raw check/evidence
+ * stays behind the "技术详情" fold (humans do not debug the machinery). */
+function failureSummary(failure) {
+  if (!failure) return "";
+  const check = String(failure.check || "");
+  const reason = String(failure.reason || "");
+  if (check === "island" || /missing from closure/.test(reason)) {
+    const count = reason
+      .split(";")
+      .filter((part) => /missing from closure/.test(part)).length;
+    return `实现计划没有覆盖全部接口契约（${count} 个接口未被任务覆盖）。请重试当前阶段，或回退到设计阶段修正接口契约。`;
+  }
+  if (check === "tasks_md_projection") {
+    return "计划文件生成方式不正确（tasks.md 应由 tasks.json 自动生成，不能手工修改）。请重试当前阶段。";
+  }
+  if (check === "test_freeze_contamination") {
+    return "测试基线被未提交的测试改动阻止冻结。请清理工作树后重试。";
+  }
+  if (check === "collect_defect" || check === "contract_error") {
+    return "测试执行没有产出可读结果（环境或采集问题）。请重试当前阶段。";
+  }
+  if (check === "trace") {
+    return "阶段追溯校验未通过。请重试当前阶段，或回退到更早阶段。";
+  }
+  return "本阶段校验未通过。请重试当前阶段，或回退到更早阶段重做。";
+}
+
+function gateSummary(gate, events) {
+  const failure = lastFailure(events);
+  if (gate && gate.type === "escalation") {
+    return failureSummary(failure) || "本阶段失败，需要你决定：重试当前阶段，或回退到更早阶段重做。";
+  }
+  if (gate && gate.type === "rollback") return "本阶段需要确认回退到哪个阶段。";
+  if (gate && gate.type === "approval") return "请批准本轮基线，或退回修改。";
+  if (gate && gate.type === "review") return "请评审本阶段文档：通过，或退回修改。";
+  if (gate && gate.type === "triage") return "请裁决本 story 是否进入开发。";
+  if (gate && gate.type === "hotfix_triage") return "请确认这个 hotfix 应该归属到哪个阶段。";
+  if (gate && gate.type === "AWAIT_RELEASE") return "请选择发布决策。";
+  return "需要你做出决定后，run 才会继续推进。";
+}
+
+function formatSpan(totalSeconds) {
+  const total = Math.max(0, Math.round(totalSeconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const parts = [];
+  if (days) parts.push(`${days}天`);
+  if (hours) parts.push(`${hours}小时`);
+  if (minutes) parts.push(`${minutes}分`);
+  if (!parts.length) parts.push(`${Math.max(1, total)}秒`);
+  return parts.join("");
+}
+
+/** What a human loses when returning to a stage (code/tests/docs), in
+ * plain language — the confirm face must not disguise a redo as an undo. */
+function returnConsequences(target) {
+  if (target === "M-TEST") {
+    return "保留设计与计划，重新运行测试与实现；当前阶段已写的代码会作废并重做。";
+  }
+  if (target === "M-DESIGN") {
+    return "保留需求与验收；设计、测试与实现作废并重做。";
+  }
+  if (target === "M-ACC") {
+    return "保留 story 与 spec；验收、设计、测试与实现作废并重做。";
+  }
+  if (target === "M-SPEC") {
+    return "保留 story；spec、验收、设计、测试与实现作废并重做。";
+  }
+  if (target === "M-STORY") {
+    return "story、spec、验收、设计、测试与实现全部作废并重做。";
+  }
+  return "目标阶段之后的产出全部作废并重做。";
+}
+
+/** Rough redo cost from this run's own stage durations (last visits).
+ * Never a precise promise: the label says 粗略估计. */
+function estimateReturnCost(events, target, current, order) {
+  const stages = Array.isArray(order) ? order : [];
+  const start = stages.indexOf(target);
+  const end = stages.indexOf(current);
+  if (start < 0 || end < 0 || end < start) return "";
+  let total = 0;
+  let known = 0;
+  for (const stage of stages.slice(start, end + 1)) {
+    let entered = null;
+    let exited = null;
+    for (const event of events || []) {
+      if (!event) continue;
+      if (event.type === "stage.entered" && stageOf(event) === stage) entered = event.ts;
+      if (event.type === "stage.exited" && stageOf(event) === stage) exited = event.ts;
+    }
+    if (!entered) continue;
+    const from = Date.parse(entered);
+    const to = exited ? Date.parse(exited) : Date.now();
+    if (Number.isNaN(from) || Number.isNaN(to) || to < from) continue;
+    total += (to - from) / 1000;
+    known += 1;
+  }
+  if (!known) return "预计需要重走若干阶段（暂无历史耗时数据）";
+  return `粗略估计：约 ${formatSpan(total)}（含历史等待，实际取决于评审与执行）`;
+}
+
+function closeReturnModal() {
+  const existing = document.querySelector('[data-testid="return-modal"]');
+  if (existing) existing.remove();
+}
+
+/** The return decision is a modal, not a row of buttons: pick a target,
+ * read what is lost (code/tests/docs), the rough redo cost and any
+ * irreversible operations, then confirm. */
+function openReturnModal(detail, events, encoded, order) {
+  const options = detail && detail.return_options;
+  const targets =
+    options && options.allowed && Array.isArray(options.targets) ? options.targets : [];
+  if (!targets.length) return;
+  closeReturnModal();
+  const backdrop = element("div", {
+    class: "return-modal-backdrop",
+    "data-testid": "return-modal",
+    role: "presentation",
+  });
+  const modal = element("div", {
+    class: "return-modal",
+    "data-testid": "return-modal-dialog",
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-labelledby": "return-modal-title",
+  });
+  const current = detail && detail.stage ? String(detail.stage) : "";
+  let selected = targets[0];
+  const title = element("h2", {
+    id: "return-modal-title",
+    class: "return-modal-title",
+    text: "回退到更早阶段",
+  });
+  const close = element("button", {
+    type: "button",
+    class: "return-modal-close",
+    "data-testid": "return-modal-close",
+    "aria-label": "关闭",
+    text: "×",
+  });
+  close.addEventListener("click", closeReturnModal);
+  const intro = element("p", {
+    class: "return-modal-intro",
+    text: "回退会作废目标阶段之后的所有产出，并从该阶段重新执行。请选择一个目标；后果与耗时估计如下。",
+  });
+  const list = element("div", { class: "return-target-list", "data-testid": "return-target-list" });
+  const face = element("div", { class: "return-confirm-face", "data-testid": "return-confirm-face" });
+  const targetLine = element("p", { class: "return-target", "data-testid": "return-target" });
+  const consequences = element("p", {
+    class: "return-consequences",
+    "data-testid": "return-consequences",
+  });
+  const verdict = element("p", {
+    class: "return-verdict",
+    "data-testid": "return-verdict",
+    role: "status",
+    hidden: true,
+  });
+  const confirm = element("button", {
+    type: "button",
+    class: "gate-action-button return-confirm-button",
+    "data-testid": "return-confirm-button",
+    text: "确认回退",
+  });
+  const cancel = element("button", {
+    type: "button",
+    class: "gate-action-button",
+    "data-testid": "return-cancel",
+    text: "取消",
+  });
+  const renderSelection = () => {
+    targetLine.textContent = `将回退到 ${selected.stage}`;
+    const cost = estimateReturnCost(events, selected.stage, current, order);
+    const executed = Array.isArray(selected.already_executed) ? selected.already_executed : [];
+    const span = order.indexOf(selected.stage) >= 0 && order.indexOf(current) >= 0
+      ? `需重走 ${Math.max(0, order.indexOf(current) - order.indexOf(selected.stage))} 个阶段。`
+      : "";
+    consequences.textContent =
+      `${span}${cost ? `${cost}。` : ""}` +
+      (executed.length
+        ? ` 已执行且不可撤销：${executed
+            .map((op) => `${op.operation_kind} ${op.target}`)
+            .join("；")}。`
+        : " 无不可逆操作被跨越。");
+    confirm.textContent = `确认回退到 ${selected.stage}`;
+  };
+  for (const target of targets) {
+    const option = element("label", {
+      class: "return-target-option",
+      "data-testid": `return-target-option-${target.stage}`,
+    });
+    const radio = element("input", {
+      type: "radio",
+      name: "return-target",
+      value: target.stage,
+    });
+    radio.checked = target === selected;
+    radio.addEventListener("change", () => {
+      selected = target;
+      renderSelection();
+    });
+    option.append(
+      radio,
+      element("span", { class: "return-target-name", text: target.stage }),
+      element("span", {
+        class: "return-target-consequence",
+        text: returnConsequences(target.stage),
+      })
+    );
+    list.append(option);
+  }
+  renderSelection();
+  confirm.addEventListener("click", async () => {
+    confirm.disabled = true;
+    try {
+      await requestJson(`/api/runs/${encoded}/return`, {
+        method: "POST",
+        body: JSON.stringify({
+          to: selected.stage,
+          reason: "human return from UI",
+          confirm: true,
+        }),
+      });
+      verdict.hidden = false;
+      verdict.removeAttribute("data-failed");
+      verdict.textContent = `已提交回退：${selected.stage}`;
+      scheduleGateRefresh(encoded, "return");
+      globalThis.setTimeout(closeReturnModal, 800);
+    } catch (error) {
+      verdict.hidden = false;
+      verdict.setAttribute("data-failed", "true");
+      verdict.textContent = `回退失败：${error && error.message ? error.message : error}`;
+      confirm.disabled = false;
+    }
+  });
+  cancel.addEventListener("click", closeReturnModal);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) closeReturnModal();
+  });
+  face.append(
+    targetLine,
+    consequences,
+    element("div", { class: "return-confirm-actions" }, [cancel, confirm]),
+    verdict
+  );
+  modal.append(title, close, intro, list, face);
+  backdrop.append(modal);
+  document.body.append(backdrop);
 }
 
 /**
@@ -1600,10 +1851,9 @@ function stageTrack(stages, events, detail) {
       element("span", { class: "node-icon", text: STATE_ICONS[nodeState] || "·" }),
       element("span", { class: "stage-label", text: stage })
     );
-    // Attempt badges are per VISIT: a rollback re-entry resets the attempt
-    // numbering, so only dispatches at/after the current visit's start
-    // count. Attempts past the first are retry re-dispatches — badge +
-    // self-loop face on the same stage node, never a new node.
+    // One compact attempt badge (the count), not one chip per attempt: a
+    // rollback re-entry resets the numbering, so only dispatches at/after
+    // the current visit's start count.
     const byAttempt = attempts.get(stage) || new Map();
     const visit = (facts.visits.get(stage) || []).slice(-1)[0] || null;
     const visitStart = visit ? visit.startIndex : -1;
@@ -1613,17 +1863,68 @@ function stageTrack(stages, events, detail) {
         stageAttempts.push(attempt);
       }
     }
-    stageAttempts.sort((a, b) => a - b).forEach((attempt) => {
-      const retry = attempt > 1;
+    const attemptTotal = stageAttempts.length;
+    if (attemptTotal > 1) {
+      const numeric = stageAttempts.filter((value) => Number.isFinite(value));
+      const latest = numeric.length ? Math.max(...numeric) : attemptTotal;
       node.append(
         element("span", {
-          class: retry ? "stage-attempt stage-attempt-loop" : "stage-attempt",
-          "data-testid": `timeline-attempt-${stage}-${attempt}`,
-          title: retry ? "重派" : `attempt ${attempt}`,
-          text: retry ? `⟳ attempt ${attempt}` : `attempt ${attempt}`,
+          class: "stage-attempt stage-attempt-badge",
+          "data-testid": `timeline-attempt-${stage}-${latest}`,
+          title: `本阶段已尝试 ${attemptTotal} 次`,
+          text: `⟳ ${attemptTotal}`,
         })
       );
-    });
+    }
+    // Stage-level decisions live on the active/attention node: retry
+    // restarts THIS stage; return opens the target/consequence modal.
+    const isCurrent = stage === (detail && detail.stage);
+    const gate = detail && detail.awaiting_gate;
+    const encoded = encodeURIComponent((detail && detail.run_id) || "");
+    const nodeActions = element("div", { class: "stage-node-actions" });
+    nodeActions.addEventListener("keydown", (event) => event.stopPropagation());
+    if (isCurrent && gate && gate.primary_action === "retry") {
+      const retry = element("button", {
+        type: "button",
+        class: "stage-node-action",
+        "data-testid": "stage-action-retry",
+        title: "重新执行本阶段当前步骤（已完成的阶段产出保留）",
+        text: "重试本阶段",
+      });
+      retry.addEventListener("click", (event) => {
+        event.stopPropagation();
+        retry.disabled = true;
+        requestJson(`/api/runs/${encoded}/retry`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        })
+          .then(() => scheduleGateRefresh(encoded, "retry"))
+          .catch(() => {
+            retry.disabled = false;
+          });
+      });
+      nodeActions.append(retry);
+    }
+    if (
+      isCurrent &&
+      detail &&
+      detail.return_options &&
+      detail.return_options.allowed
+    ) {
+      const back = element("button", {
+        type: "button",
+        class: "stage-node-action",
+        "data-testid": "return-pointer-open",
+        title: "选择回退到更早阶段",
+        text: "回退…",
+      });
+      back.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openReturnModal(detail, events, encoded, stages);
+      });
+      nodeActions.append(back);
+    }
+    if (nodeActions.childElementCount) node.append(nodeActions);
     node.addEventListener("click", () => selectNode(node, stage, detail, events));
     node.addEventListener("keydown", (event) => {
       if (event && (event.key === "Enter" || event.key === " ")) {
@@ -1922,14 +2223,27 @@ function nodeDetail(stage, detail, events) {
         text: `start/end: ${fmtTs(window[0].ts)} → ${endText}`,
       })
     );
-    const failure = window.find((event) => event.type === "verdict.failed");
-    if (failure) {
-      box.append(
-        element("p", {
-          class: "detail-error",
-          text: `error: ${(failure.payload && failure.payload.reason) || failure.type}`,
+    const failure = lastFailure(window);
+    // The gate stage's decision summary already lives in the current-card;
+    // do not repeat it here (the detail pane stays stage-scoped).
+    const isGateStage = !!(detail && detail.awaiting_gate && detail.stage === stage);
+    if (failure && !isGateStage) {
+      const summary = failureSummary(failure);
+      if (summary) {
+        box.append(element("p", { class: "detail-error", text: summary }));
+      }
+      const details = element("details", {
+        class: "detail-error-details",
+        "data-testid": "detail-error-details",
+      });
+      details.append(
+        element("summary", { text: "技术详情" }),
+        element("pre", {
+          class: "detail-error-raw",
+          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}`,
         })
       );
+      box.append(details);
     }
   }
   const owner = ownerOf(detail);
@@ -1981,6 +2295,7 @@ function owningSurfaceEntry() {
   const aliased = element("span", {
     class: "owning-surface-alias",
     "data-testid": "owning-surface-link",
+    "aria-hidden": "true",
     hidden: true,
     text: "所属文档",
   });
@@ -1993,6 +2308,7 @@ function owningSurfaceEntry() {
   const docJump = element("span", {
     class: "detail-doc-link-alias",
     "data-testid": "detail-doc-link",
+    "aria-hidden": "true",
     hidden: true,
     text: "文档中心",
   });
@@ -2004,15 +2320,13 @@ function owningSurfaceEntry() {
 /** Page-level navigation at the top of the timeline panel (run-agnostic):
  * the return restores the previous page, leaving run/node context intact. */
 function pageReturnEntry() {
+  // Deterministic in-app target: never history.back() (it can land outside
+  // Tracks). The overview is the run's home face.
   const back = element("a", {
     class: "owning-surface-return",
     "data-testid": "owning-surface-return",
-    href: "#",
-    text: "返回上一页",
-  });
-  back.addEventListener("click", (event) => {
-    event.preventDefault();
-    globalThis.history.back();
+    href: "/",
+    text: "← 返回运行总览",
   });
   return element("p", { class: "page-return" }, [back]);
 }
@@ -2075,7 +2389,7 @@ export function pendingHumanThreadsLine(gate) {
   });
 }
 
-export function gateActionPanel(detail, gate) {
+export function gateActionPanel(detail, gate, events = []) {
   const runId = (detail && detail.run_id) || "";
   const encoded = encodeURIComponent(runId);
   const panel = element("div", {
@@ -2087,7 +2401,7 @@ export function gateActionPanel(detail, gate) {
     element("p", {
       class: "gate-status",
       "data-testid": "gate-status",
-      text: "当前状态：等待人工裁决",
+      text: "需要你决定",
     })
   );
   const actions = element("div", { class: "gate-actions" });
@@ -2097,23 +2411,42 @@ export function gateActionPanel(detail, gate) {
   const pending = pendingHumanThreadsLine(gate);
   if (pending) panel.append(pending);
   const gateType = (gate && gate.type) || "";
+  const action = GATE_ACTIONS.includes(gate.primary_action)
+    ? gate.primary_action
+    : "guidance";
   if (GATE_EXCEPTION_TYPES.has(gateType)) {
+    const summary = gateSummary(gate, events);
     panel.append(
       element("p", {
         class: "gate-reason",
         "data-testid": "gate-reason",
-        text: `原因：${gate.reason || "-"}`,
+        text: summary,
       }),
       element("p", {
         class: "gate-impact",
         "data-testid": "gate-impact",
-        text: `影响：${gate.impact || "-"}`,
+        text: "在你做出决定前，run 不会继续推进。",
       })
     );
+    const details = element("details", {
+      class: "gate-details",
+      "data-testid": "gate-details",
+    });
+    details.append(
+      element("summary", { text: "技术详情" }),
+      element("p", { "data-testid": "gate-raw-reason", text: `门原因：${gate.reason || "-"}` })
+    );
+    const failure = lastFailure(events);
+    if (failure) {
+      details.append(
+        element("pre", {
+          "data-testid": "gate-failure-detail",
+          text: `${failure.check ? `${failure.check}: ` : ""}${failure.reason || ""}`,
+        })
+      );
+    }
+    panel.append(details);
   }
-  const action = GATE_ACTIONS.includes(gate.primary_action)
-    ? gate.primary_action
-    : "guidance";
   if (action === "review") {
     // review gate: the dedicated 通过/退回 decision row replaces the old
     // primary/default + comment/no-comment faces. Buttons ride the head
@@ -2122,6 +2455,16 @@ export function gateActionPanel(detail, gate) {
     const face = reviewDecisionFace(detail, encoded);
     for (const btn of face._actions) actions.append(btn);
     panel.append(face._body);
+  } else if (action === "retry" || action === "return") {
+    // Retry / return are stage-level decisions: the buttons live on the
+    // active stage node (one retry, one return modal), not here.
+    panel.append(
+      element("p", {
+        class: "gate-node-hint",
+        "data-testid": "gate-node-hint",
+        text: "请在下方当前阶段节点上选择「重试本阶段」或「回退…」。",
+      })
+    );
   } else {
     panel.append(primaryActionFace(encoded, action, actions, detail));
   }
@@ -2228,14 +2571,8 @@ export function primaryActionFace(encoded, action, actionsEl, detail) {
   // the head-row actions slot (same line as gate-status).
   const wrap = element("div", { class: "gate-primary-action-wrap" });
   const actionLabel = PRIMARY_ACTION_LABELS[action] || action;
-  wrap.append(
-    element("p", {
-      class: "gate-primary-action",
-      "data-testid": "gate-primary-action",
-      title: action,
-      text: `建议操作：${actionLabel}`,
-    })
-  );
+  // No "建议操作：..." prose line: the button label IS the action. The
+  // remaining copy is the human decision summary above.
   const mount = actionsEl || wrap;
   const _primaryDefaults = {
     triage: ["/triage", { decision: "go" }],
@@ -2459,151 +2796,6 @@ function scheduleGateRefresh(encoded, previous) {
 function _gateAction(detail) {
   const gate = detail && detail.awaiting_gate;
   return gate ? gate.primary_action || gate.type || "" : "";
-}
-
-/** The return pointer (§1m): rendered ONLY when the projection exposes
- * legal targets; the confirm face lists the already-executed irreversible
- * operations it would cross — never disguising them as undone.
- *
- * Frozen face (§9.2/AC-FR0337-02): the pointer buttons ride
- * return-pointer-<stage>; clicking one opens the confirm face
- * (return-confirm-face: target + consequences + explicit confirm button);
- * confirming posts the return and the verdict face (return-verdict)
- * reflects the server's answer. */
-export function returnPointer(detail) {
-  const options = detail && detail.return_options;
-  const targets = options && Array.isArray(options.targets) ? options.targets : [];
-  if (!options || !options.allowed || !targets.length) {
-    // Keep the stable testid without claiming an action: the server's
-    // return gate is the single legality source (author stages at
-    // approval/escalation, release stages' FR-0287 universal return).
-    return element("p", {
-      class: "return-pointer return-pointer-empty",
-      "data-testid": "return-pointer",
-      hidden: true,
-      text: "无回退入口",
-    });
-  }
-  const runId = encodeURIComponent((detail && detail.run_id) || "");
-  const currentStage = detail && detail.stage ? String(detail.stage) : "";
-  const box = element("div", {
-    class: "return-pointer",
-    "data-testid": "return-pointer",
-  });
-  box.append(
-    element("p", {
-      class: "return-targets-scope",
-      "data-testid": "return-targets-scope",
-      text: "run 级回退（服务端返回合法目标时可用）",
-    }),
-    element("p", {
-      class: "return-targets",
-      "data-testid": "return-targets",
-      text: `可回退目标：${targets.map((target) => target.stage === currentStage ? `${target.stage}（当前阶段）` : target.stage).join("、")}`,
-    }),
-    element("p", {
-      class: "return-hint",
-      "data-testid": "return-hint",
-      text: "重试（retry）：保留本阶段已产出，只重派当前步骤（不记回退）｜重做当前阶段：人工让本阶段从入口重来（人工治理，不计入自动回退）",
-    }),
-    element("p", {
-      class: "return-test-note",
-      "data-testid": "return-test-note",
-      text: "M-TEST 是执行阶段，按合同不可作为回退目标",
-    })
-  );
-  for (const target of targets) {
-    const isCurrent = target.stage === currentStage;
-    const pointer = element("button", {
-      type: "button",
-      class: "return-pointer-button",
-      "data-testid": `return-pointer-${target.stage}`,
-      text: isCurrent ? `重做 ${target.stage}（当前阶段）` : `回退到 ${target.stage}`,
-      ...(isCurrent ? { title: `从 ${target.stage} 阶段入口重新进入；人工治理动作，不计入自动回退` } : {}),
-    });
-    pointer.addEventListener("click", () => {
-      openReturnConfirm(box, runId, target, currentStage);
-    });
-    box.append(pointer);
-  }
-  return box;
-}
-
-/** The return confirm face (§1m.2): target + already-executed
- * consequences + explicit confirmation; the verdict reflects the
- * server's answer (never a disguised undo). */
-export function openReturnConfirm(box, runId, target, currentStage) {
-  const existing = box.querySelector('[data-testid="return-confirm-face"]');
-  if (existing) existing.remove();
-  const executed = target.already_executed || [];
-  const isCurrent = currentStage !== undefined && currentStage !== null && currentStage !== ""
-    ? target.stage === currentStage
-    : false;
-  const face = element("div", {
-    class: "return-confirm-face",
-    "data-testid": "return-confirm-face",
-  });
-  face.append(
-    element("p", {
-      class: "return-target",
-      "data-testid": "return-target",
-      text: isCurrent ? `回退目标：${target.stage}（重做当前阶段）` : `回退目标：${target.stage}`,
-    }),
-    element("p", {
-      class: "return-consequences",
-      "data-testid": "return-consequences",
-      text: executed.length
-        ? `路径上已执行（不撤销）：${executed
-            .map((op) => `${op.operation_kind} ${op.target}`)
-            .join("；")}`
-        : "无不可逆操作被跨越",
-    })
-  );
-  const confirm = element("button", {
-    type: "button",
-    class: "return-confirm-button",
-    "data-testid": "return-confirm-button",
-    text: isCurrent ? `确认重做 ${target.stage}` : `确认回退到 ${target.stage}`,
-  });
-  confirm.addEventListener("click", async () => {
-    try {
-      const receipt = await requestJson(`/api/runs/${runId}/return`, {
-        method: "POST",
-        body: JSON.stringify({
-          to: target.stage,
-          reason: "timeline return pointer",
-          confirm: true,
-        }),
-      });
-      face.append(
-        element("p", {
-          class: "return-verdict",
-          "data-testid": "return-verdict",
-          text: `return executed: ${JSON.stringify(receipt || {})}`,
-        })
-      );
-    } catch (error) {
-      face.append(
-        element("p", {
-          class: "return-verdict",
-          "data-testid": "return-verdict",
-          text: `return failed: ${error && error.message ? error.message : error}`,
-        })
-      );
-    }
-  });
-  // per-target confirm alias (unique testid hygiene: the frozen face's
-  // return-confirm-<stage> resolves to the same button via alias span)
-  const alias = element("span", {
-    class: "return-confirm-alias",
-    "data-testid": `return-confirm-${target.stage}`,
-    hidden: true,
-    text: isCurrent ? `确认重做 ${target.stage}` : `确认回退到 ${target.stage}`,
-  });
-  alias.removeAttribute("hidden");
-  alias.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  face.append(confirm, alias);
-  box.append(face);
 }
 
 function span(testid, text, extra = {}) {

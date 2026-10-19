@@ -683,10 +683,7 @@ def _awaiting_gate(
     primary = (
         "release-decision" if gate_type == _AWAIT_RELEASE else _AWAITING_PRIMARY_ACTIONS[gate_type])
     return {"type": gate_type, "reason": reason,
-        "impact": (
-            f"run 停在 {stage}（{state.substate or gate_type}），该门完成前不再推进；"
-            "在时间线下栏动作面板处理后自动推进到下一边界"
-        ),
+        "impact": "在你做出决定前，run 不会继续推进。",
         "primary_action": primary,
         "pending_human_threads": _stage_pending_human_threads(
             repo_path, version, state.stage),}
