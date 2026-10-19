@@ -380,13 +380,13 @@ class _Socks5HTTPSHandler(urllib.request.HTTPSHandler):
         )
 
 
-def _proxy_urlopen(req: urllib.request.Request, proxy: dict):
+def _proxy_urlopen_once(req: urllib.request.Request, proxy: dict):
     """One proxy attempt for an already-failed direct request.
 
     http/https proxies ride urllib's ProxyHandler; socks5 uses the minimal
     CONNECT connection above (no PySocks dependency). A response body is
     decoded exactly like the direct channel; transport failures propagate to
-    the caller, which re-raises the original direct error.
+    the caller.
     """
     context = _tls_ssl_context()
     if proxy["type"] == "socks5":
@@ -401,6 +401,27 @@ def _proxy_urlopen(req: urllib.request.Request, proxy: dict):
         )
     with opener.open(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _proxy_urlopen(req: urllib.request.Request, proxy: dict):
+    """Proxy attempt with the same bounded transient retry as direct.
+
+    HTTP status errors are terminal (never retried); SSL/connection/timeout
+    failures including the SOCKS handshake's ``OSError`` get three total
+    attempts with 0.5s/1s backoff.
+    """
+    attempt = 0
+    while True:
+        try:
+            return _proxy_urlopen_once(req, proxy)
+        except urllib.error.HTTPError:
+            raise
+        except (ssl.SSLError, urllib.error.URLError, TimeoutError,
+                ConnectionError, OSError):
+            attempt += 1
+            if attempt >= _NETWORK_ATTEMPTS:
+                raise
+            time.sleep(_NETWORK_BACKOFF_S[attempt - 1])
 
 
 def _urlopen_transport_retry(req: urllib.request.Request):
@@ -425,6 +446,32 @@ def _urlopen_transport_retry(req: urllib.request.Request):
             time.sleep(_NETWORK_BACKOFF_S[attempt - 1])
 
 
+def _urlopen_with_fallback(req: urllib.request.Request) -> dict:
+    """Direct bounded retries, then the configured proxy fallback.
+
+    HTTP status errors are terminal on both channels and never fall back. A
+    final transport failure consults ``network.proxy`` only when
+    ``github_fallback`` is enabled; a proxy ``HTTPError`` propagates as-is,
+    any other proxy failure annotates and re-raises the original direct error.
+    """
+    try:
+        return _urlopen_transport_retry(req)
+    except urllib.error.HTTPError:
+        raise
+    except (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError) as direct_error:
+        proxy = _proxy_config()
+        if proxy is None or not proxy.get("github_fallback"):
+            raise
+        try:
+            return _proxy_urlopen(req, proxy)
+        except urllib.error.HTTPError:
+            raise
+        except Exception as proxy_error:
+            if hasattr(direct_error, "add_note"):
+                direct_error.add_note(f"proxy fallback also failed: {proxy_error}")
+            raise direct_error from proxy_error
+
+
 class GithubBackend:
     """Live channel: GitHub REST via GITHUB_TOKEN / TRAC_GITHUB_REPO (owner/name);
     Project association via TRAC_GITHUB_PROJECT."""
@@ -440,29 +487,14 @@ class GithubBackend:
         """Perform a JSON request and classify HTTP/URL errors (shared by
         ``_request``/``_get``); raises ``GithubIssuesError`` classified.
         Every call carries the explicit IF-TLS-001 verifying SSL context.
-        Transient SSL/connection/timeout failures are retried a bounded
-        number of times before the existing ``network`` classification."""
+        Direct transient failures are retried a bounded number of times, then
+        the shared proxy fallback applies before ``network`` classification."""
         try:
-            return _urlopen_transport_retry(req)
+            return _urlopen_with_fallback(req)
         except urllib.error.HTTPError as e:
             cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
             raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
         except (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            # Direct channel is exhausted (transient retries included). Only
-            # now, and only with an enabled fallback, retry the same request
-            # through the configured proxy. HTTPError never reaches here.
-            proxy = _proxy_config()
-            if proxy is not None and proxy.get("github_fallback"):
-                try:
-                    return _proxy_urlopen(req, proxy)
-                except urllib.error.HTTPError as proxy_error:
-                    cls = _HTTP_ERROR_CLASSES.get(proxy_error.code, "network")
-                    raise GithubIssuesError(
-                        cls, f"HTTP {proxy_error.code}: {proxy_error.reason}"
-                    ) from proxy_error
-                except Exception as proxy_error:
-                    if hasattr(e, "add_note"):
-                        e.add_note(f"proxy fallback also failed: {proxy_error}")
             if isinstance(e, urllib.error.URLError):
                 raise GithubIssuesError("network", str(e.reason)) from e
             raise GithubIssuesError("network", str(e)) from e
@@ -764,13 +796,14 @@ def _readback_run_outcome(
 
 
 def _get_any(req) -> dict:
-    """urlopen wrapper (module-level; mirrors _urlopen but without backend
-    state). Returns the decoded JSON body. Every call carries the explicit
-    IF-TLS-001 verifying SSL context (interfaces 1r.4.1)."""
-    with urllib.request.urlopen(  # noqa: S310 (test stand-in base)
-        req, timeout=30, context=_tls_ssl_context()
-    ) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    """Module-level request path shared by the read/verify helpers.
+
+    Returns the decoded JSON body; direct transient failures are retried
+    boundedly and then, with an enabled fallback, retried through the
+    configured proxy — the same channel semantics as ``GithubBackend``.
+    Every call carries the explicit IF-TLS-001 verifying SSL context and the
+    fixed 30s timeout (interfaces 1r.4.1)."""
+    return _urlopen_with_fallback(req)
 
 
 def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks: list) -> dict:
