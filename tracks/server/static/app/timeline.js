@@ -933,7 +933,6 @@ function actionOf(detail, state, events = []) {
  */
 function foldStageFacts(events) {
   const visits = new Map();
-  const repairs = [];
   const backEdges = [];
   let current = null;
   const openVisit = (stage, index) => {
@@ -986,7 +985,6 @@ function foldStageFacts(events) {
       if (repair || (from && to && from === to && human)) {
         // Operator repair / human re-do of the current stage: a note on the
         // live visit, never a void and never a back edge.
-        repairs.push({ from, to, reason, index });
         continue;
       }
       if (from) closeVisit(from, "void", index);
@@ -1000,7 +998,7 @@ function foldStageFacts(events) {
       }
     }
   }
-  return { visits, repairs, backEdges };
+  return { visits, backEdges };
 }
 
 function nodeStateOf(stage, detail, facts) {

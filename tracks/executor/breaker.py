@@ -85,13 +85,12 @@ class RunBreaker:
             return
 
     def _on_rollback(self, payload: dict) -> None:
-        # 只计自动/真实回退。operator_repair 是运维就地修复；from == to
-        # 是原地自回退；human_return 是治理者的人工回退。它们都不是
-        # 自治损耗，不应消耗 breaker 预算或加速人工升级。
+        # 只计自动/真实回退。operator_repair 是运维就地修复；human_return
+        # 是治理者的人工回退。它们都不是自治损耗，不应消耗 breaker 预算
+        # 或加速人工升级。自回退（from == to）若是自动路由（如 diagnose
+        # 重入），仍是真实回退，必须计数——按 payload 形状猜语义会静默
+        # 放行未来的同阶段自动回退。
         if payload.get("operator_repair"):
-            return
-        from_stage = payload.get("from_stage")
-        if from_stage is not None and from_stage == payload.get("to_stage"):
             return
         if payload.get("reason") == "human_return":
             return

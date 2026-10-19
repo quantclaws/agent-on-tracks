@@ -70,13 +70,15 @@ def test_operator_repair_self_rollback_not_counted():
     assert b.rollbacks == 0
 
 
-def test_self_rollback_without_operator_repair_not_counted():
+def test_self_rollback_without_repair_counts_as_real_rollback():
+    # Only the operator-repair / human markers filter a rollback. A bare
+    # same-stage automatic rollback is real churn and must count.
     b = RunBreaker()
     b.note(
         "stage.rolled_back",
         {"from_stage": "M-DESIGN", "to_stage": "M-DESIGN", "reason": "scope_overflow"},
     )
-    assert b.rollbacks == 0
+    assert b.rollbacks == 1
 
 
 def test_human_return_rollback_not_counted():
@@ -94,7 +96,14 @@ def test_human_retry_resets_window_after_filtered_rollbacks():
         b,
         [
             ("stage.rolled_back", {"from_stage": "M-TEST", "to_stage": "M-DESIGN", "reason": "stub_gap"}),
-            ("stage.rolled_back", {"from_stage": "M-DESIGN", "to_stage": "M-DESIGN"}),
+            (
+                "stage.rolled_back",
+                {
+                    "from_stage": "M-DESIGN",
+                    "to_stage": "M-DESIGN",
+                    "operator_repair": "stale worker",
+                },
+            ),
             (
                 "stage.rolled_back",
                 {"from_stage": "M-RELEASE", "to_stage": "M-VERIFY", "reason": "human_return"},
