@@ -112,12 +112,12 @@ The host project test execution contract is declared in `.tracks/projects/projec
 - **E2e**:
   - framework: pytest
   - paths: ["tests/e2e/"]
-  - collect: `.venv/bin/python -m pytest --collect-only tests/e2e/`
+  - collect: `.venv/bin/python -m pytest --collect-only tests/e2e/ -m 'not performance'`
   - run: `.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`
   - run_selected: `.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope -m 'not performance' --junitxml={result}`
   - cwd: "."
 
-`ui` marker 的默认排除由 pyproject `addopts` 承载（合同命令不带 `-m`）；电池墙钟有界（900s 基线 + 60s/节点，`TRAC_BATTERY_TIMEOUT_BASE/PER_NODE`）继承。
+`ui` marker 的默认排除由 pyproject `addopts` 承载；e2e `collect` / `run_selected` 显式以 `-m 'not performance'` 覆盖 marker 过滤，以收集和选中 UI 节点。电池墙钟有界（900s 基线 + 60s/节点，`TRAC_BATTERY_TIMEOUT_BASE/PER_NODE`）继承。
 
 ### 2.4. Test Data
 
@@ -129,11 +129,11 @@ The host project test execution contract is declared in `.tracks/projects/projec
 
 ### 2.5. Installation & Isolation
 
-- **Installation method**：E2E 从候选 wheel 以 `pip install --no-deps --target <prefix>` 安装到源码树外的隔离 target prefix（不创建 venv）；全局 `trac` 以 `PYTHONPATH=<prefix> <prefix>/bin/trac` 调用当前测试解释器，starlette/uvicorn/certifi 由该测试解释器提供（与生产的共享解释器合同一致，不访问包索引）；项目安装用该 prefix 的 `trac install`，与最终用户一致；不使用 editable/源码树 import。
-- **Install target**：每次测试一个 fresh target prefix（`tmp_path`），不污染系统环境或源码树。
+- **Installation method**：E2E 从候选 wheel 以 `pip install --no-deps --target <prefix>/lib/python<X.Y>/site-packages <wheel>` 安装到源码树外的隔离 prefix（不创建 venv）；夹具在 `<prefix>/bin/trac` 生成 console 入口；全局 `trac` 以 `PYTHONPATH=<prefix>/lib/python<X.Y>/site-packages <prefix>/bin/trac` 调用当前测试解释器，starlette/uvicorn/certifi 由该测试解释器提供（与生产的共享解释器合同一致，不访问包索引）；项目安装用该 prefix 的 `trac install`，与最终用户一致；不使用 editable/源码树 import。
+- **Install target**：每次测试一个 fresh prefix（`tmp_path`，布局为 `lib/python<X.Y>/site-packages` + `bin/trac`），不污染系统环境或源码树。
 - **Working directory**：在源码树外的临时目录（`$TMPDIR/<run-id>/workdir`）运行全局 `trac`；项目目标也是临时 Git 仓库/空目录。
 - **Initialization**：空目录由 `trac install` 先 `git init -b main` 并 scaffold；已有项目预置 Git 历史与用户文件；服务用 `trac serve --background` 启动并轮询 `/healthz`。
-- **Verification**：安装后先断言 `PYTHONPATH=<prefix> <prefix>/bin/trac --help` / `version` 可用，再断言功能；后台服务先 healthz 再断言版本/端口。
+- **Verification**：安装后先断言 `PYTHONPATH=<prefix>/lib/python<X.Y>/site-packages <prefix>/bin/trac --help` / `version` 可用，再断言功能；后台服务先 healthz 再断言版本/端口。
 
 ---
 
@@ -199,7 +199,7 @@ Windows 前台分支由平台注入的 integration 分支覆盖（`sys.platform`
 | # | Component | Responsibility (external) | Boundary (what it does not implement) |
 |:--|:--|:--|:--|
 | 1 | Wheel builder fixture | 从当前源码构建候选 wheel；在临时副本改版本后构建第二版本 wheel | 不修改仓库源码；不替代安装器校验 |
-| 2 | Isolated prefix fixture | 创建 fresh target prefix、`pip install --no-deps --target` wheel、注入 `PYTHONPATH` | 不 import 源码树；不实现 tracks 业务；不建 venv |
+| 2 | Isolated prefix fixture | 创建 fresh prefix（`lib/python<X.Y>/site-packages` + `bin/trac`）、`pip install --no-deps --target` wheel、注入 `PYTHONPATH` | 不 import 源码树；不实现 tracks 业务；不建 venv |
 | 3 | Project fixture | 创建临时 Git 仓库/空目录、用户文件、receipt 目标 | 不伪造 receipt 内容（除损坏注入用例） |
 | 4 | Serve/daemon fixture | 启动/停止前台或后台 serve、读 healthz/端口/pidfile | 不替代 supervisor/kernel/HTTP 语义 |
 | 5 | Event/round seed | 用 Store/blob/log 写入夹具事件与轮次 | 不合成第二数据源；不伪造 UI 渲染 |

@@ -72,7 +72,7 @@ sha:
 
 2. **site-packages**：`.tracks/env/<version>/site-packages/` 含该版本 `tracks/` 包与 `*.dist-info/`。安装器可用“运行时 distribution 的 `tracks.__file__` + dist-info”或官方 wheel 的 zip 成员生成；不得混入当前宿主源码树的其他版本文件。`.tracks/env/.gitignore` 内容为 `*`，运行态不进 git。
 3. **launcher** `.tracks/bin/trac.py`：读取 receipt；`sys.path.insert(0, <root>/<site_packages>)`；`cwd=<root>`；设置 `TRAC_PROJECT_ACTIVE=1`；调用 `tracks.cli.main.main(argv)`。launcher 由安装器写入并纳入 managed files，版本无关。
-4. **托管文件**：`.opencode/agents/**`、`.opencode/skills/**`、`.opencode/templates/**` 为 tracks 自有路径，安装无条件覆盖；根 `opencode.json` 为 seeded-only（已存在不覆盖）；用户自有 `.opencode/opencode.json` 不读不写。清单外路径不读不写；宿主根 `.gitignore` 不创建、不读取、不修改（不存在则在安装后仍不存在）。`.tracks/projects|runtime|wiki` 与 `.tracks/*/.gitignore` 是 tracks 自有脚手架，按 `trac init` 目录语义幂等创建。
+4. **托管文件**：`.opencode/agents/**`、`.opencode/skills/**`、`.opencode/templates/**` 为 tracks 自有路径，安装无条件覆盖；根 `opencode.json` 为 seeded-only（已存在不覆盖）；用户自有 `.opencode/opencode.json` 不读不写。清单外路径不读不写；宿主根 `.gitignore` 不创建、不读取、不修改（不存在则在安装后仍不存在）。`.tracks/projects|runtime|wiki` 与 `.tracks/*/.gitignore` 是 tracks 自有脚手架，按 `trac init` 的 `.tracks` 目录语义幂等创建；安装器不得调用会写宿主根 `.gitignore` 的 `cmd_init` 入口。
 5. **运行态**：`.tracks/service/serve.pid`（JSON `{pid, host, port, version, repo, started_at}`）与 `serve.log`（追加文本）仅后台服务使用；`.tracks/env/` 不进 git。
 
 ### 1c. 安装命令合同（IF-INSTALL-001）
