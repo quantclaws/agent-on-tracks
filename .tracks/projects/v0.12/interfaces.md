@@ -17,7 +17,7 @@ sha:
 - IF-001～IF-011 的全部合同逐字继承；既有 IF 标识不可重定义或复用，IF-012 只追加新标识（§5）。
 - tracks.db 的 EVENT_TYPES 封闭集不变，v0.12 **不新增事件类型**；`human.review` 仅追加可选 payload 键 `comments`/`doc`/`thread_id`（§1j）。service_events 封闭集、服务命令 kind 封闭集、kernel COMMAND_KINDS 均不变。
 - 既有 CLI 子命令集合、参数面与退出码不变；`trac serve` 前台行为与 `serve_cmd.cmd_serve` 的直接调用面不变。v0.12 只追加 `trac install`/`trac version` 与 `trac serve --background|--stop|--status`（§2）。
-- `.tracks/projects/project.toml` 的测试执行合同、layout、lint、adapter、host-contract 段逐字继承；本版不修改该文件。
+- `.tracks/projects/project.toml` 的测试执行合同、layout、lint、adapter、host-contract 段逐字继承；本设计的变更集不修改该文件，但现行 bytes 已包含 v0.12 OOB 修复的 e2e `collect` marker 过滤变更（`hooks-runner-ci-required` digest 重锚见 architecture §4.2；`.flake8` 未变化）。
 - 认证边界、CSRF + Idempotency-Key、错误封装 `{"error": {"reason", "detail"}}`、redaction、本机单用户边界、SSE 合并序/游标补读全部继承；全部新读取面与既有查询面同一响应封装。
 - v0.10/v0.11 的 PAGES 六名、五 tab、Releases 投影、run detail 的 `awaiting_gate`/`return_options`、评审轮写入通道、`ui` marker 通道隔离、`data-testid` 绑定纪律全部继承。
 - OOB 读取面：`/stages/{stage}/rounds` 与 `/rounds/{command_id}` 按当前已交付实现登记为 v0.12 外部合同；`/activity`（run 版）是**未消费的遗留读面**，仅保留既有 API 语义，不纳入 v0.12 断言基线（无 AC/IF 承载、无 v0.12 测试义务）。UI 面（阶段轨道、阶段工作流、按轮手风琴、卡片、评审两决策、静态 no-cache）按当前已交付实现登记；不改变既有 API 语义与 testid。
@@ -72,7 +72,7 @@ sha:
 
 2. **site-packages**：`.tracks/env/<version>/site-packages/` 含该版本 `tracks/` 包与 `*.dist-info/`。安装器可用“运行时 distribution 的 `tracks.__file__` + dist-info”或官方 wheel 的 zip 成员生成；不得混入当前宿主源码树的其他版本文件。`.tracks/env/.gitignore` 内容为 `*`，运行态不进 git。
 3. **launcher** `.tracks/bin/trac.py`：读取 receipt；`sys.path.insert(0, <root>/<site_packages>)`；`cwd=<root>`；设置 `TRAC_PROJECT_ACTIVE=1`；调用 `tracks.cli.main.main(argv)`。launcher 由安装器写入并纳入 managed files，版本无关。
-4. **托管文件**：`.opencode/agents/**`、`.opencode/skills/**`、`.opencode/templates/**` 为 tracks 自有路径，安装无条件覆盖；根 `opencode.json` 为 seeded-only（已存在不覆盖）；用户自有 `.opencode/opencode.json` 不读不写。清单外路径不读不写；宿主根 `.gitignore` 不创建、不读取、不修改（不存在则在安装后仍不存在）。`.tracks/projects|runtime|wiki` 与 `.tracks/*/.gitignore` 是 tracks 自有脚手架，按 `trac init` 的 `.tracks` 目录语义幂等创建；安装器不得调用会写宿主根 `.gitignore` 的 `cmd_init` 入口。
+4. **托管文件**：`.opencode/agents/**`、`.opencode/skills/**`、`.opencode/templates/**` 为 tracks 自有路径，安装无条件覆盖；根 `opencode.json` 为 seeded-only（已存在不覆盖）；用户自有 `.opencode/opencode.json` 不读不写。清单外路径不读不写；宿主根 `.gitignore` 不创建、不读取、不修改（不存在则在安装后仍不存在）。`.tracks/projects|runtime|wiki` 与 `.tracks/*/.gitignore` 是 tracks 自有脚手架，按 `trac init` 的 `.tracks` 目录语义幂等创建。
 5. **运行态**：`.tracks/service/serve.pid`（JSON `{pid, host, port, version, repo, started_at}`）与 `serve.log`（追加文本）仅后台服务使用；`.tracks/env/` 不进 git。
 
 ### 1c. 安装命令合同（IF-INSTALL-001）

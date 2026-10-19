@@ -100,7 +100,7 @@ tests/
 
 ### 2.3.1. Test Execution Contract (`.tracks/projects/project.toml`)
 
-The host project test execution contract is declared in `.tracks/projects/project.toml`（v0.12 零变更，逐字继承）。M-TEST uses this contract to collect and run tests independently.
+The host project test execution contract is declared in `.tracks/projects/project.toml`（本设计的变更集不修改该文件；现行 bytes 已包含 v0.12 OOB 修复的 e2e `collect` marker 过滤变更，`hooks-runner-ci-required` 的 `config_digest` 已重锚为 `e534d31d…`，见 architecture §4.2；`.flake8` 未变化）。M-TEST uses this contract to collect and run tests independently.
 
 - **Integration**:
   - framework: pytest
