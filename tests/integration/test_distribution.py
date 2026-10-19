@@ -67,6 +67,7 @@ def _run(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Compl
     )
 
 
+# AC-FR0349-01@v0.12 TRACKS-TRACE installed global CLI reports its distribution version
 def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
     assert sys.prefix != sys.base_prefix, "this test must run from a virtual environment"
     assert CURRENT_PYTHON.is_file()
@@ -96,6 +97,15 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
 
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
+        metadata_name = next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )
+        metadata = archive.read(metadata_name).decode("utf-8")
+    expected_version = next(
+        line.split(": ", 1)[1].strip()
+        for line in metadata.splitlines()
+        if line.startswith("Version: ")
+    )
     assert {f"tracks/{path}" for path in RUNTIME_RESOURCE_PATHS} <= names
     assert not any(name.startswith(("tests/", "e2e_live/", "scenarios/")) for name in names)
 
@@ -124,6 +134,15 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
     console = _run(["trac", "status"], console_host, console_env)
     assert console.returncode == 0, console.stderr
     assert "no runs yet" in console.stdout
+
+    # v0.12 (AC-FR0349-01 / §11 row 5): the installed global entry reports
+    # its own distribution version from a non-project cwd.
+    versioned = _run(["trac", "version", "--json"], console_host, console_env)
+    assert versioned.returncode == 0, versioned.stderr
+    assert json.loads(versioned.stdout) == {
+        "scope": "global",
+        "version": expected_version,
+    }
 
     probe_host = tmp_path / "probe-host"
     probe_host.mkdir()
