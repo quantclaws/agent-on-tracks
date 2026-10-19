@@ -122,6 +122,10 @@ _SCHEMA_SCRIPT = (
     " created_at TEXT, expires_at TEXT);"
     "CREATE TABLE IF NOT EXISTS schedule ("
     " id INTEGER PRIMARY KEY CHECK (id = 1), active_run TEXT, queue_json TEXT);"
+    # System settings (idempotent add): one JSON value per dotted key —
+    # ``network.proxy`` carries the settings window's proxy configuration.
+    "CREATE TABLE IF NOT EXISTS settings ("
+    " key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);"
     # v0.11 IF-INTAKE-001 (interfaces §1c #9): the SM-01 intake state
     # machine's storage — status flows submitted -> evaluating -> evaluated
     # -> decided (failed is the retryable dead end, re-dispatch budget <= 3
@@ -547,6 +551,36 @@ class ServiceDB:
             if _run_plane_has(str(project.get("repo_path") or ""), str(run_id)):
                 return str(project.get("project_id"))
         return None
+
+    def get_setting(self, key: str) -> dict | None:
+        """One settings row's JSON value (``settings``, §1c); None when the
+        key is absent, the table is missing (pre-settings store opened
+        read-only) or the stored value is not a JSON object."""
+        try:
+            with contextlib.closing(self._connect()) as conn:
+                row = conn.execute(
+                    "SELECT value FROM settings WHERE key = ?", (str(key),)
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        try:
+            value = json.loads(row["value"])
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
+    def set_setting(self, key: str, value: dict) -> None:
+        """UPSERT one settings row's JSON value with a fresh updated_at."""
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET"
+                " value = excluded.value, updated_at = excluded.updated_at",
+                (str(key), json.dumps(value, ensure_ascii=False), _utcnow()),
+            )
+            conn.commit()
 
     def get_schedule(self) -> dict | None:
         """Single schedule row (interfaces §1c table 8); None when unset."""

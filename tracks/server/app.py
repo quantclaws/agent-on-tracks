@@ -45,7 +45,15 @@ from pathlib import Path
 from typing import Any
 
 from tracks import __version__
-from tracks.server import api_command, api_events, api_query, auth, pages, redaction
+from tracks.server import (
+    api_command,
+    api_events,
+    api_query,
+    api_settings,
+    auth,
+    pages,
+    redaction,
+)
 from tracks.server.intake_activity import intake_activity
 from tracks.server.run_activity import run_activity
 from tracks.server.run_rounds import round_detail_view, stage_rounds
@@ -64,6 +72,8 @@ _PUBLIC_PATHS = frozenset({"/healthz", "/login", "/api/auth/login"})
 _ROUTES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
     ("/healthz", api_query.healthz, ("GET",)),
     ("/api/service/config", api_query.service_config, ("GET",)),
+    ("/api/settings", api_settings.get_settings, ("GET",)),
+    ("/api/settings/network", api_settings.update_network, ("POST",)),
     ("/api/projects", api_query.list_projects, ("GET",)),
     ("/api/projects", api_command.register_project, ("POST",)),
     ("/api/projects/{pid}/readiness", api_command.run_readiness, ("POST",)),

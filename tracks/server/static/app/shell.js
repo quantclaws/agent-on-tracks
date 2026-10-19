@@ -105,8 +105,8 @@ function wireTabbar(shell) {
     openTab(feature, {
       feature,
       title: TITLES[feature] || feature,
-      // the gear opens its tab without changing the sidebar (FR-0318-03)
-      keepSidebar: feature === "settings",
+      // every icon switches the sidebar with its window — settings owns its
+      // menu tree (FR-0318-03 updated by the network-settings requirement)
     });
   });
 }

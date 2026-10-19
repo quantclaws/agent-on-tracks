@@ -14,9 +14,13 @@ verifying certifi context; ``TRAC_GITHUB_CA_BUNDLE`` overrides the bundle.
 
 from __future__ import annotations
 
+import functools
+import http.client
 import json
 import os
 import re
+import socket
+import sqlite3
 import ssl
 import time
 import urllib.error
@@ -217,6 +221,188 @@ def _is_transient_transport_error(exc: Exception) -> bool:
     return isinstance(exc, (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError))
 
 
+# -- network-panel proxy fallback (settings window) --------------------------
+# Direct connectivity always wins; the settings' ``network.proxy`` row is only
+# consulted after the direct channel's bounded transient retries are
+# exhausted. Everything here fails open: a missing home/table/row or an
+# invalid value keeps the pre-existing direct-only behavior.
+
+_PROXY_SETTING_KEY = "network.proxy"
+_PROXY_TYPES = frozenset({"http", "https", "socks5"})
+
+
+def _normalized_proxy(raw: object) -> dict | None:
+    """Validated proxy config or None (same rules as the settings API)."""
+    if not isinstance(raw, dict):
+        return None
+    proxy_type = raw.get("type")
+    host = raw.get("host")
+    port = raw.get("port")
+    fallback = raw.get("github_fallback")
+    if proxy_type not in _PROXY_TYPES:
+        return None
+    if not isinstance(host, str) or not host or len(host) > 255:
+        return None
+    if "://" in host or any(char.isspace() for char in host):
+        return None
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        return None
+    if not isinstance(fallback, bool):
+        return None
+    return {
+        "type": proxy_type,
+        "host": host,
+        "port": port,
+        "github_fallback": fallback,
+    }
+
+
+def _proxy_config() -> dict | None:
+    """Read ``network.proxy`` from the worker's service.db (read-only).
+
+    ``TRAC_SERVE_HOME`` is set in the worker environment; CLI and other
+    no-home call sites keep direct-only behavior. Missing home, missing
+    store/table/row, or a malformed value all return None (fail-open).
+    """
+    home = os.environ.get("TRAC_SERVE_HOME")
+    if not home:
+        return None
+    try:
+        return _load_proxy_config(Path(home) / "service.db")
+    except Exception:
+        return None
+
+
+def _load_proxy_config(db_path: Path) -> dict | None:
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (_PROXY_SETTING_KEY,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    try:
+        raw = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    return _normalized_proxy(raw)
+
+
+def _read_exact(sock: socket.socket, size: int) -> bytes:
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise OSError("SOCKS5 proxy closed the connection")
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _socks5_address(host: str) -> bytes:
+    """ATYP-prefixed target address: IPv4/IPv6 literal or domain name."""
+    for family, atyp in ((socket.AF_INET, b"\x01"), (socket.AF_INET6, b"\x04")):
+        try:
+            packed = socket.inet_pton(family, host)
+        except OSError:
+            continue
+        return atyp + packed
+    encoded = host.encode("idna")
+    if not encoded or len(encoded) > 255:
+        raise OSError("SOCKS5 target host is not encodable")
+    return b"\x03" + bytes([len(encoded)]) + encoded
+
+
+def _socks5_connect(
+    proxy: dict, host: str, port: int, timeout: object
+) -> socket.socket:
+    """Minimal no-auth SOCKS5 CONNECT; returns the tunneled socket."""
+    sock = socket.create_connection((proxy["host"], proxy["port"]), timeout=timeout)
+    try:
+        sock.sendall(b"\x05\x01\x00")
+        if _read_exact(sock, 2) != b"\x05\x00":
+            raise OSError("SOCKS5 proxy rejected the no-auth method")
+        sock.sendall(
+            b"\x05\x01\x00"
+            + _socks5_address(host)
+            + int(port).to_bytes(2, "big")
+        )
+        head = _read_exact(sock, 4)
+        if head[0] != 0x05 or head[1] != 0x00:
+            raise OSError(f"SOCKS5 CONNECT failed (reply {head[1]})")
+        atyp = head[3]
+        if atyp == 0x01:
+            _read_exact(sock, 4)
+        elif atyp == 0x03:
+            _read_exact(sock, _read_exact(sock, 1)[0])
+        elif atyp == 0x04:
+            _read_exact(sock, 16)
+        else:
+            raise OSError("SOCKS5 reply carries an unknown address type")
+        _read_exact(sock, 2)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
+class _Socks5HTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection whose TCP leg is a SOCKS5 CONNECT tunnel."""
+
+    def __init__(self, host: str, port: int | None = None, *, proxy: dict, **kwargs):
+        super().__init__(host, port, **kwargs)
+        self._proxy = proxy
+
+    def connect(self) -> None:
+        sock = _socks5_connect(self._proxy, self.host, self.port, self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(
+                sock, server_hostname=self.host
+            )
+        except Exception:
+            sock.close()
+            raise
+
+
+class _Socks5HTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, proxy: dict, context: ssl.SSLContext):
+        super().__init__(context=context)
+        self._proxy = proxy
+
+    def https_open(self, req):
+        return self.do_open(
+            functools.partial(_Socks5HTTPSConnection, proxy=self._proxy),
+            req,
+            context=self._context,
+        )
+
+
+def _proxy_urlopen(req: urllib.request.Request, proxy: dict):
+    """One proxy attempt for an already-failed direct request.
+
+    http/https proxies ride urllib's ProxyHandler; socks5 uses the minimal
+    CONNECT connection above (no PySocks dependency). A response body is
+    decoded exactly like the direct channel; transport failures propagate to
+    the caller, which re-raises the original direct error.
+    """
+    context = _tls_ssl_context()
+    if proxy["type"] == "socks5":
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _Socks5HTTPSHandler(proxy, context)
+        )
+    else:
+        proxy_url = f"{proxy['type']}://{proxy['host']}:{proxy['port']}"
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}),
+            urllib.request.HTTPSHandler(context=context),
+        )
+    with opener.open(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def _urlopen_transport_retry(req: urllib.request.Request):
     """urlopen with bounded retry on transient transport errors.
 
@@ -261,9 +447,24 @@ class GithubBackend:
         except urllib.error.HTTPError as e:
             cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
             raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
-        except urllib.error.URLError as e:
-            raise GithubIssuesError("network", str(e.reason)) from e
-        except (ssl.SSLError, TimeoutError, ConnectionError) as e:
+        except (ssl.SSLError, urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            # Direct channel is exhausted (transient retries included). Only
+            # now, and only with an enabled fallback, retry the same request
+            # through the configured proxy. HTTPError never reaches here.
+            proxy = _proxy_config()
+            if proxy is not None and proxy.get("github_fallback"):
+                try:
+                    return _proxy_urlopen(req, proxy)
+                except urllib.error.HTTPError as proxy_error:
+                    cls = _HTTP_ERROR_CLASSES.get(proxy_error.code, "network")
+                    raise GithubIssuesError(
+                        cls, f"HTTP {proxy_error.code}: {proxy_error.reason}"
+                    ) from proxy_error
+                except Exception as proxy_error:
+                    if hasattr(e, "add_note"):
+                        e.add_note(f"proxy fallback also failed: {proxy_error}")
+            if isinstance(e, urllib.error.URLError):
+                raise GithubIssuesError("network", str(e.reason)) from e
             raise GithubIssuesError("network", str(e)) from e
 
     def _request(self, url: str, payload: dict) -> dict:

@@ -8,8 +8,10 @@
  * - one window per functional area: the tab-bar icons are the only
  *   switcher, re-opening an area reuses its existing window (`windows`
  *   keyed by area), and no open-tab strip exists anywhere;
- * - the settings gear is the documented exception that switches the main
- *   window without touching the sidebar (FR-0318-03);
+ * - the settings gear now switches the sidebar to its own menu tree along
+ *   with the main window (FR-0318-03 updated by the network-settings
+ *   requirement); ``keepSidebar`` remains an opt-in for views that render
+ *   their own sidebar after activation;
  * - window state lives in memory only (module state, never persisted), so
  *   a refresh restores exactly the deep-linked area.
  */
@@ -84,9 +86,8 @@ export async function activateTab(area) {
   const shell = document.querySelector("#workbench") || document;
   const mainArea = shell.querySelector('[data-testid="main-area"]');
   const token = ++activationToken;
-  // One atomic switch: the sidebar and the main area move together; the
-  // settings gear is the documented exception that switches its window
-  // without touching the sidebar (FR-0318-03).
+  // One atomic switch: the sidebar and the main area move together. A view
+  // may opt out and render its own sidebar from the mounted view.
   highlightTabbarItem(shell, area);
   if (!window.context.keepSidebar) {
     renderSidebar({ title: window.title, nodes: window.context.nodes || [] }, shell);

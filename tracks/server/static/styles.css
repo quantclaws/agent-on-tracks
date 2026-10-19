@@ -371,6 +371,109 @@ textarea {
   font-size: var(--fs-body);
 }
 
+/* -- settings: network panel ----------------------------------------------- */
+
+.settings-panel {
+  max-width: 560px;
+  padding: var(--s-5) 0;
+}
+
+.settings-title {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-headline);
+}
+
+.settings-panel .settings-hint {
+  margin: 0 0 var(--s-4);
+  line-height: var(--lh);
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-width: 460px;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.settings-field label {
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.settings-field input,
+.settings-field select {
+  width: 100%;
+}
+
+.settings-field input[type="number"] {
+  max-width: 160px;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--fg);
+  font-size: var(--fs-body);
+  line-height: var(--lh);
+  cursor: pointer;
+}
+
+.settings-checkbox input {
+  margin: 3px 0 0;
+}
+
+.settings-checkbox input:disabled + span {
+  color: var(--fg-subtle);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-top: var(--s-1);
+}
+
+.settings-save {
+  min-width: 88px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.settings-save:hover {
+  background: var(--fg-muted);
+  border-color: var(--fg-muted);
+}
+
+.settings-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.settings-status {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--fs-body);
+}
+
+.settings-status-ok {
+  color: var(--success);
+}
+
+.settings-status-error {
+  color: var(--danger);
+}
+
 .run-row .last-event {
   display: inline-block;
   margin-left: var(--s-2);

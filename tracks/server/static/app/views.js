@@ -136,14 +136,22 @@ function renderTodos(body) {
 }
 
 function renderSettings(body) {
+  // The frozen v0.10 face stays as a 1px zero-layout alias; the settings
+  // window itself is the network panel loaded on demand.
   body.append(
-    element("p", {
-      class: "settings-hint",
+    element("span", {
+      class: "settings-surface-alias",
       "data-testid": "settings-surface",
+      "aria-hidden": "true",
+      style:
+        "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);",
       text: "Settings (no runtime controls this version).",
     })
   );
-  return null;
+  return loadInto(body, async () => {
+    const { renderSettingsView } = await import("./settings.js");
+    return renderSettingsView(body);
+  });
 }
 
 function renderAccount(body) {

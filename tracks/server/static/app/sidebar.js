@@ -62,12 +62,19 @@ export function renderSidebar(model = {}, root = document) {
     "data-testid": "sidebar-tree",
   });
   for (const node of model.nodes || []) {
+    const selected =
+      (node.attrs && node.attrs["data-selected"] === "true") ||
+      node.selected === true;
     list.append(
       element("li", { class: "sidebar-node-wrap" }, [
         element("a", {
-          class: "sidebar-node",
+          class: `sidebar-node${selected ? " sidebar-node-selected" : ""}`,
           href: node.href || "#",
           "data-testid": node.testid || "sidebar-node",
+          ...(node.attrs || {}),
+          ...(selected
+            ? { "data-selected": "true", "aria-current": "true" }
+            : {}),
           text: node.label || "unknown",
         }),
       ])
