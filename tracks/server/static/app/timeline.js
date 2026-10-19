@@ -1678,7 +1678,7 @@ function owningSurfaceEntry() {
     class: "owning-surface-link",
     "data-testid": "detail-owning-surface",
     href: "#",
-    text: "open owning surface",
+    text: "查看所属文档",
   });
   jump.addEventListener("click", async (event) => {
     event.preventDefault();
@@ -1719,7 +1719,7 @@ function owningSurfaceEntry() {
     class: "owning-surface-return",
     "data-testid": "owning-surface-return",
     href: "#",
-    text: "return to this run",
+    text: "返回上一页",
   });
   back.addEventListener("click", (event) => {
     event.preventDefault();
@@ -2213,6 +2213,11 @@ export function returnPointer(detail) {
     "data-testid": "return-pointer",
   });
   box.append(
+    element("p", {
+      class: "return-targets-scope",
+      "data-testid": "return-targets-scope",
+      text: `run 级回退（当前阶段：${currentStage || "-"}）`,
+    }),
     element("p", {
       class: "return-targets",
       "data-testid": "return-targets",
