@@ -38,11 +38,11 @@ _AC_HEAD = re.compile(r"^### (AC-N?FR\d{4}-\d+)[ \t]*(.*)$")
 _HTTP_ERROR_CLASSES = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}
 
 # Transient transport retry (live GitHub reached over flaky TLS/connections:
-# observed ssl.UNEXPECTED_EOF on the direct channel). Bounded: three total
-# attempts with 0.5s/1s backoff; HTTP status errors are never retried and
-# keep their existing classification.
-_NETWORK_ATTEMPTS = 3
-_NETWORK_BACKOFF_S = (0.5, 1.0)
+# observed ssl.UNEXPECTED_EOF on the direct channel). Bounded: five total
+# attempts with 0.25s/0.5s/1s/2s backoff; HTTP status errors are never retried
+# and keep their existing classification.
+_NETWORK_ATTEMPTS = 5
+_NETWORK_BACKOFF_S = (0.25, 0.5, 1.0, 2.0)
 
 
 class GithubIssuesError(RuntimeError):
