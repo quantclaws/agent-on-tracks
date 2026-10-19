@@ -1,6 +1,6 @@
 [project]
 name = "agent-on-tracks"
-version = "0.11.0"
+version = "0.12.0"
 description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.5)"
 requires-python = ">=3.10"
 # v0.9 (ARCH-009): web 后台持续驱动与最小工作台的首个运行时依赖。
@@ -57,6 +57,7 @@ tracks = [
     "templates/pre-commit/*.yaml",
     "templates/pre-commit/*.yml",
     "assets/*.js",
+    "assets/opencode.json",
     "assets/demo_host/architecture.md",
     "assets/demo_host/demo_calc.py",
     "assets/demo_host/flake8.ini",

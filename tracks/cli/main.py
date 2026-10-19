@@ -463,7 +463,8 @@ def cmd_discuss(repo: Path, *args) -> int:
 
 
 USAGE = (
-    "usage: trac init|start <version>"
+    "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
+    "|version [--json]|start <version>"
     "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
@@ -475,6 +476,7 @@ USAGE = (
     "|check <deliverables|trace|reach|release-evidence>"
     "|release preview|release --action release/delay/return|abandon --reason TEXT"
     "|serve --repo <path> [--repo <path> ...] [--host 127.0.0.1] [--port 8000]"
+    " [--background|--stop|--status]"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int

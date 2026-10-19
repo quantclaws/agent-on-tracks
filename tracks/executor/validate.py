@@ -105,6 +105,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "discuss",
         "hotfix",
         "init",
+        "install",
         "recover",
         "release",
         "replay",
@@ -118,6 +119,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "status",
         "triage",
         "validate",
+        "version",
     }
 )
 # A `trac` invocation is only actionable (and only fabricatable) where the

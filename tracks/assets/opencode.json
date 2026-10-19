@@ -1,0 +1,61 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "Archer": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Scribe": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Sage": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Lex": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Prism": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Devon": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    },
+    "Shield": {
+      "permission": {
+        "external_directory": {
+          "*": "deny",
+          "{env:TMPDIR}tracks/*": "allow"
+        }
+      }
+    }
+  }
+}
