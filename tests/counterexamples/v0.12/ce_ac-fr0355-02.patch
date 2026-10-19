@@ -1,10 +1,10 @@
 diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
-index 99fd2a6..089e5a8 100644
+index 69807d1..bd697b1 100644
 --- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -1643,7 +1643,10 @@ function nodeDetail(stage, detail, events) {
+@@ -1640,7 +1640,10 @@ function nodeDetail(stage, detail, events) {
    );
-   if (!ofStage.length) {
+   if (!window.length) {
      box.append(
 -      degradedMessage(`no recorded events for ${stage || "this node"} yet`, "NoEvents")
 +      element("p", {
@@ -13,4 +13,4 @@ index 99fd2a6..089e5a8 100644
 +      })
      );
    } else {
-     box.append(
+     const closed = window.some((event) => event && event.type === "stage.exited");

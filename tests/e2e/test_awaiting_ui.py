@@ -11,6 +11,7 @@ on the timeline with the active pointer moved → the review round's write face
 from __future__ import annotations
 
 import json
+import time
 from contextlib import contextmanager
 
 import pytest
@@ -18,6 +19,7 @@ from playwright.sync_api import expect
 
 from tests._support.intake_fence import wait_run_awaiting
 from tests._support.ui_browser import SERVE_PASSWORD  # noqa: F401  constants
+from tests._support.v012_runs import wait_event
 from tests._support.v09_web import (
     http_post,
     login_session,
@@ -27,6 +29,7 @@ from tests._support.v09_web import (
     wait_for_healthz,
     wait_for_port_line,
 )
+from tracks.discuss.parser import parse_threads
 
 pytestmark = [pytest.mark.e2e, pytest.mark.ui]
 
@@ -55,6 +58,16 @@ def _prepared_repo(trac):
         encoding="utf-8",
     )
     assert trac("init").returncode == 0
+    # the review-round write face lives in the Docs window (§11 row 3): seed
+    # the run's version trio so the document is selectable there.
+    vdir = repo / ".tracks" / "projects" / "v0.9"
+    vdir.mkdir(parents=True, exist_ok=True)
+    for name in ("story.md", "spec.md", "acceptance.md"):
+        (vdir / name).write_text(
+            "---\nenvelope: tracks-envelope:v2\n---\n\n"
+            f"# v0.9 {name}\n\nreview-round body\n",
+            encoding="utf-8",
+        )
     return repo
 
 
@@ -108,24 +121,57 @@ def _open_run(page, base_url: str, run_id: str) -> None:
     expect(page.get_by_test_id("detail-pane")).to_be_visible()
 
 
-# AC-FR0343-01@v0.11 TRACKS-TRACE awaiting panel reason impact primary action
+_COMMENTS = "退回：请补充验收边界。"
+
+
+def _submit_return(page, comments: str = _COMMENTS) -> None:
+    page.get_by_test_id("review-comments").fill(comments)
+    expect(page.get_by_test_id("review-return")).to_be_enabled()
+    page.get_by_test_id("review-return").click()
+
+
+def _assert_review_thread(repo, run_id: str, comments: str = _COMMENTS) -> None:
+    """Assert the v0.12 doc-thread write (AC-FR0359-01).
+
+    The OOB panel face is current; the missing behavior is the contract's
+    "return writes a document root thread before human.review". Until the
+    implementation lands this assertion is a legal Red (not an element miss).
+    """
+    event = wait_event(repo, run_id, "human.review")
+    payload = event["payload"]
+    assert payload.get("comments") == comments, payload
+    assert payload.get("doc") == "story", payload
+    assert payload.get("thread_id"), (
+        "the return decision must carry the written document thread id"
+    )
+    story = (repo / ".tracks" / "projects" / "v0.9" / "story.md").read_text(
+        encoding="utf-8"
+    )
+    threads = parse_threads(story)
+    assert any(comments in thread.root.body for thread in threads), threads
+
+
+def _return_with_thread(page, repo, run_id: str, comments: str = _COMMENTS) -> None:
+    _submit_return(page, comments)
+    _assert_review_thread(repo, run_id, comments)
+
+
+# AC-FR0343-01@v0.11 TRACKS-TRACE awaiting panel primary action normal gate terse
 def test_awaiting_panel_reason_impact_action(trac, tmp_path, page):
-    """AC-FR0343-01: the awaiting node's detail pane presents the gate's
-    action panel — reason, impact and the single primary action entry — as
-    the same surface as the node detail, so the user steps into gate handling
-    without leaving the pane."""
+    """AC-FR0343-01 (v0.12 face): the awaiting node's detail pane presents
+    the gate's action panel with its single primary action entry; the normal
+    triage gate stays terse (no template reason/impact), per FR-0359-02."""
     repo = _prepared_repo(trac)
     with _gate_run(tmp_path, repo, "panel") as (base, run_id):
         _login(page, base)
         _open_run(page, base, run_id)
         panel = page.get_by_test_id("gate-panel")
         expect(panel).to_be_visible()
-        reason = page.get_by_test_id("gate-reason")
-        impact = page.get_by_test_id("gate-impact")
-        expect(reason).to_be_visible()
-        expect(impact).to_be_visible()
-        assert reason.inner_text().strip(), "the waiting reason is readable"
-        assert impact.inner_text().strip(), "the impact face is readable"
+        # FR-0359-02: a normal-flow gate is terse — the template
+        # reason/impact lines are reserved for exception gates (the
+        # exception face is covered by tests/e2e/test_run_workflow_ui.py).
+        assert page.get_by_test_id("gate-reason").count() == 0
+        assert page.get_by_test_id("gate-impact").count() == 0
         actions = page.locator("[data-testid^='gate-action-']")
         assert actions.count() == 1, (
             f"the panel carries the one primary action entry (§1k.2): {actions.count()}"
@@ -133,14 +179,17 @@ def test_awaiting_panel_reason_impact_action(trac, tmp_path, page):
         assert page.get_by_test_id("gate-action-triage").count() == 1, (
             "the triage gate maps to the triage action"
         )
+        page.get_by_test_id("gate-action-triage").click()
+        expect(page.get_by_test_id("review-approve")).to_be_visible(timeout=120_000)
+        _return_with_thread(page, repo, run_id)
 
 
 # AC-FR0334-02@v0.11 TRACKS-TRACE stage review completed inside panel
 def test_stage_review_completed_in_panel(trac, tmp_path, page):
     """AC-FR0334-02: the stage gates complete inside the awaiting panel —
-    triage (go) in the panel, then the review gate presents and its
-    no-comment decision also completes in the panel; no Review page is ever
-    needed and no gate dangles."""
+    triage (go) in the panel, then the review gate presents and its return
+    decision also completes in the panel; no Review page is ever needed and
+    no gate dangles."""
     repo = _prepared_repo(trac)
     with _gate_run(tmp_path, repo, "streview") as (base, run_id):
         _login(page, base)
@@ -148,11 +197,10 @@ def test_stage_review_completed_in_panel(trac, tmp_path, page):
         page.get_by_test_id("gate-action-triage").click()
         # the supervisor advances by itself; the review gate presents
         # (self-drive through DRAFT needs worker ticks — allow 120s)
-        review_action = page.get_by_test_id("gate-action-review")
-        expect(review_action).to_be_visible(timeout=120_000)
-        review_action.click()
+        expect(page.get_by_test_id("review-approve")).to_be_visible(timeout=120_000)
+        _return_with_thread(page, repo, run_id)
         # the review decision completed in the panel: the gate entry leaves
-        expect(page.get_by_test_id("gate-action-review")).to_have_count(
+        expect(page.get_by_test_id("review-return")).to_have_count(
             0, timeout=120_000
         )
 
@@ -194,7 +242,7 @@ def test_self_drive_next_gate_appears(trac, tmp_path, page):
         page.get_by_test_id("gate-action-triage").click()
         # the supervisor advances by itself; the next gate presents in the
         # panel (no manual dispatch)
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
+        expect(page.get_by_test_id("review-approve")).to_be_visible(timeout=120_000)
         # the pointer moved forward: the triage action left the panel...
         expect(page.get_by_test_id("gate-action-triage")).to_have_count(0)
         # ...and the timeline's active marker (data-state-active rides the
@@ -208,6 +256,7 @@ def test_self_drive_next_gate_appears(trac, tmp_path, page):
         assert active.count() == 1, (
             "exactly the gate's stage node carries the active marker"
         )
+        _return_with_thread(page, repo, run_id)
 
 
 # AC-FR0342-02@v0.11 TRACKS-TRACE approve and release decision in panel
@@ -240,10 +289,10 @@ def test_approve_release_in_panel(tmp_path, page):
 
 # AC-FR0344-01@v0.11 TRACKS-TRACE review round doc write through the panel
 def test_review_round_doc_write(trac, tmp_path, page):
-    """AC-FR0344-01 (ui half): in the review round the reviewed document is
-    editable and accepts an inline comment directly from the run face, and
-    both writes reach the command plane (observable through the applied
-    document state)."""
+    """AC-FR0344-01 (ui half): in the review round the reviewed document's
+    Docs window presents the anchor-line comment composer and the published
+    comment lands on the command plane (no inline document editor remains on
+    the run face, §11 row 3)."""
     repo = _prepared_repo(trac)
     with _gate_run(tmp_path, repo, "docwrite") as (base, run_id):
         _login(page, base)
@@ -251,22 +300,45 @@ def test_review_round_doc_write(trac, tmp_path, page):
         # triage go → the supervisor advances to the review round (allow 120s
         # for worker ticks + DRAFT)
         page.get_by_test_id("gate-action-triage").click()
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
-        # the review-round write face: edit the reviewed document inline
-        editor = page.get_by_test_id("review-doc-editor")
-        expect(editor).to_be_visible()
-        editor.fill("评审轮直接修改的内容\n")
-        page.get_by_test_id("review-doc-save").click()
-        comment_box = page.get_by_test_id("review-comment-input")
+        expect(page.get_by_test_id("review-approve")).to_be_visible(timeout=120_000)
+        # the review-round write face lives in the Docs window (OOB removed
+        # the run-face document editor); inline comments ride the anchor-line
+        # clarification composer.
+        page.get_by_test_id("tabbar-item-docs").click()
+        page.locator("[data-testid='view-docs']").wait_for()
+        page.get_by_test_id("doc-tree-item-v0.9-story").click(timeout=60_000)
+        page.get_by_test_id("discussion-anchor-comment").wait_for(timeout=30_000)
+        comment_box = page.get_by_test_id("comment-body")
         expect(comment_box).to_be_visible()
         comment_box.fill("评审轮 inline 意见")
-        page.get_by_test_id("review-comment-submit").click()
-        # the write face confirms the command-plane landing (no fake success)
-        feedback = page.get_by_test_id("review-write-feedback")
-        expect(feedback).to_be_visible()
-        assert "失败" not in feedback.inner_text(), (
-            "the review-round writes must land without a failure face"
+        # the anchor rides the source caret line (§1n.3). The composer bar is
+        # under the async editor surface, so focus the source and invoke the
+        # publish control in the same task: the click handler reads the anchor
+        # before any awaiting, and the write still goes through the app path.
+        source = page.get_by_test_id("doc-editor-content")
+        source.evaluate(
+            """el => {
+                el.focus();
+                const at = el.value.indexOf('#');
+                el.setSelectionRange(at, at);
+                document.querySelector(
+                    '[data-testid="comment-publish"]'
+                ).click();
+            }"""
         )
+        # the write face confirms the command-plane landing (no fake success):
+        # the anchor comment must appear in the document before the decision.
+        story = repo / ".tracks" / "projects" / "v0.9" / "story.md"
+        deadline = time.monotonic() + 30
+        while "评审轮 inline 意见" not in story.read_text(encoding="utf-8"):
+            assert time.monotonic() < deadline, "the inline comment never landed"
+            time.sleep(0.2)
+        expect(page.get_by_test_id("comment-error")).to_be_hidden()
+        # the review decision itself must also write its own root thread
+        # (AC-FR0359-01); the OOB face is current, the missing behavior is
+        # the thread write.
+        _open_run(page, base, run_id)
+        _return_with_thread(page, repo, run_id)
 
 
 # AC-NFR0157-01@v0.11 TRACKS-TRACE ui writes carry csrf and idempotency headers
@@ -287,7 +359,8 @@ def test_ui_writes_carry_headers(trac, tmp_path, page):
 
         page.route("**/api/**", capture)
         page.get_by_test_id("gate-action-triage").click()
-        expect(page.get_by_test_id("gate-action-review")).to_be_visible(timeout=120_000)
+        expect(page.get_by_test_id("review-approve")).to_be_visible(timeout=120_000)
+        _submit_return(page)
         posted = [w for w in writes if w["method"] == "POST"]
         assert posted, "the gate action must issue the panel's write"
         for write in posted:
@@ -298,3 +371,4 @@ def test_ui_writes_carry_headers(trac, tmp_path, page):
             assert headers.get("idempotency-key"), (
                 f"the panel write must carry Idempotency-Key: {sorted(headers)}"
             )
+        _assert_review_thread(repo, run_id)

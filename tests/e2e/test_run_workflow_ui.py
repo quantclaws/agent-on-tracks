@@ -32,6 +32,7 @@ from tests._support.v012_runs import (
     seed_no_stage_events,
     seed_rounds,
     seed_stage_path_run,
+    seed_workflow_gate_run,
     seed_workflow_run,
     wait_event,
     write_docs,
@@ -180,6 +181,17 @@ def test_stage_workflow_aggregated_folds(ui_serve, page):
     svg_text = diagram.text_content() or ""
     assert "重派" in svg_text, f"repeated dispatches must fold: {svg_text!r}"
     assert "RED" in svg_text and "GREEN" in svg_text
+    # the aggregate terminal is the current gate: a dispatch-bearing window
+    # whose breaker tripped must still render the human gate, not a bare
+    # stage node (AC-FR0356-01).
+    _seed_run(ui_serve, "run-workflow-gate", seed_workflow_gate_run)
+    page.goto(
+        ui_serve.base_url + "/runs/run-workflow-gate", wait_until="domcontentloaded"
+    )
+    page.get_by_test_id("main-area").wait_for()
+    expect(page.get_by_test_id("current-node-card")).to_be_visible(timeout=15_000)
+    gate_svg = page.get_by_test_id("stage-workflow-diagram").text_content() or ""
+    assert "人工门" in gate_svg and "等待裁决" in gate_svg, gate_svg
 
 
 # AC-FR0357-01@v0.12 TRACKS-TRACE per-round lazy accordion four zones

@@ -1,0 +1,10 @@
+diff --git a/tracks/__init__.py b/tracks/__init__.py
+index 789dd7b..01b8927 100644
+--- a/tracks/__init__.py
++++ b/tracks/__init__.py
+@@ -4,4 +4,4 @@ Public surface is intentionally small; the event log (SQLite `events`) is the
+ sole source of truth (D-02). Everything else is a derived projection.
+ """
+ 
+-__version__ = "0.12.0"
++__version__ = "0.11.0"

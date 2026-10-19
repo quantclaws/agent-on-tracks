@@ -168,6 +168,18 @@ def seed_workflow_run(repo: Path, run_id: str, *, version: str = "v1.0") -> Stor
     return store
 
 
+def seed_workflow_gate_run(repo: Path, run_id: str, *, version: str = "v1.0") -> Store:
+    """A dispatch-bearing workflow window that ends at a human gate."""
+    store = seed_workflow_run(repo, run_id, version=version)
+    store.append(
+        run_id,
+        version,
+        "run.breaker_tripped",
+        {"condition": "budget exhausted", "report": "evidence tail"},
+    )
+    return store
+
+
 def seed_heartbeat_wait(repo: Path, run_id: str, *, version: str = "v1.0") -> Store:
     """An awaiting gate whose last events are heartbeats (FR-0358 heartbeat rule)."""
     store = _store(repo)
