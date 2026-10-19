@@ -129,11 +129,11 @@ The host project test execution contract is declared in `.tracks/projects/projec
 
 ### 2.5. Installation & Isolation
 
-- **Installation method**：E2E 从候选 wheel（`pip install --no-deps <wheel>`）安装到隔离 prefix；prefix 以 `venv --system-site-packages` 创建或预装 starlette/uvicorn/certifi，保证离线；项目安装用该 prefix 的 `trac install`，与最终用户一致；不使用 editable/源码树 import。
-- **Install target**：每次测试一个 fresh venv/prefix（`tmp_path`），不污染系统环境或源码树。
+- **Installation method**：E2E 从候选 wheel 以 `pip install --no-deps --target <prefix>` 安装到源码树外的隔离 target prefix（不创建 venv）；全局 `trac` 以 `PYTHONPATH=<prefix> <prefix>/bin/trac` 调用当前测试解释器，starlette/uvicorn/certifi 由该测试解释器提供（与生产的共享解释器合同一致，不访问包索引）；项目安装用该 prefix 的 `trac install`，与最终用户一致；不使用 editable/源码树 import。
+- **Install target**：每次测试一个 fresh target prefix（`tmp_path`），不污染系统环境或源码树。
 - **Working directory**：在源码树外的临时目录（`$TMPDIR/<run-id>/workdir`）运行全局 `trac`；项目目标也是临时 Git 仓库/空目录。
 - **Initialization**：空目录由 `trac install` 先 `git init -b main` 并 scaffold；已有项目预置 Git 历史与用户文件；服务用 `trac serve --background` 启动并轮询 `/healthz`。
-- **Verification**：安装后先断言 `trac --help`/`trac version` 可用，再断言功能；后台服务先 healthz 再断言版本/端口。
+- **Verification**：安装后先断言 `PYTHONPATH=<prefix> <prefix>/bin/trac --help` / `version` 可用，再断言功能；后台服务先 healthz 再断言版本/端口。
 
 ---
 
@@ -199,7 +199,7 @@ Windows 前台分支由平台注入的 integration 分支覆盖（`sys.platform`
 | # | Component | Responsibility (external) | Boundary (what it does not implement) |
 |:--|:--|:--|:--|
 | 1 | Wheel builder fixture | 从当前源码构建候选 wheel；在临时副本改版本后构建第二版本 wheel | 不修改仓库源码；不替代安装器校验 |
-| 2 | Isolated prefix fixture | 创建 fresh venv、pip install wheel、注入 PATH | 不 import 源码树；不实现 tracks 业务 |
+| 2 | Isolated prefix fixture | 创建 fresh target prefix、`pip install --no-deps --target` wheel、注入 `PYTHONPATH` | 不 import 源码树；不实现 tracks 业务；不建 venv |
 | 3 | Project fixture | 创建临时 Git 仓库/空目录、用户文件、receipt 目标 | 不伪造 receipt 内容（除损坏注入用例） |
 | 4 | Serve/daemon fixture | 启动/停止前台或后台 serve、读 healthz/端口/pidfile | 不替代 supervisor/kernel/HTTP 语义 |
 | 5 | Event/round seed | 用 Store/blob/log 写入夹具事件与轮次 | 不合成第二数据源；不伪造 UI 渲染 |
@@ -346,8 +346,5 @@ Test assertions **may only** land on the external observable outlets defined in 
 | 5 | `tests/integration/test_distribution.py` | wheel 资源断言加入 `tracks/assets/opencode.json`；增加非项目 cwd 的 `trac --help` 断言 | FR-0348/FR-0349 官方包内容与全局可用 |
 | 6 | `tests/e2e/test_run_timeline_ui.py` | 保持既有阶段轨道/固定详情栏断言；如新增 `stage-path`/`stage-workflow-*` 节点，仅追加断言，不改旧 testid | OOB 面追加、既有面不回退 |
 | 7 | `tests/integration/test_timeline_full.py`、`tests/e2e/test_releases_ui.py`、`tests/e2e/test_workbench_ui.py` | 零行为变更，回归守卫保持 | API/UI 追加式，v0.12 不改这些面 |
-| 8 | `tests/unit/test_t014_serve_composition_red.py::test_serve_registered_in_commands_and_usage` | 不变：`_COMMANDS["serve"]` 仍绑定 `serve_cmd.cmd_serve`；生命周期/委派在该函数外层内部分流 | 保留 v0.9 直接调用面 |
-| 9 | `tests/unit/test_validate.py::test_trac_subcommands_pin_parity_with_cli_usage` | 不变：USAGE 与 `TRAC_SUBCOMMANDS` 已在 scaffold 同步登记 install/version | 防 fabricated tooling，保持 parity |
-| 10 | Devon 侧单测（Devon-owned，RGR 内做合同适配） | install/project_runtime/install_cmd/serve/review 的新 unit 由 Devon 自辖 | 既有 RGR 纪律 |
 
-Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
+Devon 的实现层测试更新由 RGR/coverage 自辖；本表只列 Shield 可见的既有资产更新，不处方实现层测试文件/函数。

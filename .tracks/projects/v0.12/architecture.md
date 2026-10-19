@@ -388,7 +388,7 @@ required_check = "lint,coverage,test,deliverables,trace,reach,ui-e2e"
 
 - 新 integration 资产落 `tests/integration/`：`test_install_package.py`（wheel 内容/坏 wheel 拒绝/全局 --help/版本 bump/token 登记）、`test_install_targets.py`（空目录/已有项目）、`test_install_overwrite.py`（托管覆盖/用户文件逐字节/幂等）、`test_install_versions.py`（显式版本/全局升级/无自动升级/失败重试）、`test_server_lifecycle.py`（项目内后台/停止/状态/项目外拒绝/Windows 分支）、`test_run_rounds.py`（列表/详情/思考缺失）、`test_review_decision_contract.py`（退回线程+事件）、`test_static_cache.py`（no-cache/304/API 不变）。
 - 新 e2e 资产落 `tests/e2e/`：`test_install_journey.py`（隔离 prefix 安装→空目录/已有项目 install→version→后台 serve→全局升级旧项目仍旧；非 `ui` marker，跑在 `test` job）、`test_run_workflow_ui.py`（`@pytest.mark.ui`：阶段路径/工作流聚合/按轮手风琴/卡片与本地时间/评审两决策/失败反馈）。
-- 夹具：wheel 构建器（当前源码 wheel；版本覆写 wheel 在临时副本改 `pyproject`/`__init__` 后构建）；隔离 prefix（`venv --system-site-packages` + `pip install --no-deps wheel`，PATH 注入）；项目夹具（临时 git 仓/空目录 + receipt）；服务夹具（start/stop/healthz/pidfile）；事件/轮次种子（Store + blobs + `.opencode/logs`）；浏览器夹具继承。
+- 夹具：wheel 构建器（当前源码 wheel；版本覆写 wheel 在临时副本改 `pyproject`/`__init__` 后构建）；隔离 target prefix（`pip install --no-deps --target` + `PYTHONPATH`，使用当前测试解释器；不建 venv、不访问网络）；项目夹具（临时 git 仓/空目录 + receipt）；服务夹具（start/stop/healthz/pidfile）；事件/轮次种子（Store + blobs + `.opencode/logs`）；浏览器夹具继承。
 - 故障注入仅经公开面：坏 wheel、缺资源 wheel、非 git 非空目录、端口占用、陈旧 pidfile、静态文件内容替换、review 线程写失败（版本目录只读）、API route 失败（Playwright route）、日志轮转（无日志种子）。
 - 测试数据：`tests/assets/v0.12/`（Shield 写域）固化多阶段事件种子、round blobs/log 种子、坏 wheel 构建配方；canary 密钥纪律继承。
 - deterministic suite 默认离线：安装只用本地 wheel/运行中 distribution；serve 只 loopback；UI 只本地 Chromium。电池墙钟有界继承。
