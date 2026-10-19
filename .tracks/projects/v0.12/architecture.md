@@ -240,7 +240,7 @@ v0.12 逐字继承现行测试执行合同（不修改文件）：
 
 ### 4.2 Canonical quality guard registry（v0.12）
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更一处：`pyproject.toml`（version 0.12.0 + package-data）——六条 pyproject-backed `config_digest` 重锚为 `sha256:41faecd6…`；`.flake8` digest（`f899995c…`）与 `.tracks/projects/project.toml` digest（`e1735466…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data）——六条 pyproject-backed `config_digest` 重锚为 `sha256:41faecd6…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:e534d31d…`（原 `e1735466…`）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
 
 ```toml
 [quality_registry]
@@ -367,7 +367,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:e17354666c372290369aaf8517b31b6891953acd8550cf3e3845d5ade427d12c"
+config_digest = "sha256:e534d31d9f4ab09153e1151b73b5a87ebab5a8b675ad5eaf714391b13082d50c"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach,ui-e2e; milestone=release-evidence"
 timeout_seconds = 3600
