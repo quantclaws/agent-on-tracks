@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 acc_id: ACC-012
 created: 2026-10-18
 status: draft
-sha:
+sha: a3fcf73f8d298258e8925ea4773b3b65d2cf6f3ce78b4550196e4f8e314bebc8
 ---
 
 # tracks 安装包与多版本安装：全局 trac 与 trac install <path> — 验收标准
