@@ -104,6 +104,17 @@ def seed_exception_gate(
     store.append(
         run_id,
         version,
+        "verdict.failed",
+        {
+            "check": "island",
+            "reason": "T-001: IF-ADAPTER-003 missing from closure",
+            "evidence": "failure bundle: /tmp/evidence.json",
+            "attempt": 1,
+        },
+    )
+    store.append(
+        run_id,
+        version,
         "run.breaker_tripped",
         {"condition": "budget exhausted", "report": "evidence tail"},
     )

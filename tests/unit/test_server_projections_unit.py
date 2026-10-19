@@ -593,6 +593,17 @@ def test_slim_payload_keeps_rollback_source_and_repair_flag():
     assert slim["operator_repair"] == "stale red.validated after rollback"
     assert slim["to_stage"] == "M-DESIGN"
 
+    verdict = projections._slim_payload(
+        "verdict.failed",
+        {
+            "check": "island",
+            "reason": "T-001: IF-A missing from closure",
+            "evidence": "failure bundle: /tmp/evidence.json",
+        },
+    )
+    assert verdict["check"] == "island"
+    assert verdict["evidence"] == "failure bundle: /tmp/evidence.json"
+
     recovered = projections._slim_payload(
         "stage.recovered",
         {"from_stage": "M-DESIGN", "stage": "M-IMPL", "reason": "fresh re-entry"},

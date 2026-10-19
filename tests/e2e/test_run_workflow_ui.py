@@ -365,8 +365,20 @@ def test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure(
     page.get_by_test_id("main-area").wait_for()
     expect(page.get_by_test_id("gate-reason")).to_be_visible()
     expect(page.get_by_test_id("gate-impact")).to_be_visible()
-    assert page.get_by_test_id("gate-reason").inner_text().strip()
+    reason_text = page.get_by_test_id("gate-reason").inner_text()
+    assert reason_text.strip()
+    assert "当前步骤" in reason_text, (
+        "the escalation summary must name 重试当前步骤 (human.retry re-dispatches"
+        " the substep, not a whole-stage restart)"
+    )
     assert page.get_by_test_id("gate-impact").inner_text().strip()
+    # the raw evidence is folded, never the headline; opening 技术详情 shows it.
+    page.get_by_test_id("gate-details").locator("summary").click()
+    expect(page.get_by_test_id("gate-failure-detail")).to_be_visible()
+    failure_detail = page.get_by_test_id("gate-failure-detail").inner_text()
+    assert "failure bundle: /tmp/evidence.json" in failure_detail, (
+        "the slim timeline must carry verdict.failed.evidence into the fold"
+    )
 
 
 # AC-NFR0160-01@v0.12 TRACKS-TRACE rounds lazy first paint many rounds

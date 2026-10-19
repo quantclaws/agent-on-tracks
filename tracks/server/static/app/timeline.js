@@ -985,7 +985,7 @@ function failureSummary(failure) {
 function gateSummary(gate, events) {
   const failure = lastFailure(events);
   if (gate && gate.type === "escalation") {
-    return failureSummary(failure) || "本阶段失败，需要你决定：重试当前阶段，或回退到更早阶段重做。";
+    return failureSummary(failure) || "本阶段失败，需要你决定：重试当前步骤，或回退到更早阶段重做。";
   }
   if (gate && gate.type === "rollback") return "本阶段需要确认回退到哪个阶段。";
   if (gate && gate.type === "approval") return "请批准本轮基线，或退回修改。";

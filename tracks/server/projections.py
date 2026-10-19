@@ -1197,6 +1197,9 @@ _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
     # these made the slim face lose the edge whenever ``current`` did not
     # happen to be the source stage (recovery/truncation paths).
     "from_stage", "from", "operator_repair",
+    # verdict.failed evidence rides the same bounded verdict blob; the UI
+    # folds it into 技术详情 (never the default headline).
+    "evidence",
     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
     "area", "next"})
 
