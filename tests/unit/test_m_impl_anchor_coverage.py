@@ -276,6 +276,33 @@ def test_context_grading_archer_infra_and_devon_slices(tmp_path, monkeypatch):
     assert host._devon_test_tasks_slice({"test_refs": ["x"], "ac_refs": []}) == []
 
 
+def test_devon_test_tasks_slice_emits_task_context_once(tmp_path):
+    """M5: task-level anchors/if_ids are not duplicated per AC.
+
+    A 10-AC task used to serialize the same 9 anchors ten times (~9.4KB),
+    pushing the writer card over the hard 16KB budget and looping the
+    planner through no-charge plan_defect replans. The first AC entry is
+    the single carrier; later entries carry only their ac_id.
+    """
+    host = _Host(tmp_path)
+    task = {
+        "ac_refs": ["AC-FR0001-01", "AC-FR0001-02", "AC-FR0001-03"],
+        "acceptance_refs": ["tests/integration/test_a.py::t1", "tests/integration/test_a.py::t2"],
+        "if_ids": ["IF-IMPL-001", "IF-IMPL-002"],
+    }
+    out = host._devon_test_tasks_slice(task)
+    assert out == [
+        {
+            "ac_id": "AC-FR0001-01",
+            "anchors": ["tests/integration/test_a.py::t1", "tests/integration/test_a.py::t2"],
+            "if_ids": ["IF-IMPL-001", "IF-IMPL-002"],
+        },
+        {"ac_id": "AC-FR0001-02", "anchors": [], "if_ids": []},
+        {"ac_id": "AC-FR0001-03", "anchors": [], "if_ids": []},
+    ]
+    assert len(json.dumps(out, ensure_ascii=False)) < 400
+
+
 def test_context_grading_unknown_role_and_shield_slice(tmp_path, monkeypatch):
     host = _Host(tmp_path)
     assignment = {"anchor_surface": "x", "test_tasks": "x"}

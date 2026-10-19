@@ -390,11 +390,25 @@ class MImplAnchorMixin:
         if not anchors:
             anchors = [a for a in (task.get("test_refs") or ()) if isinstance(a, str)]
         if_ids = [i for i in (task.get("if_ids") or ()) if isinstance(i, str)]
-        return [
-            {"ac_id": ac, "anchors": list(anchors), "if_ids": list(if_ids)}
-            for ac in (task.get("ac_refs") or ())
-            if isinstance(ac, str) and ac
-        ]
+        # M5 card budget: the anchors/if_ids above are TASK-level. Repeating
+        # them on every AC entry is zero-reader duplication (a 10-AC task
+        # serialized 9 anchors ten times, blowing the 16KB dispatch card and
+        # sending the planner into a no-charge replan loop). Emit the
+        # task-level context once, on the first AC carrier; the remaining
+        # entries carry only their ac_id. The task object in the same card
+        # still carries the full acceptance_refs/if_ids.
+        out: list[dict] = []
+        for index, ac in enumerate(task.get("ac_refs") or ()):
+            if not isinstance(ac, str) or not ac:
+                continue
+            out.append(
+                {
+                    "ac_id": ac,
+                    "anchors": list(anchors) if index == 0 else [],
+                    "if_ids": list(if_ids) if index == 0 else [],
+                }
+            )
+        return out
 
     def _shield_test_tasks_slice(
         self,
