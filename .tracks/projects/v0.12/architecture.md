@@ -27,6 +27,8 @@ sha:
 - 发布闭环、version gate bindings、`release-evidence` milestone、reference host、三旅程合同、security scan、build/smoke 合同全部继承。v0.12 设计期把 `pyproject.toml` 与 `tracks/__init__.py` bump 到 `0.12.0`（version gate 绑定对象，§2/§4.2）。
 - 质量守卫八类与 canonical registry 机制不变；CI required checks 七名（lint/coverage/test/deliverables/trace/reach/ui-e2e）不变。`pyproject.toml` 的 bytes 变化（版本 + package-data）使六条 pyproject-backed `config_digest` 重锚（§4.2）；`.tracks/projects/project.toml` 与 `.flake8` 未变化，digest 继承。
 
+> **Prism:** 【阻塞 finding PRISM-D13-01 · DESIGN-1/8 合同真实性】本节行 28 称 `.tracks/projects/project.toml` 与 `.flake8` 未变化、digest 继承；但同文档 §4.2（行 243）明确该文件因 OOB 修复 e2e `collect` 的 marker 过滤而 bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 由 `e1735466…` 重锚为 `e534d31d…`，且该 TOML block 的 digest 与工作区文件实测 sha256 一致（`e534d31d9f4ab09153e1151b73b5a87ebab5a8b675ad5eaf714391b13082d50c`）。行 23「v0.12 不修改该文件」与 test-plan §2.3.1 行 103「v0.12 零变更，逐字继承」同样沿用了变更前的前提。请统一三处口径：在 §0.1 与 test-plan §2.3.1 写明 project.toml 在 v0.12 期间因 OOB 修复产生 bytes 变更并重锚 digest（引用 §4.2），`.flake8` 仍为未变化继承；若意图是「本设计不改文件」，请明确限定为设计变更集并同时说明现行字节已含 OOB 修复。其余核验（三向闭包/六元组/命令实跑/scaffold/registry digest/e2e collect 与 ui 选择）通过。
+
 ### 0.2 v0.12 变更
 
 - 官方包内容：`pyproject.toml` package-data 追加 `assets/opencode.json`；wheel 必须包含 `tracks/agents/*.md`、`tracks/skills/*/SKILL.md`、`tracks/templates/**` 与 `tracks/assets/opencode.json`（FR-0348）。
