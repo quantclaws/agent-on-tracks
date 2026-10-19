@@ -1007,7 +1007,7 @@ function stagePathPanel(detail, events, selectedStage) {
   if (source) {
     void renderStageWorkflowDiagram(host, source);
   } else {
-    host.textContent = "该阶段尚未开始（暂无实际执行记录）";
+    host.textContent = "本阶段暂无派发记录";
   }
   wrap.append(stageRoundsPanel(detail, stage));
   return wrap;
@@ -1629,10 +1629,7 @@ function selectNode(node, stage, detail, events) {
  * owning party, evidence, errors, transition reason, back-edge legality.
  * Missing data degrades readably — never fabricated. */
 function nodeDetail(stage, detail, events) {
-  const ofStage = events.filter(
-    (event) =>
-      event.stage === stage || (event.payload && event.payload.stage) === stage
-  );
+  const window = stageWorkflowWindow(events, stage);
   const box = element("div", { class: "node-detail", "data-testid": "node-detail" });
   box.append(
     element("h3", { class: "detail-title", text: stage || "node" }),
@@ -1641,18 +1638,20 @@ function nodeDetail(stage, detail, events) {
       text: `state: ${nodeStateOf(stage, detail, foldStageFacts(events))}`,
     })
   );
-  if (!ofStage.length) {
+  if (!window.length) {
     box.append(
       degradedMessage(`no recorded events for ${stage || "this node"} yet`, "NoEvents")
     );
   } else {
+    const closed = window.some((event) => event && event.type === "stage.exited");
+    const endText = closed ? fmtTs(window[window.length - 1].ts) : "进行中";
     box.append(
       element("p", {
         class: "detail-line",
-        text: `start/end: ${fmtTs(ofStage[0].ts)} → ${fmtTs(ofStage[ofStage.length - 1].ts)}`,
+        text: `start/end: ${fmtTs(window[0].ts)} → ${endText}`,
       })
     );
-    const failure = ofStage.find((event) => event.type === "verdict.failed");
+    const failure = window.find((event) => event.type === "verdict.failed");
     if (failure) {
       box.append(
         element("p", {

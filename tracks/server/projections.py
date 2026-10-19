@@ -1217,6 +1217,15 @@ _SLIM_MAX_ROWS = 20000
 _SLIM_COMMAND_PARAM_KEYS = frozenset({"role", "substate", "attempt", "review_round",
     "decision", "doc", "objective", "stage", "base", "branch_name"})
 
+# The ``$ref`` row types whose blobs ARE stage-workflow facts. Run bd0c68eb
+# carries 22 such refs — 8 command.issued (dispatch identity: kind +
+# params.substate, 134KB), 10 outcome.received (conclusion status, 256KB),
+# 2 red.validated, 2 verdict.failed (~438KB total); dropping them left the
+# stage graph empty and the summary at 0 dispatches. Every OTHER ref type
+# (the reference run's 737 rows) carries no stage facts, so its blob stays
+# unread — slim mode remains bounded to this small workflow set.
+_SLIM_REF_TYPES = frozenset({"command.issued", "outcome.received", "red.validated"})
+
 
 def _slim_payload(type_: str, parsed: dict) -> dict:
     """Whitelisted slim payload for one event (slim branch only).
@@ -1227,6 +1236,15 @@ def _slim_payload(type_: str, parsed: dict) -> dict:
     with the same structure) fall through to the scalar whitelist.
     """
     slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+    if type_ == "outcome.received":
+        # Outcome blobs name their conclusion via status/failure_class (this
+        # run's 10 refs carry no ``verdict`` key); keep the small scalars so
+        # the slim row is not empty and the role survives.
+        for key in ("role", "status", "failure_class"):
+            if key in parsed:
+                slim[key] = parsed[key]
+    elif type_ == "red.validated" and "status" in parsed:
+        slim["status"] = parsed["status"]
     if type_ == "command.issued":
         command = parsed.get("command")
         if isinstance(command, dict):
@@ -1244,11 +1262,14 @@ def _slim_payload(type_: str, parsed: dict) -> dict:
 
 
 def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
-    """Track-side timeline rows without touching blob files.
+    """Track-side timeline rows; blobs are read only for workflow refs.
 
-    Reads raw payloads straight from the events table: ``{"$ref": ...}``
-    rows degrade to ``payload={}`` + ``payload_ref`` (their blobs carry no
-    stage facts); all other rows keep only the _SLIM_KEYS whitelist.
+    Reads raw payloads straight from the events table. A ``{"$ref": ...}``
+    row whose type is a stage-workflow fact (``_SLIM_REF_TYPES`` or
+    ``verdict.*``) reads that one blob and emits the same slim row an inline
+    payload would; a missing/unreadable/non-dict blob degrades to the old
+    ``payload={}`` + ``payload_ref``. Every other ref type keeps ``payload={}``
+    and its blob unread, bounding the read face to the small workflow set.
     """
     conn = _tracks_db(repo_path)
     try:
@@ -1264,12 +1285,15 @@ def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
         parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
         if set(parsed) == {"$ref"}:
+            workflow = type_ in _SLIM_REF_TYPES or type_.startswith("verdict.")
+            blob = _load_payload(raw, repo_path) if workflow else {}
+            slim = _slim_payload(type_, blob) if blob else {}
             slim_rows.append(
                 {
                     "source": "tracks", "seq": seq, "ts": ts, "type": type_,
                     "run_id": run, "command_id": command_id, "task_id": task_id,
-                    "ac_refs": [], "summary": type_, "payload": {},
-                    "stage": None, "attempt": None,
+                    "ac_refs": _event_ac_refs(blob), "summary": type_, "payload": slim,
+                    "stage": slim.get("stage"), "attempt": slim.get("attempt"),
                     "payload_ref": str(parsed["$ref"]),
                 })
             continue
