@@ -233,6 +233,8 @@ sha:
 | 7 | 静态响应头 | `Cache-Control: no-cache`；ETag 未变更 304；API 无该头 |
 | 8 | `service.started` | payload version 等于项目版本 |
 
+> **Prism:** 【阻塞 finding PRISM-D12-01 · DESIGN-5 interfaces↔test-plan 闭包】interfaces.md §4b#4（并 §2c#4）把 GET /api/runs/{run_id}/activity 登记为 v0.12 外部出口并声明断言（schema、活动 items 时间序）；architecture.md 行 25 把该系列面列入「补齐可观察合同与测试」，test-plan §1.1/§1.2 也把 activity 列为 v0.12 对应出口——但 test-plan §8 的 24 条 AC 锚点无任何 activity 测试，全仓 tests/ 对该端点零引用（run 版端点的 UI 消费方已在 ffaeed4 移除，现存 activity 引用只是 wizard.js 的 intake 版端点），且无 AC/IF 文本承载该出口。结论：DESIGN-5 的「每个外部出口都有测试覆盖」不成立。请二选一收口：(a) 为该出口补测试（FR-0140 trace 门禁要求每个测试引用至少一个 AC；若无 AC 可承载，需先显式收窄注册）；(b) 在 interfaces/test-plan 显式标注该出口不属 v0.12 断言基线（未消费遗留读面），使其不再构成合同承诺。本轮其余核验（24 条 required AC 闭包与六元组、Scaffold 宣言与实物、quality registry digest、project.toml 合同、arrival-green 象限、OOB testid/schema 登记）均通过，无其它阻塞。
+
 ### 4c. 浏览器可观察出口（UI e2e，IF-WEBUI-001 继承）
 
 | # | outlet | assertions |
