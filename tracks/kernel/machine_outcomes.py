@@ -105,12 +105,21 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
         # pipeline never consumes it.
         return
     status = p.get("status")
-    if s.substate == "ISSUES":
-        if status != "done":
-            _consume_attempt(s)
+    if s.substate == "ISSUES" and status != "done":
+        _consume_attempt(s)
         return
     if status != "done":
         _handle_failed_outcome(s, p)
+        return
+    # OOB 2026-10-19 (run bd0c68eb): a successful dispatch outcome proves the
+    # gateway recovered -- reset the consecutive-failure streaks so the next
+    # dispatch is not throttled by stale backoff (issue() sleeps
+    # _infra_backoff_delay(streak) before every dispatch_agent). Only failure/
+    # verdict/human-retry reset them otherwise; the recovered DRAFT success
+    # left streak=5 and the following PRISM_REVIEW dispatch slept 480s.
+    s.infra_failure_streak = 0
+    s.format_failure_streak = 0
+    if s.substate == "ISSUES":
         return
     # v0.5: when the outcome carries a result_checkpoint payload, atomically
     # project active_result in the same event - no crash window between
