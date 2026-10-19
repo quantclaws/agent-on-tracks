@@ -691,15 +691,16 @@ export function renderTimelineView(body, context = {}) {
       detailStreams.set(runId, stream);
     }
 
-    // Upper face: the timeline panel (heading stays above it) — the
-    // current-node card, the horizontal stage track, the ac-chain and the
-    // last-event line. Lower face: the detail panel wrapping the fixed
-    // detail pane (gate panel / node detail / return pointer / review
-    // write face ride inside untouched).
+    // Upper face: the timeline panel (heading stays above it) — the page
+    // return nav, the current-node card (the single run-level operation
+    // zone), the horizontal stage track, the ac-chain and the last-event
+    // line. Lower face: the detail panel wrapping the fixed, read-only
+    // detail pane (node detail + the selected stage's workflow).
     const upper = element("section", {
       class: "timeline-panel",
       "data-testid": "timeline-panel",
     });
+    upper.append(pageReturnEntry());
     upper.append(currentCard(detail, events, state));
     if (detail && detail.branch) {
       // the hotfix run's branch identity (IF-HOTFIX-006): the entry
@@ -748,28 +749,60 @@ function lastEventText(event) {
   return `最近事件：${type}${summary}${stage}`;
 }
 
-/** The rolling summary card above the track (unchanged v0.10 face). */
+/** The rolling summary card above the track AND the single run-level
+ * operation zone (gate actions, run-level return, owning-surface jump).
+ * The card always describes the CURRENT stage (detail.stage); selecting a
+ * historical node only changes the read-only detail pane below. */
 function currentCard(detail, events, state) {
   const firstTs = events.length ? events[0].ts : null;
   const ownerRaw = ownerRawOf(detail);
   const ownerDisplay = ownerOf(detail);
   const attempt = attemptCount(events);
-  const awaiting = !!(detail && detail.awaiting_gate);
+  const gate = detail && detail.awaiting_gate;
+  const awaiting = !!gate;
   const actionFace = actionOf(detail, state, events);
-  return element("section", {
+  const stage = (detail && detail.stage) || "-";
+  const substate = (detail && detail.control_state) || "-";
+  const card = element("section", {
     class: "current-card",
     "data-testid": "current-node-card",
-  }, [
-    span("card-owner", ownerDisplay, { title: ownerRaw }),
-    span("card-attempt", `尝试 ${attempt} 次`, { title: "本 run 已发生的任务尝试次数" }),
-    span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
-    awaiting
-      ? span("card-action", actionFace.text, {
-          title: "正在等待人工处理该门",
-          class: "card-action-awaiting",
-        })
-      : span("card-action", actionFace.text),
-  ]);
+    ...(detail && detail.run_id ? { "data-run-id": detail.run_id } : {}),
+  });
+  card.append(
+    element("p", {
+      class: "card-status",
+      "data-testid": "card-status",
+      text: `当前阶段：${stage} · ${substate}${awaiting ? " · 等待人工裁决" : ""}`,
+    })
+  );
+  card.append(
+    element("div", { class: "card-metrics" }, [
+      span("card-owner", ownerDisplay, { title: ownerRaw }),
+      span("card-attempt", `尝试 ${attempt} 次`, { title: "本 run 已发生的任务尝试次数" }),
+      span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
+      awaiting
+        ? span("card-action", actionFace.text, {
+            title: "正在等待人工处理该门",
+            class: "card-action-awaiting",
+          })
+        : span("card-action", actionFace.text),
+    ])
+  );
+  const gateAction = gate
+    ? (GATE_ACTIONS.includes(gate.primary_action) ? gate.primary_action : "guidance")
+    : null;
+  if (gate) card.append(gateActionPanel(detail, gate));
+  const options = detail && detail.return_options;
+  if (options && options.allowed) {
+    const pointer = returnPointer(detail);
+    if (pointer) card.append(pointer);
+  }
+  // guidance gates already mount the owning-surface entry inside their
+  // action face; every other face gets exactly one explicit entry here.
+  if (gateAction !== "guidance") {
+    card.append(element("div", { class: "card-links" }, [owningSurfaceEntry()]));
+  }
+  return card;
 }
 
 function ownerRawOf(detail) {
@@ -852,47 +885,83 @@ function actionOf(detail, state, events = []) {
 }
 
 /**
- * Fold the event order into the per-stage drawing facts: entered stages,
- * invalidated (rolled-back-from, not re-entered) stages, and the back
- * edges a rollback produced (来源→目标, from the stage the run left to
- * the target it returned to).
+ * Fold the event order into per-stage VISITS (a stage can be entered more
+ * than once through a rollback) plus the real back edges a rollback
+ * produced (来源→目标, from the stage the run left to the target it
+ * returned to).
+ *
+ * A rollback of a stage onto itself, or an operator repair (payload
+ * ``operator_repair``), is a repair note — never a void visit and never a
+ * back edge.
  */
 function foldStageFacts(events) {
-  const entered = new Set();
-  const invalidated = new Set();
+  const visits = new Map();
+  const repairs = [];
   const backEdges = [];
   let current = null;
+  const openVisit = (stage) => {
+    if (!visits.has(stage)) visits.set(stage, []);
+    visits.get(stage).push({ state: "open" });
+  };
+  const closeVisit = (stage, state) => {
+    const list = visits.get(stage);
+    if (!list || !list.length) return;
+    const latest = list[list.length - 1];
+    // exit closes an OPEN visit only; a late exit never revives a visit
+    // that a rollback already voided. A rollback marks the latest visit.
+    if (state === "done" && latest.state !== "open") return;
+    latest.state = state;
+  };
   for (const event of events) {
     if (event.type === "stage.entered") {
-      current = event.stage || (event.payload && event.payload.stage) || current;
-      if (current) {
-        entered.add(current);
-        invalidated.delete(current);
+      const stage = stageOf(event) || current;
+      if (stage) {
+        openVisit(stage);
+        current = stage;
       }
+    } else if (event.type === "stage.exited") {
+      const stage = stageOf(event) || current;
+      if (stage) closeVisit(stage, "done");
     } else if (event.type === "stage.rolled_back") {
-      const target =
-        (event.payload && (event.payload.to_stage || event.payload.to)) || null;
-      if (current) {
-        backEdges.push({ from: current, to: target });
-        invalidated.add(current);
+      const payload = event.payload || {};
+      const from =
+        payload.from_stage || payload.from || event.from_stage || event.from || current;
+      const to =
+        payload.to_stage || payload.to || event.to_stage || event.to || null;
+      const reason =
+        typeof payload.reason === "string"
+          ? payload.reason
+          : (typeof payload.summary === "string" ? payload.summary : null);
+      const repair = !!(payload.operator_repair || event.operator_repair);
+      if (repair || (from && to && from === to)) {
+        repairs.push({ from, to, reason });
+        continue;
       }
-      if (target) {
-        entered.add(target);
-        current = target;
+      if (from) closeVisit(from, "void");
+      if (from && to) {
+        backEdges.push({ from, to, reason });
+        openVisit(to);
+        current = to;
       }
     }
   }
-  return { entered, invalidated, backEdges };
+  return { visits, repairs, backEdges };
 }
 
 function nodeStateOf(stage, detail, facts) {
-  if (facts.invalidated.has(stage)) return "void";
   const activeStage = detail && detail.stage;
   if (stage === activeStage) {
+    // The current stage is never void: a same-stage repair/rollback is a
+    // note on the live visit, not an invalidation of where the run is.
     const gate = detail && detail.awaiting_gate;
     return gate ? "attention" : "active";
   }
-  return facts.entered.has(stage) ? "done" : "pending";
+  const list = facts.visits.get(stage) || [];
+  if (!list.length) return "pending";
+  const latest = list[list.length - 1];
+  if (latest.state === "void") return "void";
+  if (latest.state === "done") return "done";
+  return "pending";
 }
 
 /** Resolve an event's stage across slim + full timeline rows (the slim
@@ -1465,18 +1534,26 @@ function stageTrack(stages, events, detail) {
       element("span", { class: "node-icon", text: STATE_ICONS[nodeState] || "·" }),
       element("span", { class: "stage-label", text: stage })
     );
+    // Every dispatch attempt keeps its own badge (the attempt groups are
+    // never folded). Attempts after the first one for this stage are the
+    // retry re-dispatches: badge + self-loop face, not a new node.
+    const stageAttempts = [];
     for (const [attempt, group] of attempts) {
-      if (!group.some((event) => event.stage === stage || (event.payload && event.payload.stage) === stage)) {
-        continue;
+      if (group.some((event) => stageOf(event) === stage)) {
+        stageAttempts.push(attempt);
       }
+    }
+    stageAttempts.forEach((attempt, index) => {
+      const retry = index > 0;
       node.append(
         element("span", {
-          class: "stage-attempt",
+          class: retry ? "stage-attempt stage-attempt-loop" : "stage-attempt",
           "data-testid": `timeline-attempt-${stage}-${attempt}`,
-          text: `attempt ${attempt}`,
+          title: retry ? "重派" : `attempt ${attempt}`,
+          text: retry ? `⟳ attempt ${attempt}` : `attempt ${attempt}`,
         })
       );
-    }
+    });
     node.addEventListener("click", () => selectNode(node, stage, detail, events));
     node.addEventListener("keydown", (event) => {
       if (event && (event.key === "Enter" || event.key === " ")) {
@@ -1486,30 +1563,18 @@ function stageTrack(stages, events, detail) {
     });
     track.append(node);
   });
-  for (const edge of facts.backEdges) {
-    if (edge.to) {
-      track.append(
-        element("li", {
-          class: "back-edge-wrap",
-        }, [
-          element("span", {
-            class: "back-edge",
-            "data-testid": `timeline-back-edge-${edge.from}-${edge.to}`,
-            text: `↩ ${edge.from} → ${edge.to}`,
-          }),
-        ])
-      );
-    }
-  }
   if (!stages.length) {
     track.append(element("li", { class: "stage-node", text: "no stages" }));
   }
   // §1l.1: the initial view centers the active node inside the viewport
   // and keeps its neighbourhood reachable (all history stays navigable).
-  // The pane opens on the active node's detail (or the gate action panel
-  // when awaiting) WITHOUT marking it selected — 选中查看 and 当前活跃
-  // are two markers.
-  viewport.append(track);
+  // The pane opens on the current node's read-only detail WITHOUT marking
+  // it selected — 选中查看 and 当前活跃 are two markers.
+  const stack = element("div", { class: "stage-track-stack" });
+  stack.append(track);
+  const backLayer = backEdgeLayer(facts.backEdges, track);
+  if (backLayer) stack.append(backLayer);
+  viewport.append(stack);
   wrap.append(prev, viewport, next);
   let userNavigated = false;
   const centerActive = () => {
@@ -1566,6 +1631,120 @@ function stageTrack(stages, events, detail) {
   return wrap;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgElement(tag, attributes = {}) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attributes)) {
+    if (value === null || value === undefined) continue;
+    node.setAttribute(name, String(value));
+  }
+  return node;
+}
+
+/**
+ * Real rollback edges ride an SVG layer DIRECTLY BELOW the track: each
+ * edge is a return line from the source node to the target node with the
+ * server-recorded reason as its label. The layer lives inside the same
+ * horizontally scrolling content as the track, so it follows the scroll;
+ * it re-measures on window resize and track reflow.
+ */
+function backEdgeLayer(edges, track) {
+  if (!edges.length) return null;
+  const layer = svgElement("svg", {
+    class: "stage-back-edges",
+    "data-testid": "timeline-back-edges",
+    role: "group",
+    "aria-label": "回退线",
+  });
+  const height = 40;
+  let frame = 0;
+  const layout = () => {
+    const trackRect = track.getBoundingClientRect();
+    const width = Math.max(
+      1,
+      Math.round(trackRect.width),
+      Math.round(track.scrollWidth || 0)
+    );
+    layer.setAttribute("width", String(width));
+    layer.setAttribute("height", String(height));
+    layer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    layer.replaceChildren();
+    const marker = svgElement("marker", {
+      id: "timeline-back-arrow",
+      markerWidth: "6",
+      markerHeight: "6",
+      refX: "3",
+      refY: "3",
+      orient: "auto",
+    });
+    marker.append(svgElement("path", {
+      d: "M0,0 L6,3 L0,6 z",
+      class: "back-edge-arrow",
+    }));
+    const defs = svgElement("defs");
+    defs.append(marker);
+    layer.append(defs);
+    const nodes = new Map();
+    for (const node of track.querySelectorAll('[data-testid^="timeline-node-"]')) {
+      const stage = node.getAttribute("data-stage");
+      if (stage) nodes.set(stage, node);
+    }
+    for (const edge of edges) {
+      const from = nodes.get(edge.from);
+      const to = nodes.get(edge.to);
+      if (!from || !to) continue;
+      const fr = from.getBoundingClientRect();
+      const tr = to.getBoundingClientRect();
+      const sx = fr.left - trackRect.left + fr.width / 2;
+      const tx = tr.left - trackRect.left + tr.width / 2;
+      const group = svgElement("g", {
+        class: "back-edge-group",
+        "data-testid": `timeline-back-edge-${edge.from}-${edge.to}`,
+      });
+      const title = svgElement("title");
+      title.textContent = `↩ ${edge.from} → ${edge.to}（${edge.reason || "退回"}）`;
+      group.append(title);
+      group.append(svgElement("path", {
+        class: "back-edge-path",
+        d: `M ${sx} 2 C ${sx} 32, ${tx} 32, ${tx} 2`,
+        "marker-end": "url(#timeline-back-arrow)",
+      }));
+      const label = svgElement("text", {
+        class: "back-edge-label",
+        x: String((sx + tx) / 2),
+        y: "37",
+        "text-anchor": "middle",
+      });
+      label.textContent = `↩ ${edge.reason || "退回"}`;
+      group.append(label);
+      layer.append(group);
+    }
+  };
+  const schedule = () => {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      if (frame) return;
+      frame = globalThis.requestAnimationFrame(() => {
+        frame = 0;
+        layout();
+      });
+      return;
+    }
+    layout();
+  };
+  globalThis.addEventListener("resize", schedule);
+  if (typeof globalThis.ResizeObserver === "function") {
+    try {
+      const observer = new globalThis.ResizeObserver(schedule);
+      observer.observe(track);
+    } catch (error) {
+      /* resize listener still repositions the layer */
+    }
+  }
+  schedule();
+  return layer;
+}
+
 function acChainList(acChain) {
   const rows = Array.isArray(acChain) ? acChain : [];
   if (!rows.length) {
@@ -1614,13 +1793,12 @@ function selectNode(node, stage, detail, events) {
     candidate.setAttribute("data-state-active", "true");
   }
   if (host) {
-    // the pane rebuilds around the SELECTED stage: node detail + that
-    // stage's actual workflow + the return pointer (the gate panel yields
-    // to the selected node's face — same mount, no overlay).
+    // the pane rebuilds around the SELECTED stage and stays READ-ONLY:
+    // node detail + that stage's actual workflow. Run-level operations
+    // live in the current-card above, never under a selected node.
     host.replaceChildren(
       nodeDetail(stage, detail, events),
       stagePathPanel(detail, events, stage),
-      returnPointer(detail),
     );
   }
 }
@@ -1663,8 +1841,7 @@ function nodeDetail(stage, detail, events) {
   }
   const owner = ownerOf(detail);
   box.append(
-    element("p", { class: "detail-line", text: `owner: ${owner}` }),
-    owningSurfaceEntry()
+    element("p", { class: "detail-line", text: `owner: ${owner}` })
   );
   return box;
 }
@@ -1684,10 +1861,11 @@ function owningSurfaceEntry() {
     event.preventDefault();
     // the owning surface entry opens the docs window in-page (same
     // document — FR-0316) and the return restores the same run context:
-    // both legs ride the tab machine. The run id rides the pane dataset
-    // so the return re-focuses the same run (run_id in the URL after).
-    const pane = jump.closest('[data-testid="detail-pane"]');
-    const runId = pane ? pane.getAttribute("data-run-id") : null;
+    // both legs ride the tab machine. The run id rides the operation-zone
+    // dataset so the return re-focuses the same run (run_id in the URL
+    // after).
+    const host = jump.closest("[data-run-id]");
+    const runId = host ? host.getAttribute("data-run-id") : null;
     const { openTab } = await import("./tabs.js");
     openTab("docs", { feature: "docs", title: "docs" });
     globalThis.setTimeout(async () => {
@@ -1711,10 +1889,28 @@ function owningSurfaceEntry() {
     class: "owning-surface-alias",
     "data-testid": "owning-surface-link",
     hidden: true,
-    text: "owning surface",
+    text: "所属文档",
   });
   aliased.removeAttribute("hidden");
   aliased.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
+  // AC-FR0326-01 document-center jump (§11 row 3 fixed-pane update): the
+  // pane offers the jump to the document center. Same anchor as the
+  // owning-surface entry (one link, both testids' semantics — the frozen
+  // face pins detail-doc-link; §1l.2 pins the owning surface entry).
+  const docJump = element("span", {
+    class: "detail-doc-link-alias",
+    "data-testid": "detail-doc-link",
+    hidden: true,
+    text: "文档中心",
+  });
+  docJump.removeAttribute("hidden");
+  docJump.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
+  return element("p", { class: "owning-surface" }, [jump, aliased, docJump]);
+}
+
+/** Page-level navigation at the top of the timeline panel (run-agnostic):
+ * the return restores the previous page, leaving run/node context intact. */
+function pageReturnEntry() {
   const back = element("a", {
     class: "owning-surface-return",
     "data-testid": "owning-surface-return",
@@ -1725,25 +1921,15 @@ function owningSurfaceEntry() {
     event.preventDefault();
     globalThis.history.back();
   });
-  // AC-FR0326-01 document-center jump (§11 row 3 fixed-pane update): the
-  // pane offers the jump to the document center. Same anchor as the
-  // owning-surface entry (one link, both testids' semantics — the frozen
-  // face pins detail-doc-link; §1l.2 pins the owning surface entry).
-  const docJump = element("span", {
-    class: "detail-doc-link-alias",
-    "data-testid": "detail-doc-link",
-    hidden: true,
-    text: "document center",
-  });
-  docJump.removeAttribute("hidden");
-  docJump.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
-  return element("p", { class: "owning-surface" }, [jump, aliased, back, docJump]);
+  return element("p", { class: "page-return" }, [back]);
 }
 
 /**
- * The fixed lower pane (§1l.2, E-02): node detail — and the SAME surface
- * is the awaiting action panel (§1k.3) plus the return confirm face
- * (§1m). Never a floating overlay: a plain section below the track.
+ * The fixed lower pane (§1l.2, E-02) is READ-ONLY: the current (or
+ * selected) node's real detail plus that stage's actual workflow. Gate
+ * actions, the run-level return and the owning-surface jump live in the
+ * current-card above. Never a floating overlay: a plain section below
+ * the track.
  */
 function detailPane(detail, events, stages) {
   const pane = element("section", {
@@ -1753,20 +1939,9 @@ function detailPane(detail, events, stages) {
   if (detail && detail.run_id) {
     pane.setAttribute("data-run-id", detail.run_id);
   }
-  const gate = detail && detail.awaiting_gate;
-  if (gate) {
-    pane.append(gateActionPanel(detail, gate));
-    // the selected/current stage's actual workflow graph rides after the
-    // gate panel, before the return pointer.
-    pane.append(stagePathPanel(detail, events, detail && detail.stage));
-  } else {
-    const stage = (detail && detail.stage) || "";
-    pane.append(nodeDetail(stage, detail, events));
-    // node detail branch: the selected/current stage's actual workflow
-    // graph rides after the detail content, before the return pointer.
-    pane.append(stagePathPanel(detail, events, stage));
-  }
-  pane.append(returnPointer(detail));
+  const stage = (detail && detail.stage) || (stages && stages[0]) || "";
+  pane.append(nodeDetail(stage, detail, events));
+  pane.append(stagePathPanel(detail, events, stage));
   return pane;
 }
 
@@ -2093,7 +2268,7 @@ export function primaryActionFace(encoded, action, actionsEl) {
     mount.append(
       element("span", {
         class: "gate-action-hint",
-        text: "confirm the rollback target in the return face below",
+        text: "请在下方回退区确认回退目标",
       })
     );
   } else {
@@ -2118,7 +2293,9 @@ function actionButton(encoded, path, params, label) {
     }).then(() => {
       // decision buttons belong to a primary gate; refresh on the owning
       // primary so the next gate presents (triage decisions → review, etc.)
-      const host = button.closest("[data-testid='detail-pane']");
+      const host = button.closest(
+        "[data-testid='current-node-card'], [data-testid='detail-pane']"
+      );
       const primaryBtn = host ? host.querySelector("[data-testid^='gate-action-']") : null;
       const previous = primaryBtn
         ? (primaryBtn.getAttribute("data-testid") || "").replace("gate-action-", "")
@@ -2198,14 +2375,7 @@ function _gateAction(detail) {
 export function returnPointer(detail) {
   const options = detail && detail.return_options;
   const targets = options && Array.isArray(options.targets) ? options.targets : [];
-  if (!options || !options.allowed || !targets.length) {
-    return element("p", {
-      class: "return-pointer return-pointer-empty",
-      "data-testid": "return-pointer",
-      hidden: true,
-      text: "无回退入口",
-    });
-  }
+  if (!options || !options.allowed || !targets.length) return null;
   const runId = encodeURIComponent((detail && detail.run_id) || "");
   const currentStage = detail && detail.stage ? String(detail.stage) : "";
   const box = element("div", {
@@ -2216,12 +2386,22 @@ export function returnPointer(detail) {
     element("p", {
       class: "return-targets-scope",
       "data-testid": "return-targets-scope",
-      text: `run 级回退（当前阶段：${currentStage || "-"}）`,
+      text: "run 级回退（仅等待人工裁决时可用）",
     }),
     element("p", {
       class: "return-targets",
       "data-testid": "return-targets",
       text: `可回退目标：${targets.map((target) => target.stage === currentStage ? `${target.stage}（当前阶段）` : target.stage).join("、")}`,
+    }),
+    element("p", {
+      class: "return-hint",
+      "data-testid": "return-hint",
+      text: "重试（retry）：保留本阶段已产出，只重派当前步骤（不记回退）｜重做当前阶段：作废本阶段本次产出，从阶段入口重来（记一次回退）",
+    }),
+    element("p", {
+      class: "return-test-note",
+      "data-testid": "return-test-note",
+      text: "M-TEST 是执行阶段，按合同不可作为回退目标",
     })
   );
   for (const target of targets) {
@@ -2230,7 +2410,7 @@ export function returnPointer(detail) {
       type: "button",
       class: "return-pointer-button",
       "data-testid": `return-pointer-${target.stage}`,
-      text: isCurrent ? `重做当前阶段 ${target.stage}` : `回退到 ${target.stage}`,
+      text: isCurrent ? `重做 ${target.stage}（当前阶段）` : `回退到 ${target.stage}`,
       ...(isCurrent ? { title: `回到 ${target.stage} 阶段入口重新走；本阶段已产生的中间结果不保留` } : {}),
     });
     pointer.addEventListener("click", () => {

@@ -1220,8 +1220,8 @@ textarea {
 
 .current-card {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-4);
+  flex-direction: column;
+  gap: var(--s-2);
   padding: var(--s-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -1231,6 +1231,30 @@ textarea {
 
 .current-card span {
   font-size: var(--fs-body);
+}
+
+.card-status {
+  margin: 0;
+  font-weight: 600;
+}
+
+.card-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.card-links {
+  margin: 0;
+}
+
+.page-return {
+  margin: 0 0 var(--s-2);
+}
+
+.page-return .owning-surface-return {
+  font-size: var(--fs-caption);
 }
 
 /* OOB 可读性：等待人工门时 card-action 用警告色（边框+底衬托，
@@ -1364,23 +1388,39 @@ textarea {
   user-select: none;
 }
 
-.stage-track-horizontal .back-edge-wrap {
-  flex: 0 0 auto;
-  align-self: center;
-  list-style: none;
-  margin: 0 var(--s-1);
+/* The real rollback edges ride an SVG layer BELOW the track. The stack
+   keeps the track and the layer in the same horizontal scroll content, so
+   scrolling the viewport moves the line with its nodes. */
+.stage-track-stack {
+  display: block;
+  width: max-content;
+  min-width: 100%;
 }
 
-.back-edge {
-  display: inline-block;
-  padding: 2px var(--s-2);
-  border: 1px dashed var(--warn);
-  border-radius: 999px;
-  background: var(--bg);
+.stage-back-edges {
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.back-edge-path {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.back-edge-arrow {
+  fill: var(--warn);
+}
+
+.back-edge-label {
+  fill: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
-  color: var(--fg-muted);
-  white-space: nowrap;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
 }
 
 /* node state faces (icon shape + data-state dual channel; colour is
@@ -1479,6 +1519,14 @@ textarea {
   background: var(--bg-subtle);
   font-size: var(--fs-caption);
   color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* retry re-dispatch: a self-loop badge on the same stage node */
+.stage-attempt-loop {
+  border-style: dashed;
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
 .last-event {
@@ -1593,6 +1641,55 @@ textarea {
 
 .review-feedback[data-failed="true"] {
   color: var(--danger);
+}
+
+/* run-level return zone (current-card only, gated by return_options.allowed) */
+.return-pointer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
+  padding-top: var(--s-2);
+  border-top: 1px dashed var(--border);
+}
+
+.return-targets-scope {
+  margin: 0;
+  font-weight: 600;
+}
+
+.return-targets,
+.return-hint,
+.return-test-note {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--fg-muted);
+}
+
+.return-test-note {
+  font-size: var(--fs-caption);
+}
+
+.return-pointer-button,
+.return-confirm-button {
+  min-height: var(--control-h-sm);
+  font-size: var(--fs-body);
+}
+
+.return-confirm-face {
+  margin-top: var(--s-1);
+  padding: var(--s-2);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.return-target,
+.return-consequences,
+.return-verdict {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-body);
 }
 
 .ac-chain-empty {
