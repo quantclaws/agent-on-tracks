@@ -264,13 +264,23 @@ function stageWorkflowWindow(events, stage) {
   let start = -1;
   for (let index = list.length - 1; index >= 0; index -= 1) {
     const event = list[index];
+    if (!event) continue;
     if (
-      event &&
       (event.type === "stage.entered" || event.type === "stage.recovered") &&
       stageOf(event) === stage
     ) {
       start = index;
       break;
+    }
+    if (event.type === "stage.rolled_back") {
+      const payload = event.payload || {};
+      const to = payload.to_stage || payload.to || event.to_stage || event.to;
+      // A rollback INTO this stage opens a new visit: the window must start
+      // at the rollback, not at the previous visit's stage.entered.
+      if (to === stage) {
+        start = index;
+        break;
+      }
     }
   }
   if (start < 0) return [];
@@ -823,14 +833,16 @@ function currentCard(detail, events, state) {
       element("p", {
         class: "gate-rollback-guidance",
         "data-testid": "gate-rollback-guidance",
-        text: "回滚门需要 CLI 确认目标：trac approve --to M-ACC|M-SPEC|M-DESIGN（M-TEST 的 stub_gap 预设 M-DESIGN）",
+        text: stage === "M-IMPL"
+          ? "回滚门需要 CLI 确认目标：trac approve --to M-ACC|M-SPEC|M-DESIGN"
+          : "回滚门需要 CLI 确认：trac approve（M-TEST 使用失败类型预设的回滚目标）",
       })
     );
   }
-  if (options && options.allowed) {
-    const pointer = returnPointer(detail);
-    if (pointer) card.append(pointer);
-  }
+  // Always mount (the pointer renders a hidden placeholder when the
+  // server exposes no legal target) so the stable testid never vanishes.
+  const pointer = returnPointer(detail);
+  if (pointer) card.append(pointer);
   // guidance gates already mount the owning-surface entry inside their
   // action face; every other face gets exactly one explicit entry here.
   if (gateAction !== "guidance") {
@@ -1576,6 +1588,7 @@ function stageTrack(stages, events, detail) {
       "data-testid": `timeline-node-${stage}`,
       "data-stage": stage,
       "data-state": nodeState,
+      "aria-pressed": "false",
       ...(nodeState === "active" || nodeState === "attention"
         ? { "data-active": "true", "data-state-active": "true" }
         : {}),
@@ -2110,7 +2123,7 @@ export function gateActionPanel(detail, gate) {
     for (const btn of face._actions) actions.append(btn);
     panel.append(face._body);
   } else {
-    panel.append(primaryActionFace(encoded, action, actions));
+    panel.append(primaryActionFace(encoded, action, actions, detail));
   }
   return panel;
 }
@@ -2209,7 +2222,7 @@ function reviewDecisionFace(detail, encoded) {
   return { _actions: [approve, ret], _body: body };
 }
 
-export function primaryActionFace(encoded, action, actionsEl) {
+export function primaryActionFace(encoded, action, actionsEl, detail) {
   // §1k.2 唯一主要动作入口: one display line (gate-primary-action, never
   // counted as a gate-action-*) below the head; the clickable buttons ride
   // the head-row actions slot (same line as gate-status).
@@ -2345,12 +2358,17 @@ export function primaryActionFace(encoded, action, actionsEl) {
   } else if (action === "retry") {
     // single primary button only.
   } else if (action === "return") {
-    mount.append(
-      element("span", {
-        class: "gate-action-hint",
-        text: "请在 run 级回退区确认回退目标",
-      })
-    );
+    // Only point at the return dock when the server actually exposed legal
+    // targets; a rollback gate (M-TEST/M-IMPL) carries CLI guidance instead.
+    const options = detail && detail.return_options;
+    if (options && options.allowed) {
+      mount.append(
+        element("span", {
+          class: "gate-action-hint",
+          text: "请在 run 级回退区确认回退目标",
+        })
+      );
+    }
   } else {
     // guidance: no action endpoint — owning surface direction only (§1k.2).
     mount.append(owningSurfaceEntry());

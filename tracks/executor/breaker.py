@@ -7,7 +7,8 @@ r1 实证（run 01M0AMKV，2026-08-19/20）：最后 10 小时零任务进展仍
 
 条件（环境变量可调，0 = 关闭该条件）：
 - ``TRAC_BREAKER_ROLLBACKS``（默认 2）：run 内累计真实/自动
-  stage.rolled_back 数（运维修复、原地自回退、人工 human_return 不计）；
+  stage.rolled_back 数（operator_repair 运维修复、人工 human_return 不计；
+  裸原地自回退仍计——它是自动路由的真实回退）；
 - ``TRAC_BREAKER_TASK_FAILURES``（默认 6）：同一 task 的 verdict.failed
   累计数（与单 substate 的 3-attempt 预算区分——r1 的灾难正是跨 substate
   /跨阶段反复失败从未被 run 级看到）；
