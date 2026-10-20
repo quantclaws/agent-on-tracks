@@ -156,7 +156,9 @@ class _TamperBackend:
 
 
 @pytest.mark.integration
-def test_tamper_turn_auto_corrected_without_human_gate(tmp_path: Path):
+def test_tamper_turn_rejected_and_restored(tmp_path: Path):
+    """A tampering backend's tasks.md write is rejected and the derived file
+    is auto-restored, without a human gate (v0.11 behavior)."""
     repo, home, store, run_id, vdir, ex = _setup_m_impl(tmp_path)
 
     # Prepare a tampering backend that writes wrong tasks.md
