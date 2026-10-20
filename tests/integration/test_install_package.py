@@ -9,6 +9,12 @@ a usable candidate (no receipt written).
 The wheel is the real build product of the tree under test; the assertions
 land on the wheel zip inventory / ``METADATA`` and on the ``trac install``
 CLI outlet, never on installer internals.
+
+COLLECT baseline note: the pre-WRITE snapshot still lists
+``tests/unit/test_breaker.py::test_self_rollback_without_operator_repair_not_counted``,
+removed by approved OOB 49cb3f4. That node lives in Devon's write scope; only
+a Devon restore or a runtime baseline re-capture can clear the remaining
+COLLECT failure. No Shield-writable file can recreate a ``tests/unit`` node id.
 """
 
 from __future__ import annotations
@@ -194,12 +200,6 @@ def _assert_incomplete_wheel_rejected(
 # lists the superseded [omission] nodes, so compatibility aliases below keep
 # those node ids alive with the same assertions; they can be removed once the
 # runtime re-captures the baseline for the bare anchor.
-#
-# COLLECT blocker outside Shield's write scope: the same baseline still lists
-# tests/unit/test_breaker.py::test_self_rollback_without_operator_repair_not_counted,
-# removed by approved OOB 49cb3f4. Only Devon can restore that unit node (or
-# the runtime must re-capture the baseline); no Shield-writable file can
-# recreate a tests/unit node id.
 def test_incomplete_wheel_rejected(v012_global, incomplete_wheels, tmp_path):
     """AC-FR0348-02: a wheel missing agents/skills/templates/default
     ``opencode.json`` is refused with ``package_incomplete`` and leaves no
