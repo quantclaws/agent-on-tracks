@@ -162,30 +162,38 @@ def test_global_trac_help_zero_repo(v012_global, tmp_path):
 
 
 # AC-FR0348-02@v0.12 TRACKS-TRACE incomplete wheel rejected before candidate
-@pytest.mark.parametrize("omission", sorted(_OMISSIONS))
-def test_incomplete_wheel_rejected(v012_global, incomplete_wheels, tmp_path, omission):
+def test_incomplete_wheel_rejected(v012_global, incomplete_wheels, tmp_path):
     """AC-FR0348-02: a wheel missing agents/skills/templates/default
     ``opencode.json`` is refused with ``package_incomplete`` and leaves no
-    receipt, so it never becomes a usable candidate."""
-    target = tmp_path / "target"
-    target.mkdir()
-    proc = v012_global.run(
-        "install",
-        str(target),
-        "--wheel",
-        str(incomplete_wheels[omission]),
-        cwd=tmp_path,
-    )
-    assert proc.returncode != 0, (
-        f"an incomplete wheel must be refused: {proc.stdout!r}"
-    )
-    assert "installed tracks" not in proc.stdout
-    assert reason_of(proc) == "package_incomplete", (
-        f"the closed reason must be package_incomplete: {proc.stderr!r}"
-    )
-    assert not (target / ".tracks" / "install.json").exists(), (
-        "a rejected wheel must leave no receipt"
-    )
-    assert not (target / ".opencode").exists(), (
-        "a rejected wheel must not materialise managed files"
-    )
+    receipt, so it never becomes a usable candidate.
+
+    The omission set is iterated inside the test (not parametrized) so the
+    collected node id is exactly the task-graph/test-plan anchor
+    ``tests/integration/test_install_package.py::test_incomplete_wheel_rejected``.
+    A parametrized node carries a ``[omission]`` suffix and fails the
+    acceptance-ref/collect binding at SELECT_TASK.
+    """
+    for omission in sorted(_OMISSIONS):
+        target = tmp_path / f"target-{omission}"
+        target.mkdir()
+        proc = v012_global.run(
+            "install",
+            str(target),
+            "--wheel",
+            str(incomplete_wheels[omission]),
+            cwd=tmp_path,
+        )
+        assert proc.returncode != 0, (
+            f"an incomplete wheel must be refused ({omission}): {proc.stdout!r}"
+        )
+        assert "installed tracks" not in proc.stdout
+        assert reason_of(proc) == "package_incomplete", (
+            f"the closed reason must be package_incomplete ({omission}): "
+            f"{proc.stderr!r}"
+        )
+        assert not (target / ".tracks" / "install.json").exists(), (
+            f"a rejected wheel must leave no receipt ({omission})"
+        )
+        assert not (target / ".opencode").exists(), (
+            f"a rejected wheel must not materialise managed files ({omission})"
+        )
