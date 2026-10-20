@@ -72,6 +72,18 @@ def test_empty_dir_and_existing_project(v012_global, tmp_path):
         for rel, digest in file_snapshot(existing).items()
         if not rel.startswith(".git/")
     }
+    # The fixture intentionally leaves a user-owned untracked file
+    # (scratch.txt). It exists before the install, so it is not an
+    # installer-introduced change; compare against the pre-install status.
+    before_status = set(
+        subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=existing,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+    )
     proc = v012_global.run("install", str(existing), cwd=tmp_path)
     assert _success_line(proc, existing) == (
         f"installed tracks {CURRENT_VERSION} at {existing}"
@@ -89,7 +101,8 @@ def test_empty_dir_and_existing_project(v012_global, tmp_path):
     ).stdout.splitlines()
     unexpected = [
         line for line in changed
-        if not line[3:].startswith((".tracks/", ".opencode/", "opencode.json"))
+        if line not in before_status
+        and not line[3:].startswith((".tracks/", ".opencode/", "opencode.json"))
     ]
     assert not unexpected, f"install must not introduce unrelated changes: {unexpected}"
     assert reason_of(proc) == ""
