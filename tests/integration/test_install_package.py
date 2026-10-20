@@ -10,11 +10,12 @@ The wheel is the real build product of the tree under test; the assertions
 land on the wheel zip inventory / ``METADATA`` and on the ``trac install``
 CLI outlet, never on installer internals.
 
-COLLECT baseline note: the pre-WRITE snapshot still lists
+BLOCKED baseline note: the pre-WRITE snapshot still lists
 ``tests/unit/test_breaker.py::test_self_rollback_without_operator_repair_not_counted``,
 removed by approved OOB 49cb3f4. That node lives in Devon's write scope; only
 a Devon restore or a runtime baseline re-capture can clear the remaining
-COLLECT failure. No Shield-writable file can recreate a ``tests/unit`` node id.
+COLLECT failure. Shield's ``layout.shield`` excludes ``tests/unit``, so every
+WRITE attempt repeats this COLLECT failure without a scope exception.
 """
 
 from __future__ import annotations
