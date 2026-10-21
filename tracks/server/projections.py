@@ -20,7 +20,6 @@ import contextlib
 import json
 import re
 import sqlite3
-import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -601,15 +600,19 @@ def _run_branch(state: State) -> str | None:
 _DIAGNOSIS_ATTEMPTS_MAX = 3
 _DIAGNOSIS_CAUSE_BY_CHECK = {
     "island": "plan", "plan_defect": "plan", "test_tasks": "plan",
+    "taskgraph": "plan", "scope": "plan",
     "test_defect": "test", "full_suite": "test", "red_defect": "test",
+    "red_invalid": "test", "collection": "test", "anchor_static": "test",
     "impl_defect": "implementation",
-    "stub_gap": "design",
+    "stub_gap": "design", "baseline_defect": "design",
+    "public_interface": "design",
     "ac_gap": "acceptance",
     "spec_gap": "spec",
     "contract_error": "runtime", "collect_defect": "runtime",
     "test_freeze_contamination": "runtime",
     "reply_format_error": "runtime", "manifest_malformed": "runtime",
-    "evidence_malformed": "runtime",
+    "evidence_malformed": "runtime", "worktree": "runtime",
+    "publish_error": "runtime", "diagnose_contract_violation": "runtime",
     "lineage": "process", "trace": "process", "commit": "process",
 }
 _DIAGNOSIS_CAUSE_LABELS = {
@@ -636,7 +639,6 @@ _DIAGNOSIS_RETURN_CANDIDATES = {
 _DIAGNOSIS_DIGITS = re.compile(r"\d+")
 _DIAGNOSIS_HEX = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
 _DIAGNOSIS_PATH = re.compile(r"(?:/[\w.\-]+)+")
-_DIAGNOSIS_SHA = re.compile(r"^[0-9a-fA-F]{4,64}$")
 
 
 def _diagnosis_cause(check: object) -> str:
@@ -695,10 +697,23 @@ def _new_information_between(
         if event.type == "prism.verdict":
             if payload.get("findings") or payload.get("review_summary"):
                 return "prism"
-        elif event.type == "verdict.failed":
-            if _failure_signature(payload) != previous_signature:
-                return "verdict"
+        elif (
+            event.type == "verdict.failed"
+            and _failure_signature(payload) != previous_signature
+        ):
+            return "verdict"
     return None
+
+
+def _prism_guidance_after(events: list[EventEnvelope], index: int) -> bool:
+    """A reviewer verdict with findings/summary arrived after ``index``."""
+    for event in events[index + 1:]:
+        if event.type != "prism.verdict":
+            continue
+        payload = event.payload or {}
+        if payload.get("findings") or payload.get("review_summary"):
+            return True
+    return False
 
 
 def _retry_worthiness(
@@ -707,6 +722,9 @@ def _retry_worthiness(
     """Convergence judgement over same-check failures in the current stage."""
     if not failures:
         return False, "本轮尚无失败记录，无法判断重试是否会有不同"
+    latest_index, _latest_event = failures[-1]
+    if _prism_guidance_after(events, latest_index):
+        return True, "上一轮评审发现了新问题，重试有可能不同"
     if len(failures) == 1:
         return True, "首次失败，重试可能得到不同结果"
     later_index, later_event = failures[-1]
@@ -729,36 +747,26 @@ def _retry_worthiness(
     return False, f"连续 {consecutive} 次同一失败签名且无新信息，重试不会不同"
 
 
-def _git_commit_subject(repo_path: str | None, sha: object) -> str:
-    """The commit subject for ``sha`` from the run repo ("" when unresolvable)."""
-    value = str(sha or "").strip()
-    if not repo_path or not _DIAGNOSIS_SHA.match(value):
-        return ""
-    try:
-        proc = subprocess.run(
-            ["git", "show", "-s", "--format=%s", value],
-            cwd=str(repo_path), capture_output=True, text=True, timeout=10, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    if proc.returncode != 0:
-        return ""
-    return proc.stdout.strip()
-
-
 def _diagnosis_agent_advice(events: list[EventEnvelope], repo_path: str | None) -> str:
-    """Last checkpoint/test commit subject, else the latest failure reason."""
+    """Reviewer guidance, else the latest failure reason, else the agent report."""
     for event in reversed(events):
-        if event.type not in ("result.checkpointed", "test.written"):
+        if event.type != "prism.verdict":
             continue
-        subject = _git_commit_subject(repo_path, (event.payload or {}).get("commit_sha"))
-        if subject:
-            return subject
+        summary = (event.payload or {}).get("review_summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
     for event in reversed(events):
         if event.type != "verdict.failed":
             continue
         reason = (event.payload or {}).get("reason")
-        return reason.strip() if isinstance(reason, str) else ""
+        if isinstance(reason, str) and reason.strip():
+            return reason.strip()
+    for event in reversed(events):
+        if event.type != "outcome.received":
+            continue
+        report = (event.payload or {}).get("self_report")
+        if isinstance(report, str) and report.strip():
+            return report.strip()
     return ""
 
 

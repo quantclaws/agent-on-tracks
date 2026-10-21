@@ -24,11 +24,18 @@ _CAUSES = {
     "island": "plan",
     "plan_defect": "plan",
     "test_tasks": "plan",
+    "taskgraph": "plan",
+    "scope": "plan",
     "test_defect": "test",
     "full_suite": "test",
     "red_defect": "test",
+    "red_invalid": "test",
+    "collection": "test",
+    "anchor_static": "test",
     "impl_defect": "implementation",
     "stub_gap": "design",
+    "baseline_defect": "design",
+    "public_interface": "design",
     "ac_gap": "acceptance",
     "spec_gap": "spec",
     "contract_error": "runtime",
@@ -37,6 +44,9 @@ _CAUSES = {
     "reply_format_error": "runtime",
     "manifest_malformed": "runtime",
     "evidence_malformed": "runtime",
+    "worktree": "runtime",
+    "publish_error": "runtime",
+    "diagnose_contract_violation": "runtime",
     "lineage": "process",
     "trace": "process",
     "commit": "process",
@@ -142,6 +152,19 @@ def test_cause_mapping_is_closed():
     assert set(projections._DIAGNOSIS_CAUSE_LABELS) == set(_ACTIONS)
 
 
+def test_taskgraph_failure_is_a_plan_defect():
+    events = [_entered(), _failed(1, "tasks.json invalid", check="taskgraph")]
+    diagnosis = projections._gate_diagnosis(
+        events,
+        State(stage="M-TEST", status="awaiting_human", awaiting="escalation",
+            current_attempt=1),
+        None,
+    )
+    assert diagnosis["cause"] == "plan"
+    assert diagnosis["suggested_action"] == "replan"
+    assert diagnosis["return_candidates"] == ["M-DESIGN"]
+
+
 # -- attempts ----------------------------------------------------------------
 
 
@@ -223,6 +246,30 @@ def test_prism_verdict_without_findings_is_not_new_information():
     assert "无新信息" in reason
 
 
+def test_prism_verdict_after_the_latest_failure_is_new_information():
+    events = [
+        _entered(),
+        _failed(1, "tasks.json invalid", check="taskgraph"),
+        _failed(2, "tasks.json invalid", check="taskgraph"),
+        _event(3, "prism.verdict", {"verdict": "revise", "findings": ["blocker one", "blocker two"]}),
+    ]
+    worthy, reason = _worth(events)
+    assert worthy is True
+    assert "评审" in reason
+
+
+def test_prism_verdict_before_the_latest_failure_is_not_new_information():
+    events = [
+        _entered(),
+        _event(1, "prism.verdict", {"verdict": "revise", "findings": ["old finding"]}),
+        _failed(2, "tasks.json invalid", check="taskgraph"),
+        _failed(3, "tasks.json invalid", check="taskgraph"),
+    ]
+    worthy, reason = _worth(events)
+    assert worthy is False
+    assert "无新信息" in reason
+
+
 def test_reviewer_finding_after_exhausted_attempts_allows_one_more_retry():
     """The human's own example: attempts are spent, but the review found a
     small bug, so one more attempt has something new to fix -> retry is
@@ -291,18 +338,22 @@ def test_suggested_action_and_return_candidates_follow_cause():
 # -- agent advice ------------------------------------------------------------
 
 
-def test_agent_advice_reads_the_latest_checkpoint_commit_subject(tmp_path: Path):
-    repo, first, second = _git_repo(tmp_path)
+def test_agent_advice_prefers_review_summary_over_stale_checkpoint_commit(tmp_path: Path):
+    repo, first, _second = _git_repo(tmp_path)
     events = [
         _event(1, "result.checkpointed", {"commit_sha": first}),
-        _event(2, "test.written", {"commit_sha": second}),
-        _entered(3),
-        _failed(4, "fallback failure reason"),
+        _entered(2),
+        _failed(3, "fallback failure reason"),
+        _event(4, "prism.verdict", {
+            "verdict": "revise",
+            "findings": ["blocker one", "blocker two"],
+            "review_summary": "bind the review-thread red to AC-FR0359-01",
+        }),
     ]
 
     advice = projections._diagnosis_agent_advice(events, str(repo))
 
-    assert advice == "M-TEST: BLOCKED - re-capture baseline"
+    assert advice == "bind the review-thread red to AC-FR0359-01"
 
 
 def test_agent_advice_falls_back_to_latest_failure_reason(tmp_path: Path):
@@ -315,6 +366,15 @@ def test_agent_advice_falls_back_to_latest_failure_reason(tmp_path: Path):
 
     assert projections._diagnosis_agent_advice(events, str(repo)) == "latest fallback"
     assert projections._diagnosis_agent_advice([], str(repo)) == ""
+
+
+def test_agent_advice_falls_back_to_agent_self_report(tmp_path: Path):
+    repo, _first, _second = _git_repo(tmp_path)
+    events = [
+        _event(1, "outcome.received", {"status": "failed", "self_report": "agent ran out of time"}),
+    ]
+
+    assert projections._diagnosis_agent_advice(events, str(repo)) == "agent ran out of time"
 
 
 # -- run-detail integration --------------------------------------------------
@@ -430,7 +490,7 @@ def test_awaiting_gate_keeps_existing_keys_and_adds_exact_diagnosis_shape(tmp_pa
         "attempts_max": 3,
         "retry_worthy": False,
         "retry_reason": "连续 3 次同一失败签名且无新信息，重试不会不同",
-        "agent_advice": "M-TEST: BLOCKED - re-capture baseline",
+        "agent_advice": "same failure at T-003",
         "suggested_action": "return_m_test",
         "return_candidates": ["M-TEST"],
     }
