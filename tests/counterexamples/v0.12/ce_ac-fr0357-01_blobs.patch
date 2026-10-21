@@ -1,0 +1,13 @@
+diff --git a/tracks/server/run_rounds.py b/tracks/server/run_rounds.py
+index c343c46..d1cee80 100644
+--- a/tracks/server/run_rounds.py
++++ b/tracks/server/run_rounds.py
+@@ -425,7 +425,7 @@ def _detail_output(
+     """
+     blob = _read_blob(repo_path, agent.get("output_ref"))
+     if blob is None:
+-        return {"unavailable": True} if produced else None
++        return None  # counterexample: a missing output blob degrades to null
+     text, calls = _parse_stdout(blob.get("stdout"))
+     stderr = blob.get("stderr")
+     return {

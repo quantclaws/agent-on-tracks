@@ -1,0 +1,13 @@
+diff --git a/tracks/server/run_rounds.py b/tracks/server/run_rounds.py
+index c343c46..1f50b88 100644
+--- a/tracks/server/run_rounds.py
++++ b/tracks/server/run_rounds.py
+@@ -400,7 +400,7 @@ def _detail_input(repo_path: str, agent: dict[str, Any]) -> dict[str, Any] | Non
+     """Dispatch input doc from the input blob (None = blob missing)."""
+     blob = _read_blob(repo_path, agent.get("input_ref"))
+     if blob is None:
+-        return None
++        return {}  # counterexample: a missing input blob degrades to an empty doc
+     prompt = blob.get("prompt")
+     assignment = blob.get("assignment")
+     return {

@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tracks.paths import tracks_home
+from tracks.paths import blobs_dir, tracks_home
 from tracks.store import Store
 from tracks.supervisor import db as service_db
 
@@ -289,6 +289,74 @@ def seed_rounds(
         )
     if with_logs:
         write_thinking_log(repo, version, dispatch_ts)
+    return command_ids
+
+
+def seed_rounds_without_blobs(
+    repo: Path,
+    run_id: str,
+    *,
+    version: str = "v1.0",
+    stage: str = "M-TEST",
+    count: int = 1,
+) -> list[str]:
+    """Seed rounds whose input/output blobs are absent from the blob store.
+
+    Interfaces §1f.2: a missing blob degrades the round detail to
+    ``input: null`` / ``output: {"unavailable": true}`` — the read face must
+    not fail with a server error. The refs are written as real
+    content-addressed names and then removed, so the seed carries a
+    well-formed but unresolvable reference.
+    """
+    store = _store(repo)
+    store.append(run_id, version, "story.requested", {"raw_chars": 1})
+    store.append(run_id, version, "stage.entered", {"stage": stage})
+    command_ids: list[str] = []
+    for index in range(1, count + 1):
+        command_id = f"cmd-noblob-{index}"
+        command_ids.append(command_id)
+        store.append(
+            run_id,
+            version,
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "command_id": command_id,
+                    "params": {
+                        "role": "devon",
+                        "substate": "RED",
+                        "stage": stage,
+                        "attempt": index,
+                        "review_round": index,
+                        "doc": "tests/integration/test_sample.py",
+                        "objective": f"round {index}",
+                        "assignment": {"kind": "RGR", "phase": "red"},
+                    },
+                }
+            },
+            command_id=command_id,
+        )
+        input_ref = store.write_audit_blob({"prompt": f"round {index} prompt"})
+        output_ref = store.write_audit_blob({"stdout": "", "stderr": ""})
+        for ref in (input_ref, output_ref):
+            assert ref, "the blob write must produce a reference"
+            (blobs_dir(tracks_home(repo)) / ref).unlink(missing_ok=True)
+        store.append(
+            run_id,
+            version,
+            "outcome.received",
+            {
+                "status": "done",
+                "output_summary": f"round {index} summary",
+                "agent_io": {
+                    "input_ref": input_ref,
+                    "output_ref": output_ref,
+                    "audit_completeness": "complete",
+                },
+            },
+            command_id=command_id,
+        )
     return command_ids
 
 

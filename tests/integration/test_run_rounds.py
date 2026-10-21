@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests._support.v012_install import git_init
-from tests._support.v012_runs import prepare_home, seed_rounds
+from tests._support.v012_runs import prepare_home, seed_rounds, seed_rounds_without_blobs
 from tests._support.v09_web import (
     http_get,
     login_session,
@@ -46,6 +46,7 @@ def rounds_serve(tmp_path: Path):
         count=1,
         with_logs=False,
     )
+    seed_rounds_without_blobs(repo, "run-rounds-noblob", version="v1.2", count=1)
     proc = start_serve(home, repo, port=0)
     try:
         base = parse_base_url(wait_for_port_line(proc))
@@ -120,10 +121,17 @@ def test_rounds_list_and_detail(rounds_serve):
 
 
 # AC-FR0357-02@v0.12 TRACKS-TRACE missing thinking degrades readably
+# AC-FR0357-01@v0.12 TRACKS-TRACE missing blobs degrade readably
 def test_missing_thinking_degrades(rounds_serve):
     """AC-FR0357-02: when the session log is gone the detail reports
     ``thinking_available: false`` with ``thinking: null`` and still returns
-    the archived input and output (never fabricates reasoning)."""
+    the archived input and output (never fabricates reasoning).
+
+    AC-FR0357-01 (sibling degradation, §1f.2): a round whose input/output
+    blobs are gone still answers 200 with a null input and an
+    ``{"unavailable": true}`` output — the read face degrades instead of
+    failing with a server error.
+    """
     base, cookie, _command_ids, missing_ids = rounds_serve
     status, detail = _get(
         base, cookie, f"/api/runs/run-rounds-missing/rounds/{missing_ids[0]}"
@@ -134,3 +142,14 @@ def test_missing_thinking_degrades(rounds_serve):
     assert "round 1 prompt" in detail["input"]["prompt"]
     assert detail["output"]["text"] == "round 1 output"
     assert detail["output"]["tool_calls"] == [{"tool": "read", "n": 1}]
+
+    status, degraded = _get(
+        base, cookie, "/api/runs/run-rounds-noblob/rounds/cmd-noblob-1"
+    )
+    assert status == 200, degraded
+    assert degraded.get("input") is None, (
+        f"a missing input blob degrades to null: {degraded!r}"
+    )
+    assert degraded["output"] == {"unavailable": True}, (
+        f"a missing output blob degrades to the unavailable marker: {degraded!r}"
+    )
