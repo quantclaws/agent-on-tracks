@@ -1,396 +1,210 @@
 {
  "version": "v0.12",
- "contract": "one counterexample per required test (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
+ "contract": "one counterexample per required AC (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
  "verification": {
-  "write_head_session": "2026-10-21 M-TEST WRITE revision 4 (worktree head 0ce2be6, baseline 47d780f8 / expected_green 82 nodes): the operator landed the kernel fix 'M-TEST rollback re-entry must re-capture the pre-WRITE baseline', so the stale red window is gone - the delivered T-001 anchors now measure green and classify retained_green. Every kill record below was re-verified at this head with the apply -> run bound node -> assert behavioural failure -> revert cycle, and each product file was restored clean (git status shows only tests/** changes).",
-  "apply_check": "every patch passes git apply --check on BOTH trees: the branch tree (the pre-implementation tracks/cli/main.py) and the delivered tree (the runtime's working tree, which carries the install/version implementation). The eight install/version deviations were re-anchored from the _COMMANDS block - whose context drifted when the implementation registered the new subcommands - to the dispatch window inside main() that is byte-identical in both trees.",
-  "guard_kill_session": "re-verified at the WRITE head 0ce2be6: all 21 killed bindings - AC-FR0348-01 (integration declaration + wheel), AC-FR0348-01 version, AC-FR0349-01 (usage parity integration + e2e), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02 (integration + UI), AC-FR0358-01, AC-FR0359-02, AC-FR0360-01 (no-cache + API), AC-NFR0160-01 and the two per-round blob degradations. Each mutation produced the bound test's behavioural assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
-  "red_window_kill_session": "the remaining bindings are legal Red at the WRITE head by design (test-plan §8.1: install/version/lifecycle/review-thread nodes are waiting for Devon). Their patches are minimal single-seam deviations against the declared implementation seams; at the delivered tree the same apply -> run bound node -> assert behavioral failure -> revert cycle is required (and re-anchored if context drifted).",
-  "failclosed_revision_session": "2026-10-21 M-TEST WRITE revision (worktree head 487d7b3, baseline 27807f92): the v0.12 install/version/serve fail-closed clauses gained integration nodes (tests/integration/test_install_failclosed.py, the three new tests/integration/test_server_lifecycle.py nodes) and the per-round blob degradation clause (interfaces §1f.2) was folded into the existing tests/integration/test_run_rounds.py::test_missing_thinking_degrades guard. The two blob patches were applied at this head, each bound node failed on its behavioural assertion (input {} instead of null; output null instead of {unavailable: true}) and the product file was restored clean with git checkout --; the guard passed again after the revert. The install/serve fail-closed nodes are legal Red at this head by design (the install/version/serve faces are not delivered yet), so their patches are the same minimal single-seam deviations against the declared seams: ce_ac-fr0354-01.patch (install face absent -> the closed usage reason is never produced), ce_ac-fr0353-01.patch (version face absent -> the corrupt project is never detected), ce_ac-fr0350-01.patch (background face fails -> the already-running report never happens) and ce_ac-nfr0159-01_stop.patch (stop face ignores the pidfile -> no ownership check, no stale cleanup). Every patch passes git apply --check at this head; the apply -> run bound node -> assert behavioural failure -> revert cycle for those four bindings must be run at the delivered tree (and re-anchored if context drifted).",
-  "delivered_green_window_session": "2026-10-21 M-TEST WRITE revision 2 (worktree head bd52edb): the T-001 install/version contract is fully delivered (the receipt carries the closed interfaces 1b.1 field set with the managed/seeded split, .tracks/env/.gitignore is '*', the root opencode.json is seeded-only, a user-owned root opencode.json and .opencode/opencode.json are never overwritten, git init -b main runs, and the project root is discovered by walking up), so the T-001 acceptance anchors are GREEN by delivery. The pre-WRITE baseline captured before the implementation still demanded red for them, which RED_CHECK reported as unexpected_pass. The operator resolved it in revision 4 by landing the kernel fix that re-captures the pre-WRITE baseline on a rollback re-entry (the re-captured baseline measures 82 green nodes, and the delivered T-001 anchors now classify retained_green).",
-  "red_anchor_tightening_session": "2026-10-21 M-TEST WRITE revision 3 (worktree head 247be0b): the red anchors inside the DECLARED task scopes were sharpened - the review thread-write failure (interfaces 1h.3, test-plan 10 row 22, inside T-003's scope) gained an integration node whose failure is injected black-box (read-only version directory and documents), the T-002 anchor now asserts the full running status rendering (pid/version/url agreeing with the serving line), and revision 4 added the awaiting-precondition node (interfaces 1h.2/1h.4, a fresh idempotency key after the gate was recorded is refused with 422 awaiting_mismatch and adds neither a second event nor a second thread). All three were verified legal Red and are inside T-002/T-003's declared scope.",
-  "prism_finding_response": "PRISM-MTEST-013 (blocker, TEST-5, AC-NFR0159-01, artifact tests/integration/test_server_lifecycle.py) reported the Windows injection as an illegal Red: _windows_driver patched os.name='nt' before the import, so pathlib built WindowsPath, tracks/templating.py's module-level Path(__file__).resolve() raised UnsupportedOperation and the child died with a traceback at 'from tracks.cli.main import main' - it never reached the serve parsing and never produced the contract's unsupported_platform. FIXED: the driver now pre-imports the platform-sensitive standard library (pathlib, shutil, tempfile, subprocess), imports the CLI with the real platform semantics and only then applies the Windows decision the test-plan 6.3 names as the seam (sys.platform + the platform.system override); os.name is deliberately left alone because pathlib decides Path()'s flavour from it at call time and every path the CLI touches would then raise. Both Windows nodes additionally probe the injected CLI with --help first, so a failure under the injection can no longer be confused with a driver that crashes the CLI at import time. VERIFIED at the delivered tree (the implementation-carrying main checkout, the worktree copy restored with git checkout -- afterwards): the injected CLI starts normally (--help exits 0 and prints the usage) and the two nodes now fail on the behavioural contract assertion - 'assert unsupported_platform in trac serve: unknown serve flag: --background' - instead of an import-time traceback.",
-  "delivered_chain_kill_session": "2026-10-21 M-TEST WRITE revision 5 (delivered tree, the runtime's working tree with the install/version implementation): the twelve delivered-chain bindings were killed with the apply -> run bound node -> assert behavioural failure -> restore cycle - the install/version face deviations now answer the generic usage instead of the contract's closed reason, and the package-data deviation answers package_incomplete. Every touched file was restored byte-exactly (the delivered tracks/cli/main.py digest and pyproject.toml were verified unchanged afterwards, and the working tree's status is the pre-session one).",
-  "prism_finding_response_prism_mtest_014": "PRISM-MTEST-014 (blocker, TEST-3) reported that the eight install/version counterexamples no longer applied: they were anchored to the _COMMANDS block of tracks/cli/main.py and the delivered implementation's registration of the install/version subcommands drifted that context, so 'git apply --check' failed on the current tree. FIXED: the eight patches are re-anchored to the dispatch window inside main() ('return 0 / cmd, rest = ... / entry = _COMMANDS.get(cmd) / if entry is None ...'), which is byte-identical in the pre-implementation and the delivered main.py, and the deviation keeps the same semantics (the subcommand is answered with the generic usage instead of the closed reason). All 32 patches now pass git apply --check on both trees, and the twelve delivered-chain bindings were re-killed at the delivered tree."
+  "write_head_session": "2026-10-21 M-TEST WRITE revision 6 (head 1e694ac, the v0.12 T-001 install/version implementation accepted as an operator OOB commit): the per-AC binding table is the canonical shape the closure-evidence consumer reads (one row per AC with ac/if_ref/mutation/patch/test/result, the bound node being the test-plan §8 registered node for that AC). The nineteen killed rows were verified with the apply -> run bound node -> assert behavioural failure -> restore cycle; the five authored-awaiting-producer rows bind surfaces the producer has not delivered yet (the serve lifecycle and the review thread write), so their kill is recorded at the delivered tree (PRISM-MTEST-016).",
+  "apply_check": "every patch passes git apply --check at this head, on the branch tree and on the delivered tree alike: the eight install/version deviations are anchored to the dispatch window inside main() ('return 0 / cmd, rest = args[0], args[1:] / entry = _COMMANDS.get(cmd) / if entry is None or ...'), which is byte-identical in both trees (PRISM-MTEST-014). After each kill the touched product file was restored byte-exactly and the working tree's status is the pre-session one.",
+  "guard_kill_session": "re-verified at this head: the nine OOB-delivered guards (AC-FR0348-01, AC-FR0349-01, AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01, AC-FR0357-02, AC-FR0358-01, AC-FR0359-02, AC-NFR0160-01) and the ten delivered install/version anchors (AC-FR0348-02, AC-FR0351-01/02, AC-FR0352-01/02, AC-FR0353-01/02, AC-FR0354-01) - each mutation produced the bound test's behavioural assertion failure (no collection/fixture error) and the product file was reverted clean.",
+  "delivered_chain_kill_session": "the ten delivered install/version anchors were killed at the delivered tree: the install/version face answers the generic usage instead of the contract's closed reason and the package-data deviation answers package_incomplete. The two per-round blob degradations (AC-FR0357-01/02) and the API-semantics half of AC-FR0360-01 were killed the same way (the input blob degrades to an empty doc, the output blob to null, the API routes keep the no-cache header).",
+  "prism_mtest_013_response": "PRISM-MTEST-013 (illegal Red): the Windows platform injection patched os.name before the import, so pathlib built WindowsPath and the child died at import time instead of reaching the serve parsing. Fixed: the driver pre-imports the platform-sensitive standard library, imports the CLI with the real platform semantics and only then applies the Windows decision the test-plan §6.3 names as the seam (sys.platform plus the platform.system override), and both Windows nodes probe the injected CLI with --help first, so a failure under the injection can no longer be confused with a driver that crashes the CLI.",
+  "prism_mtest_014_response": "PRISM-MTEST-014 (stale counterexamples): the eight install/version patches were anchored to the _COMMANDS block, whose context drifted when the implementation registered the new subcommands. Fixed: they are re-anchored to the dispatch window inside main(), which is byte-identical in both trees, keeping the same semantics; all 32 patches now pass git apply --check on both trees.",
+  "prism_mtest_019_response": "PRISM-MTEST-019 (non-canonical manifest): the table used the key test_bindings and the rows carried no if_ref, so the closure-evidence consumer (_load_binding_tables / _parse_bindings) failed closed on v0.12. Fixed: the top-level key is bindings, every row carries ac/if_ref/mutation/patch/test/result, and the table is folded to one row per AC whose bound test is the test-plan §8 registered node for that AC.",
+  "supplemental_bindings": "the nodes this revision added beyond the §8 table keep their own counterexamples: tests/integration/test_install_failclosed.py (install usage, missing receipt, receipt/site-packages version mismatch - ce_ac-fr0353-01.patch / ce_ac-fr0354-01.patch), tests/integration/test_server_lifecycle.py (the stop ownership refusal and the stale pidfile cleanup - ce_ac-nfr0159-01_stop.patch; the documented pidfile and the service log - ce_ac-fr0350-01.patch; the running status rendering - ce_ac-fr0350-01.patch; the taken port - ce_ac-fr0350-01.patch; the Windows --stop refusal - ce_ac-nfr0159-01_stop.patch) and tests/integration/test_review_decision_contract.py (the thread-write failure - ce_ac-fr0359-01_thread.patch; the awaiting precondition - ce_ac-fr0359-01_thread.patch). They are red-window bindings: the serve lifecycle and the review thread write are not delivered yet, so their kill is recorded at the delivered tree.",
+  "prism_mtest_017_response": "PRISM-MTEST-017 (red attribution): the five inherited awaiting-ui tests that carry the v0.12 review-thread assertion (_return_with_thread / _assert_review_thread) now also declare the '# AC-FR0359-01@v0.12 TRACKS-TRACE' marker, so the red they carry is attributed to the AC whose clause they assert instead of only to their inherited v0.11 ACs. The marker is behaviour-neutral (the nodes still fail on the behavioural contract assertion - the human.review payload carries no doc/thread_id) and the trace closure still passes with all 24 v0.12 ACs bound.",
+  "prism_mtest_015_open": "PRISM-MTEST-015 (advisory, still open): the mermaid render-failure degradation (timeline.js '（阶段图渲染失败，稍后重试）') and the windowless stage-workflow-empty line still have no assertion. The injection seam (a mermaid source the renderer cannot draw) is not an interfaces §4 outlet, so the test cannot seed it without a documented injection point; it is reported as an M-DESIGN coverage gap rather than asserted against an invented expectation."
  },
- "test_bindings": [
+ "bindings": [
   {
    "ac": "AC-FR0348-01",
-   "test": "tests/integration/test_install_package.py::test_scaffold_package_resources_declared",
+   "if_ref": "IF-INSTALL-001, IF-INSTALLPKG-001",
+   "mutation": "the wheel's package-data drops the default opencode.json, so the official artifact carries no default harness config",
    "patch": "ce_ac-fr0348-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: package-data must declare assets/opencode.json -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0348-01",
    "test": "tests/integration/test_install_package.py::test_wheel_carries_capability_resources",
-   "patch": "ce_ac-fr0348-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: tracks/assets/opencode.json missing from the built wheel -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0348-01",
-   "test": "tests/e2e/test_install_journey.py::test_install_from_official_wheel",
-   "patch": "ce_ac-fr0348-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: trac install: package_incomplete: missing assets/opencode.json -> restored clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0348-02",
-   "test": "tests/integration/test_install_package.py::test_incomplete_wheel_rejected",
+   "if_ref": "IF-INSTALL-001, IF-INSTALLPKG-001",
+   "mutation": "the install face is disabled, so the closed package_incomplete reason is never produced",
    "patch": "ce_ac-fr0348-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the closed reason must be package_incomplete (the install face answered the generic usage) -> restored clean"
+   "test": "tests/integration/test_install_package.py::test_incomplete_wheel_rejected",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0349-01",
+   "if_ref": "IF-GLOBALCLI-001, IF-INSTALLPKG-001",
+   "mutation": "the usage text drops the install token, so the zero-repo help face is not truthful",
+   "patch": "ce_ac-fr0349-01_usage.patch",
    "test": "tests/integration/test_install_package.py::test_global_trac_help_zero_repo",
-   "patch": "ce_ac-fr0349-01_usage.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: usage must advertise install -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0349-01",
-   "test": "tests/integration/test_install_package.py::test_subcommand_tokens_registered",
-   "patch": "ce_ac-fr0349-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: TRAC_SUBCOMMANDS must register install -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0349-01",
-   "test": "tests/e2e/test_install_journey.py::test_global_trac_available_anywhere",
-   "patch": "ce_ac-fr0349-01_usage.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert install in the printed usage -> reverted clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0349-02",
-   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "if_ref": "IF-GLOBALCLI-001, IF-SERVERLIFE-001",
+   "mutation": "the serve face answers a generic mutation error for every --repo invocation, so the not_installed refusal never happens",
    "patch": "ce_ac-fr0349-02.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (serve install precondition not delivered); the serve-entry seam patch is applied/re-anchored at the delivered tree"
+   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "result": "authored-awaiting-producer"
   },
   {
    "ac": "AC-FR0350-01",
+   "if_ref": "IF-PROJECTCLI-001, IF-SERVERLIFE-001, IF-VERSIONVIS-001",
+   "mutation": "the background start answers background_failed, so the project's locked version is never served",
+   "patch": "ce_ac-fr0350-01.patch",
    "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_and_reports_locked_version",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/e2e/test_install_journey.py::test_project_server_background_roundtrip",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+   "result": "authored-awaiting-producer"
   },
   {
    "ac": "AC-FR0350-02",
-   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "if_ref": "IF-GLOBALCLI-001, IF-SERVERLIFE-001",
+   "mutation": "the serve face answers a generic mutation error for every --repo invocation, so the not_installed refusal never happens",
    "patch": "ce_ac-fr0350-02.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (serve install precondition not delivered); the serve-entry seam patch is applied/re-anchored at the delivered tree"
+   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
+   "result": "authored-awaiting-producer"
   },
   {
    "ac": "AC-FR0351-01",
+   "if_ref": "IF-INSTALL-001, IF-PROJECTCLI-001, IF-VERSIONVIS-001",
+   "mutation": "the version face is disabled, so the project scope is never reported",
+   "patch": "ce_ac-fr0351-01.patch",
    "test": "tests/integration/test_install_versions.py::test_explicit_version_and_global_project_split",
-   "patch": "ce_ac-fr0351-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the version face answered the generic usage instead of the project scope -> restored clean"
-  },
-  {
-   "ac": "AC-FR0351-01",
-   "test": "tests/e2e/test_install_journey.py::test_install_old_version_while_global_new",
-   "patch": "ce_ac-fr0351-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> the version face answered the generic usage, so the scope JSON could not be read -> restored clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0351-02",
-   "test": "tests/integration/test_install_targets.py::test_empty_dir_and_existing_project",
+   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
+   "mutation": "the install face is disabled, so the empty-directory target is never scaffolded",
    "patch": "ce_ac-fr0351-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the install face answered the generic usage instead of the success line -> restored clean"
+   "test": "tests/integration/test_install_targets.py::test_empty_dir_and_existing_project",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0352-01",
-   "test": "tests/integration/test_install_overwrite.py::test_managed_files_replaced_user_files_byte_identical",
+   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
+   "mutation": "the install face is disabled, so the managed files are never replaced with the installed version",
    "patch": "ce_ac-fr0352-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the install face answered the generic usage instead of the success line -> restored clean"
+   "test": "tests/integration/test_install_overwrite.py::test_managed_files_replaced_user_files_byte_identical",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0352-02",
-   "test": "tests/integration/test_install_overwrite.py::test_user_modified_managed_file_overwritten",
+   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
+   "mutation": "the install face is disabled, so a user-modified managed file is never overwritten",
    "patch": "ce_ac-fr0352-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the install face answered the generic usage instead of the success line -> restored clean"
+   "test": "tests/integration/test_install_overwrite.py::test_user_modified_managed_file_overwritten",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0353-01",
+   "if_ref": "IF-PROJECTCLI-001, IF-PROJLAYOUT-001, IF-VERSIONVIS-001",
+   "mutation": "the version face is disabled, so the locked project scope is never reported after a global upgrade",
+   "patch": "ce_ac-fr0353-01.patch",
    "test": "tests/integration/test_install_versions.py::test_global_upgrade_keeps_locked_project",
-   "patch": "ce_ac-fr0353-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the version face answered the generic usage instead of the project scope -> restored clean"
-  },
-  {
-   "ac": "AC-FR0353-01",
-   "test": "tests/e2e/test_install_journey.py::test_upgrade_global_project_stays_old",
-   "patch": "ce_ac-fr0353-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> the version face answered the generic usage, so the scope JSON could not be read -> restored clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0353-02",
-   "test": "tests/integration/test_install_versions.py::test_no_auto_upgrade_or_lock_change",
+   "if_ref": "IF-PROJECTCLI-001, IF-PROJLAYOUT-001",
+   "mutation": "the version face is disabled, so the locked receipt is never observed after a global upgrade",
    "patch": "ce_ac-fr0353-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the version face answered the generic usage instead of the project scope -> restored clean"
+   "test": "tests/integration/test_install_versions.py::test_no_auto_upgrade_or_lock_change",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0354-01",
+   "if_ref": "IF-INSTALL-001, IF-INSTALLPKG-001, IF-PROJLAYOUT-001",
+   "mutation": "the install face is disabled, so the closed failure reasons are never produced",
+   "patch": "ce_ac-fr0354-01.patch",
    "test": "tests/integration/test_install_versions.py::test_failure_semantics_and_retry",
-   "patch": "ce_ac-fr0354-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: expected target_not_directory, the install face answered the generic usage -> restored clean"
-  },
-  {
-   "ac": "AC-FR0354-01",
-   "test": "tests/integration/test_install_overwrite.py::test_reinstall_idempotent",
-   "patch": "ce_ac-fr0354-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the delivered tree -> AssertionError: the install face answered the generic usage instead of the success line -> restored clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0355-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
+   "if_ref": "IF-STAGEPATH-001, IF-WEBUI-001",
+   "mutation": "the stage path always renders the done state, so the attention/pending states disappear from the track",
    "patch": "ce_ac-fr0355-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the path must render a attention node -> reverted clean"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0355-02",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable",
+   "if_ref": "IF-STAGEPATH-001, IF-WEBUI-001",
+   "mutation": "the node detail fabricates a start/end line, so the no-events degradation is lost",
    "patch": "ce_ac-fr0355-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: no recorded events for M-START yet not rendered -> reverted clean"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0356-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds",
+   "if_ref": "IF-STAGEWORKFLOW-001, IF-WEBUI-001",
+   "mutation": "the stage workflow summary always reports zero dispatches, so the aggregate loses its dispatch count",
    "patch": "ce_ac-fr0356-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the dispatch count collapsed to 0 -> reverted clean"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0357-01",
-   "test": "tests/integration/test_run_rounds.py::test_rounds_list_and_detail",
+   "if_ref": "IF-QUERY-001, IF-ROUNDS-001, IF-WEBUI-001",
+   "mutation": "the round list is always empty, so the per-stage rounds disappear from the read face",
    "patch": "ce_ac-fr0357-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: [] == [1, 2] (the round list lost its rounds) -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0357-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_per_round_detail_lazy_accordion",
-   "patch": "ce_ac-fr0357-01_ui.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the rounds list must not load before the first expansion -> reverted clean"
+   "test": "tests/integration/test_run_rounds.py::test_rounds_list_and_detail",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0357-02",
+   "if_ref": "IF-ROUNDS-001, IF-WEBUI-001",
+   "mutation": "the round detail never reports the session-log rotation, so the thinking degradation is lost",
+   "patch": "ce_ac-fr0357-02.patch",
    "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
-   "patch": "ce_ac-fr0357-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert True is False (the rotation degradation vanished) -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0357-02",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_round_thinking_missing_message",
-   "patch": "ce_ac-fr0357-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the rotation explanation is missing -> reverted clean"
+   "result": "killed"
   },
   {
    "ac": "AC-FR0358-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_run_card_local_time_and_heartbeat_not_reset",
+   "if_ref": "IF-RUNCARD-001, IF-WEBUI-001",
+   "mutation": "the card's last event is the heartbeat, so the gate wait is reset by it",
    "patch": "ce_ac-fr0358-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the wait must start at the last business event, not the heartbeat -> reverted clean"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_run_card_local_time_and_heartbeat_not_reset",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0359-01",
+   "if_ref": "IF-DOCSWRITE-001, IF-GATEUI-001, IF-REVIEWDECISION-001",
+   "mutation": "the review checkpoint drops the comments from the human.review payload, so the returned comment is never carried",
+   "patch": "ce_ac-fr0359-01.patch",
    "test": "tests/integration/test_review_decision_contract.py::test_return_writes_thread_then_review_event",
-   "patch": "ce_ac-fr0359-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (review thread write not delivered); the review-checkpoint seam patch is applied/re-anchored at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0359-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_review_two_decisions_thread_and_continue",
-   "patch": "ce_ac-fr0359-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (review thread write not delivered); the review-checkpoint seam patch is applied/re-anchored at the delivered tree"
+   "result": "authored-awaiting-producer"
   },
   {
    "ac": "AC-FR0359-02",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure",
+   "if_ref": "IF-AWAIT-001, IF-REVIEWDECISION-001, IF-WEBUI-001",
+   "mutation": "the normal review gate renders the reason/impact block, so the terse normal gate is lost",
    "patch": "ce_ac-fr0359-02.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a normal review gate must not stack template reason text -> reverted clean"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure",
+   "result": "killed"
   },
   {
    "ac": "AC-FR0360-01",
-   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
+   "if_ref": "IF-QUERY-001, IF-STATICCACHE-001",
+   "mutation": "the static no-cache middleware is disabled, so the text assets keep the heuristic cache headers",
    "patch": "ce_ac-fr0360-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert None == no-cache -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0360-01",
-   "test": "tests/integration/test_static_cache.py::test_api_semantics_unchanged",
-   "patch": "ce_ac-fr0360-01_api.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: API routes must not receive the static no-cache header -> reverted clean"
+   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
+   "result": "killed"
   },
   {
    "ac": "AC-NFR0159-01",
+   "if_ref": "IF-PROJECTCLI-001, IF-SERVERLIFE-001",
+   "mutation": "the background start answers background_failed, so the detached service never survives the shell exit",
+   "patch": "ce_ac-nfr0159-01.patch",
    "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_exit_and_stop_unreachable",
-   "patch": "ce_ac-nfr0159-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (background lifecycle not delivered); the background seam patch is applied/re-anchored at the delivered tree"
-  },
-  {
-   "ac": "AC-NFR0159-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_windows_foreground_branch",
-   "patch": "ce_ac-nfr0159-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at WRITE (windows/background branch not delivered); the background seam patch is applied/re-anchored at the delivered tree"
+   "result": "authored-awaiting-producer"
   },
   {
    "ac": "AC-NFR0160-01",
-   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
-   "patch": "ce_ac-fr0360-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert None == no-cache -> reverted clean"
-  },
-  {
-   "ac": "AC-NFR0160-01",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint",
+   "if_ref": "IF-ROUNDS-001, IF-STATICCACHE-001",
+   "mutation": "the rounds list is fetched eagerly, so the large-round first paint is blocked",
    "patch": "ce_ac-nfr0160-01.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the first paint must not fetch per-round data -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0348-01",
-   "test": "tests/integration/test_install_package.py::test_version_bump_matches",
-   "patch": "ce_ac-fr0348-01-version.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert 0.11.0 == 0.12.0 -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0357-01",
-   "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
-   "patch": "ce_ac-fr0357-01_blobs.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a missing output blob degrades to the unavailable marker -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0357-01",
-   "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
-   "patch": "ce_ac-fr0357-01_input.patch",
-   "result": "killed",
-   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a missing input blob degrades to null -> reverted clean"
-  },
-  {
-   "ac": "AC-FR0354-01",
-   "test": "tests/integration/test_install_failclosed.py::test_install_usage_failure_writes_nothing",
-   "patch": "ce_ac-fr0354-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the install face is not delivered); the patch removes the install dispatch entry, so the closed usage reason (interfaces §1c.5) is never produced — the same apply -> run bound node -> assert behavioural failure -> revert cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0353-01",
-   "test": "tests/integration/test_install_failclosed.py::test_missing_receipt_is_install_corrupt",
-   "patch": "ce_ac-fr0353-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the version face is not delivered); the patch removes the version dispatch entry, so a corrupt project is never reported as install_corrupt and the global version takes over (interfaces §1d.2/§1d.3) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_install_failclosed.py::test_receipt_version_mismatch_is_install_corrupt",
-   "patch": "ce_ac-fr0353-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the version face is not delivered); the patch removes the version dispatch entry, so the receipt/site-packages version mismatch is never reported as install_corrupt (interfaces §1d.3/§1d.5) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-NFR0159-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_stop_refuses_foreign_pid_and_cleans_stale_pidfile",
-   "patch": "ce_ac-nfr0159-01_stop.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the serve stop face is not delivered); the patch makes the stop face ignore the pidfile, so the foreign pid is never refused with stop_refused and no stale pidfile is cleaned (interfaces §1e.3) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_second_background_start_reports_already_running",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the background face is not delivered); the patch makes the background outlet fail with background_failed, so the already running report never happens (interfaces §1e.2) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_background_on_taken_port_fails_without_pidfile",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the background face is not delivered); the patch changes the background outlet's error semantics to background_failed, so the contract's taken-port branch (interfaces §1e.2: background_failed, no pidfile) is never observed — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0352-01",
-   "test": "tests/integration/test_install_targets.py::test_empty_dir_and_existing_project",
-   "patch": "ce_ac-fr0352-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the install face is not delivered in the test-authority worktree); the patch removes the install dispatch entry, so the user's own root opencode.json and .opencode/opencode.json are no longer preserved untouched (interfaces §1b.4) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_background_writes_documented_pidfile_and_log",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the background face is not delivered); the patch changes the background outlet's error semantics to background_failed, so the documented pidfile and the service log are never produced (interfaces §1b.5, §1e.2, §3 rows 8/9) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_status_reports_stale_pidfile_as_stopped",
-   "patch": "ce_ac-nfr0159-01_stop.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the status face is not delivered); the patch makes the stop/status face ignore the pidfile, so a stale pidfile is never reported as stopped (stale pidfile) (interfaces §1e.4) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-NFR0159-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_windows_stop_refused",
-   "patch": "ce_ac-nfr0159-01_stop.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the stop face is not delivered); the patch makes the stop face ignore the platform check, so --stop is never refused with unsupported_platform on Windows (interfaces §1e.5) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0359-01",
-   "test": "tests/integration/test_review_decision_contract.py::test_thread_write_failure_fails_the_command_without_the_event",
-   "patch": "ce_ac-fr0359-01_thread.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the review thread write is not delivered: the decision completes and the human.review event lands without any document thread, exactly as test-plan 8.1 records); the patch drops the document artifact from the review checkpoint, so the decision never touches the document and a failing thread write is never surfaced as a failed command (outside interfaces 1h.3) — the same apply -> run bound node -> assert behavioural failure -> revert cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0350-01",
-   "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_and_reports_locked_version",
-   "patch": "ce_ac-fr0350-01.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the background/status face is not delivered); the patch changes the background outlet's error semantics to background_failed, so the running status line (running pid=... version=... url=...) is never rendered (interfaces 1e.4) — the kill cycle is required at the delivered tree"
-  },
-  {
-   "ac": "AC-FR0359-01",
-   "test": "tests/integration/test_review_decision_contract.py::test_second_decision_with_a_fresh_key_is_refused",
-   "patch": "ce_ac-fr0359-01_thread.patch",
-   "result": "red-window",
-   "kill_evidence": "legal Red at the WRITE head (the document thread write is not delivered, so the first decision records no thread and the node's thread assertion fails); the patch drops the document artifact from the review checkpoint, so a decision never touches the document and the awaiting precondition can no longer distinguish a fresh decision from a duplicate one (outside interfaces 1h.2/1h.4) — the same apply -> run bound node -> assert behavioural failure -> revert cycle is required at the delivered tree"
+   "test": "tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint",
+   "result": "killed"
   }
  ]
 }

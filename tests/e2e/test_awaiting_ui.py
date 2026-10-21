@@ -157,6 +157,7 @@ def _return_with_thread(page, repo, run_id: str, comments: str = _COMMENTS) -> N
 
 
 # AC-FR0343-01@v0.11 TRACKS-TRACE awaiting panel primary action normal gate terse
+# AC-FR0359-01@v0.12 TRACKS-TRACE the return decision writes the document root thread before human.review
 def test_awaiting_panel_reason_impact_action(trac, tmp_path, page):
     """AC-FR0343-01 (v0.12 face): the awaiting node's detail pane presents
     the gate's action panel with its single primary action entry; the normal
@@ -185,6 +186,7 @@ def test_awaiting_panel_reason_impact_action(trac, tmp_path, page):
 
 
 # AC-FR0334-02@v0.11 TRACKS-TRACE stage review completed inside panel
+# AC-FR0359-01@v0.12 TRACKS-TRACE the return decision writes the document root thread before human.review
 def test_stage_review_completed_in_panel(trac, tmp_path, page):
     """AC-FR0334-02: the stage gates complete inside the awaiting panel —
     triage (go) in the panel, then the review gate presents and its return
@@ -240,6 +242,7 @@ def test_no_dangling_stage_review(trac, tmp_path, page):
 
 
 # AC-FR0345-01@v0.11 TRACKS-TRACE self drive next gate appears pointer moves
+# AC-FR0359-01@v0.12 TRACKS-TRACE the return decision writes the document root thread before human.review
 def test_self_drive_next_gate_appears(trac, tmp_path, page):
     """AC-FR0345-01: after the panel's triage action no manual trigger is
     needed — the supervisor advances the run and the next gate presents on the
@@ -297,6 +300,7 @@ def test_approve_release_in_panel(tmp_path, page):
 
 
 # AC-FR0344-01@v0.11 TRACKS-TRACE review round doc write through the panel
+# AC-FR0359-01@v0.12 TRACKS-TRACE the return decision writes the document root thread before human.review
 def test_review_round_doc_write(trac, tmp_path, page):
     """AC-FR0344-01 (ui half): in the review round the reviewed document's
     Docs window presents the anchor-line comment composer and the published
@@ -351,6 +355,7 @@ def test_review_round_doc_write(trac, tmp_path, page):
 
 
 # AC-NFR0157-01@v0.11 TRACKS-TRACE ui writes carry csrf and idempotency headers
+# AC-FR0359-01@v0.12 TRACKS-TRACE the return decision writes the document root thread before human.review
 def test_ui_writes_carry_headers(trac, tmp_path, page):
     """AC-NFR0157-01 (ui half): every write the gate panel issues carries the
     X-Trac-CSRF and Idempotency-Key headers — the single command-plane write
