@@ -94,6 +94,20 @@ def _write_pidfile(project: Path, pid: int) -> Path:
     return path
 
 
+def _windows_driver() -> str:
+    """A CLI driver with the platform injected as Windows (§1e.5, §6.3)."""
+    return (
+        "import os, platform, sys\n"
+        "platform.system = lambda: 'Windows'\n"
+        "sys.platform = 'win32'\n"
+        "os.name = 'nt'\n"
+        # import after the platform injection so a module-level platform
+        # constant in the serve entry also sees Windows (§6.3).
+        "from tracks.cli.main import main\n"
+        "raise SystemExit(main(sys.argv[1:]))\n"
+    )
+
+
 # AC-FR0349-02@v0.12 TRACKS-TRACE serve outside a project is refused
 # AC-FR0350-02@v0.12 TRACKS-TRACE no global version fallback for serve
 def test_serve_outside_project_refused(v012_global, tmp_path):
@@ -202,16 +216,7 @@ def test_windows_foreground_branch(v012_global, tmp_path):
     lifetime is the service lifetime (no pidfile, unreachable once it ends)."""
     project = git_init(tmp_path / "project", {"README.md": "p\n"})
     _install_project(v012_global, project, tmp_path)
-    driver = (
-        "import os, platform, sys\n"
-        "platform.system = lambda: 'Windows'\n"
-        "sys.platform = 'win32'\n"
-        "os.name = 'nt'\n"
-        # import after the platform injection so a module-level platform
-        # constant in the serve entry also sees Windows (§6.3).
-        "from tracks.cli.main import main\n"
-        "raise SystemExit(main(sys.argv[1:]))\n"
-    )
+    driver = _windows_driver()
     refused = subprocess.run(
         [sys.executable, "-c", driver, "serve", "--repo", str(project), "--background"],
         cwd=str(tmp_path),
@@ -354,3 +359,76 @@ def test_background_on_taken_port_fails_without_pidfile(v012_global, tmp_path):
         v012_global.run(
             "serve", "--repo", str(holder), "--stop", cwd=tmp_path, timeout=30
         )
+
+
+# AC-FR0350-01@v0.12 TRACKS-TRACE background writes the documented pidfile and log
+def test_background_writes_documented_pidfile_and_log(v012_global, tmp_path):
+    """AC-FR0350-01: a background start records the documented pidfile
+    (``pid``/``host``/``port``/``version``/``repo``/``started_at``) that agrees
+    with the announced serving line and the project's locked version, and
+    appends the background child's output to the service log
+    (§1b.5, §1e.2, §3 rows 8/9)."""
+    project = git_init(tmp_path / "project", {"README.md": "p\n"})
+    _install_project(v012_global, project, tmp_path)
+    started = _start_background(v012_global, project, tmp_path)
+    assert started.returncode == 0, started.stderr
+    parsed = parse_serving_line(_serving_line(started.stdout))
+    try:
+        pidfile = _pidfile(project)
+        assert pidfile.is_file(), "the background start must write the pidfile"
+        record = json.loads(pidfile.read_text(encoding="utf-8"))
+        assert record["pid"] == int(parsed["pid"]), record
+        assert record["port"] == int(parsed["url"].rsplit(":", 1)[1]), record
+        assert record["version"] == receipt(project)["version"], record
+        assert record["host"], record
+        assert project.name in record["repo"], record
+        assert record["started_at"], record
+    finally:
+        v012_global.run(
+            "serve", "--repo", str(project), "--stop", cwd=tmp_path, timeout=30
+        )
+    log = project / ".tracks" / "service" / "serve.log"
+    assert log.is_file(), "the background start must append to the service log"
+    body = log.read_text(encoding="utf-8")
+    assert body.strip(), "the service log must carry the background child's output"
+    assert parsed["url"].rsplit(":", 1)[1] in body, (
+        f"the service log must carry the announced serving line: {body!r}"
+    )
+
+
+# AC-FR0350-01@v0.12 TRACKS-TRACE status reports a stale pidfile as stopped
+def test_status_reports_stale_pidfile_as_stopped(v012_global, tmp_path):
+    """AC-FR0350-01: ``--status`` on a stale pidfile reports
+    ``stopped (stale pidfile)`` and exits 0 (§1e.4)."""
+    project = git_init(tmp_path / "project", {"README.md": "p\n"})
+    _install_project(v012_global, project, tmp_path)
+    stale = subprocess.Popen(["sleep", "0.01"])
+    stale.wait(timeout=10)
+    _write_pidfile(project, stale.pid)
+    status = v012_global.run(
+        "serve", "--repo", str(project), "--status", cwd=tmp_path, timeout=30
+    )
+    assert status.returncode == 0, status.stderr
+    assert "stopped" in status.stdout, status.stdout
+    assert "stale pidfile" in status.stdout, status.stdout
+
+
+# AC-NFR0159-01@v0.12 TRACKS-TRACE windows stop refused
+def test_windows_stop_refused(v012_global, tmp_path):
+    """AC-NFR0159-01 (Windows half): ``--stop`` is refused with
+    ``unsupported_platform`` and leaves the pidfile alone (§1e.5)."""
+    project = git_init(tmp_path / "project", {"README.md": "p\n"})
+    _install_project(v012_global, project, tmp_path)
+    pidfile = _write_pidfile(project, 4242)
+    refused = subprocess.run(
+        [sys.executable, "-c", _windows_driver(), "serve", "--repo", str(project), "--stop"],
+        cwd=str(tmp_path),
+        env=v012_global.env({"TRAC_SERVE_PASSWORD": "v012-test-password"}),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert refused.returncode != 0
+    assert "unsupported_platform" in refused.stderr, refused.stderr
+    assert pidfile.exists(), "a refused stop must not consume the pidfile"

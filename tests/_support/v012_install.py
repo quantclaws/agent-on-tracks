@@ -250,12 +250,19 @@ def git_init(path: Path, files: dict[str, str] | None = None) -> Path:
 
 
 def make_existing_project(path: Path) -> Path:
-    """An in-progress git project with tracked and untracked user files."""
+    """An in-progress git project with tracked and untracked user files.
+
+    The user owns the root ``opencode.json`` and its own
+    ``.opencode/opencode.json``: interfaces §1b.4 makes the root config
+    seeded-only and forbids touching the user's own ``.opencode`` config.
+    """
     git_init(
         path,
         {
             "src/app.py": "def main():\n    return 1\n",
             "docs/notes.md": "user notes\n",
+            "opencode.json": '{"user": "own harness config"}\n',
+            ".opencode/opencode.json": '{"user": "own opencode config"}\n',
         },
     )
     (path / "scratch.txt").write_text("untracked user scratch\n", encoding="utf-8")
