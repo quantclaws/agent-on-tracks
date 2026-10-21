@@ -7,13 +7,15 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from tracks.executor.helpers import parse_collected_nodes, run_collect_command
+from tracks.executor.helpers import git, parse_collected_nodes, run_collect_command
 from tracks.executor.host_contract import declared_install_interpreter
 from tracks.executor.test_select import (
     BaselineAssets,
@@ -79,6 +81,107 @@ def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     if sys.prefix != sys.base_prefix and os.access(sys.executable, os.X_OK):
         return [sys.executable, *argv[1:]]
     return argv
+
+
+def _node_function_name(node: str) -> str:
+    """Return the pytest function segment of ``file::[Class::]test[params]``."""
+    parts = node.split("::")
+    if len(parts) < 2:
+        return ""
+    return parts[-1].partition("[")[0].strip()
+
+
+def _function_defined(source: str, name: str) -> bool:
+    """True when ``source`` still defines ``name`` (conservative: unknown -> True)."""
+    if not name:
+        return True
+    return re.search(rf"\bdef\s+{re.escape(name)}\s*\(", source) is not None
+
+
+def _partition_removed_nodes(
+    removed: list[str],
+    *,
+    baseline_nodes: frozenset[str],
+    oob_files: set[str],
+    oob_shas: list[str],
+    oob_blob: Callable[[str, str], str | None],
+    worktree_blob: Callable[[str], str | None],
+    oob_source: Callable[[str, str], str | None],
+) -> tuple[list[str], list[str]]:
+    """Split removed baseline nodes into ``(retired_by_oob, unexplained)``.
+
+    A node is OOB-retired only when its file is carried by an accepted
+    operator OOB declaration, the worktree blob equals the file blob of one of
+    THIS run's accepted OOB shas, and that OOB version no longer defines the
+    node's function. Everything else stays unexplained (fail closed). The
+    git reads are injected so the classification is unit-testable without a
+    repository."""
+    baseline_files = {node.partition("::")[0] for node in baseline_nodes}
+    retired: list[str] = []
+    unexplained: list[str] = []
+    worktree_cache: dict[str, str | None] = {}
+    for node in removed:
+        file = node.partition("::")[0]
+        name = _node_function_name(node)
+        if node not in baseline_nodes or file not in baseline_files:
+            unexplained.append(node)
+            continue
+        if not name or file not in oob_files:
+            unexplained.append(node)
+            continue
+        if file not in worktree_cache:
+            worktree_cache[file] = worktree_blob(file)
+        current_blob = worktree_cache[file]
+        if not current_blob:
+            unexplained.append(node)
+            continue
+        retired_node = False
+        for sha in oob_shas:
+            if not sha or oob_blob(sha, file) != current_blob:
+                continue
+            source = oob_source(sha, file)
+            if source is None or _function_defined(source, name):
+                continue
+            retired_node = True
+            break
+        if retired_node:
+            retired.append(node)
+        else:
+            unexplained.append(node)
+    return retired, unexplained
+
+
+def _git_oob_blob(repo: Path, sha: str, file: str) -> str | None:
+    """Blob id of ``file`` at ``sha`` via git plumbing (nothing is checked out)."""
+    try:
+        proc = git(repo, "rev-parse", f"{sha}:{file}", check=False)
+    except (OSError, UnicodeDecodeError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _git_worktree_blob(repo: Path, file: str) -> str | None:
+    """Blob id of the current worktree ``file`` (``git hash-object``)."""
+    try:
+        proc = git(repo, "hash-object", "--", file, check=False)
+    except (OSError, UnicodeDecodeError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _git_oob_source(repo: Path, sha: str, file: str) -> str | None:
+    """Text of ``file`` at ``sha`` (``git show <sha>:<file>``), or None."""
+    try:
+        proc = git(repo, "show", f"{sha}:{file}", check=False)
+    except (OSError, UnicodeDecodeError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
 
 
 class ExecTestCollectMixin:
@@ -454,7 +557,12 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
 
         REMOVED (a baseline node absent from full collect) is fail-closed test-
         asset deletion: test.collected(failed, error_class=asset_deleted);
-        it never silently de-registers nor continues gating. The per-node
+        it never silently de-registers nor continues gating. The sole
+        exception is a node attributable to an accepted operator OOB commit:
+        its file still holds exactly that OOB commit's content and the OOB
+        version no longer defines the node's function, so it is retired into
+        ``oob_retired`` instead of being charged as a test defect. Any
+        unexplained removed node keeps the fail-closed path. The per-node
         {node, layer, class} table persists to a blob referenced by
         ``per_node_blob`` for RED_CHECK's SELECT_R2 binding."""
         if reconcile and state.test_collected:
@@ -483,10 +591,57 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         baseline_assets, digests = loaded
         classes = classify_nodes(baseline_assets, all_nodes, digests)
         removed = sorted(node for node, klass in classes.items() if klass == "removed")
+        oob_retired: list[str] = []
         if removed:
-            self._emit_removed_assets(cmd, state, all_nodes, removed)
-            return
-        self._emit_collected_passed(cmd, all_nodes, node_layer, classes)
+            oob_retired, unexplained = self._partition_removed_nodes(
+                removed, baseline_assets
+            )
+            if unexplained:
+                self._emit_removed_assets(
+                    cmd, state, all_nodes, unexplained, oob_retired=oob_retired
+                )
+                return
+            retired_set = set(oob_retired)
+            baseline_assets = BaselineAssets(
+                nodes=frozenset(
+                    node for node in baseline_assets.nodes if node not in retired_set
+                ),
+                node_digests={
+                    node: digest
+                    for node, digest in baseline_assets.node_digests.items()
+                    if node not in retired_set
+                },
+            )
+            classes = classify_nodes(baseline_assets, all_nodes, digests)
+        self._emit_collected_passed(
+            cmd, all_nodes, node_layer, classes, oob_retired=oob_retired
+        )
+
+    def _oob_accepted_shas(self) -> list[str]:
+        """Accepted operator OOB commit shas for THIS run (event order)."""
+        shas: list[str] = []
+        for ev in self.store.events(self.run_id):
+            if ev.type != "oob.accepted":
+                continue
+            sha = str((ev.payload or {}).get("sha") or "")
+            if sha and sha not in shas:
+                shas.append(sha)
+        return shas
+
+    def _partition_removed_nodes(
+        self, removed: list[str], baseline_assets: BaselineAssets
+    ) -> tuple[list[str], list[str]]:
+        """Attribute removed baseline nodes to accepted OOB commits (hotfix)."""
+        repo = Path(self.repo)
+        return _partition_removed_nodes(
+            removed,
+            baseline_nodes=baseline_assets.nodes,
+            oob_files=self._oob_accepted_test_files(),
+            oob_shas=self._oob_accepted_shas(),
+            oob_blob=lambda sha, file: _git_oob_blob(repo, sha, file),
+            worktree_blob=lambda file: _git_worktree_blob(repo, file),
+            oob_source=lambda sha, file: _git_oob_source(repo, sha, file),
+        )
 
     def _emit_collected_failure(
         self, cmd, collected_count: int, errors: list[str], failures: list | None = None
@@ -515,26 +670,41 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             return [str(exc)]
         return baseline_assets, digests
 
-    def _emit_removed_assets(self, cmd, state, all_nodes: list[str], removed: list[str]) -> None:
-        """Fail-closed deleted-asset classification + companion verdict."""
+    def _emit_removed_assets(
+        self,
+        cmd,
+        state,
+        all_nodes: list[str],
+        removed: list[str],
+        oob_retired: list[str] | None = None,
+    ) -> None:
+        """Fail-closed deleted-asset classification + companion verdict.
+
+        ``removed`` carries ONLY the unexplained nodes; nodes attributable to
+        an accepted OOB commit are reported separately in ``oob_retired`` and
+        never charged as a test defect."""
+        oob_retired = list(oob_retired or [])
         failures = [{"node": node, "error_class": "asset_deleted"} for node in removed]
         errors = [
             f"test asset deleted since baseline snapshot: {node}" for node in removed
         ]
+        payload = {
+            "status": "failed",
+            "collected_count": len(all_nodes),
+            "removed": len(removed),
+            "failures": failures,
+            "errors": errors,
+            # FRB-K2 pairing marker: the companion verdict.failed
+            # (test_defect) emitted below by THIS command is the
+            # pair's single attempt charge; the kernel skips the
+            # collect-side consume for marked payloads only.
+            "companion": "test_defect",
+        }
+        if oob_retired:
+            payload["oob_retired"] = oob_retired
         self._emit(
             "test.collected",
-            {
-                "status": "failed",
-                "collected_count": len(all_nodes),
-                "removed": len(removed),
-                "failures": failures,
-                "errors": errors,
-                # FRB-K2 pairing marker: the companion verdict.failed
-                # (test_defect) emitted below by THIS command is the
-                # pair's single attempt charge; the kernel skips the
-                # collect-side consume for marked payloads only.
-                "companion": "test_defect",
-            },
+            payload,
             command_id=cmd.command_id,
         )
         # FA-3 (final review pin): the failed collect alone leaves the
@@ -542,16 +712,21 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         # the test_defect verdict naming every deleted asset BEFORE any
         # Shield rewrite so upstream routes a pinpointed rewrite.
         log_ref = self._red_log_blob_ref({"errors": errors, "failures": failures})
+        reason = (
+            "REMOVED test assets deleted since the pre-WRITE baseline "
+            f"snapshot: {', '.join(removed)}"
+        )
+        if oob_retired:
+            reason += (
+                " (OOB-retired nodes excluded: " + ", ".join(oob_retired) + ")"
+            )
         self._emit(
             "verdict.failed",
             {
                 "check": "test_defect",
                 "target_stage": "M-TEST",
                 "artifact_disposition": "rewrite",
-                "reason": (
-                    "REMOVED test assets deleted since the pre-WRITE baseline "
-                    f"snapshot: {', '.join(removed)}"
-                ),
+                "reason": reason,
                 "evidence": failures,
                 "log_ref": log_ref,
                 "attempt": state.current_attempt + 1,
@@ -560,7 +735,12 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         )
 
     def _emit_collected_passed(
-        self, cmd, all_nodes: list[str], node_layer: dict[str, str], classes: dict
+        self,
+        cmd,
+        all_nodes: list[str],
+        node_layer: dict[str, str],
+        classes: dict,
+        oob_retired: list[str] | None = None,
     ) -> None:
         """Persist the per-node table and emit test.collected(passed)."""
         inherited_r1 = sum(1 for klass in classes.values() if klass == "r1")
@@ -578,18 +758,22 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
                 cmd, len(all_nodes), ["per-node classification blob write failed"], failures=[]
             )
             return
+        payload = {
+            "status": "passed",
+            "collected_count": len(all_nodes),
+            "inherited_r1": inherited_r1,
+            "delta_r2": delta_r2,
+            "removed": 0,
+            "failures": [],
+            "per_node_blob": f".tracks/runtime/blobs/{per_ref}",
+            "errors": [],
+        }
+        oob_retired = list(oob_retired or [])
+        if oob_retired:
+            payload["oob_retired"] = oob_retired
         self._emit(
             "test.collected",
-            {
-                "status": "passed",
-                "collected_count": len(all_nodes),
-                "inherited_r1": inherited_r1,
-                "delta_r2": delta_r2,
-                "removed": 0,
-                "failures": [],
-                "per_node_blob": f".tracks/runtime/blobs/{per_ref}",
-                "errors": [],
-            },
+            payload,
             command_id=cmd.command_id,
         )
 
