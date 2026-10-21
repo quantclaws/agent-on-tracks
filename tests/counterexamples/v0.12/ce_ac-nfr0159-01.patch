@@ -1,14 +1,14 @@
 diff --git a/tracks/cli/serve_cmd.py b/tracks/cli/serve_cmd.py
-index 7be9c4a..9570bec 100644
+index 6c6c5a0..c794877 100644
 --- a/tracks/cli/serve_cmd.py
 +++ b/tracks/cli/serve_cmd.py
-@@ -645,6 +645,9 @@ def _log(level: str, msg: str) -> None:
+@@ -722,6 +722,9 @@ def _find_service_project(repo: Path) -> tuple[_ServiceProject | None, str | Non
  
  def cmd_serve(repo: Path, *args: str) -> int:
-     """Parse serve flags and run the service until stopped (interfaces §2a)."""
+     """Parse serve flags and dispatch the lifecycle face (interfaces §2a)."""
 +    if "--background" in args:
 +        print("trac serve: background_failed: counterexample", file=sys.stderr)
 +        return 1
      del repo  # the command context; the serve scope comes from --repo flags
+     raw_args = list(args)
      try:
-         opts = _parse_serve_args(list(args))

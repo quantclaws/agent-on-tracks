@@ -1,12 +1,14 @@
 diff --git a/tracks/cli/main.py b/tracks/cli/main.py
-index 054bf17..175190b 100644
+index 696a70d..ca6570a 100644
 --- a/tracks/cli/main.py
 +++ b/tracks/cli/main.py
-@@ -512,4 +512,7 @@ def main(argv=None) -> int:
-         return 0
-     cmd, rest = args[0], args[1:]
-+    if cmd == "install":
-+        return _err(USAGE)  # counterexample: the install face is disabled
+@@ -564,6 +564,9 @@ def main(argv=None) -> int:
+             print(USAGE)
+             return 0
+         cmd, rest = args[0], args[1:]
++        if cmd == "install":
++            return _err(USAGE)  # counterexample: the install face is disabled
 +
-     entry = _COMMANDS.get(cmd)
-     if entry is None or (entry[1] is not None and len(rest) != entry[1]):
+         entry = _COMMANDS.get(cmd)
+         if entry is None or (entry[1] is not None and len(rest) != entry[1]):
+             return _err(USAGE)
