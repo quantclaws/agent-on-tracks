@@ -272,6 +272,95 @@ def test_run_full_layers_partial_selection_uses_run_selected(tmp_path: Path, mon
     assert set(echo) == set(result_paths) == {"unit"}
 
 
+def test_run_full_layers_large_subset_runs_whole_layer_and_filters_known_red(
+    tmp_path: Path, monkeypatch
+):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest -m 'not performance' {nodes} {result}",
+        cwd=".",
+    )
+    limit = full_chain._FULL_ARGV_NODE_LIMIT
+    inventory = {
+        f"tests/unit/test_a.py::t{i}": "unit" for i in range(limit + 1)
+    }
+    red = "tests/unit/test_a.py::t0"
+    selected = sorted(node for node in inventory if node != red)
+    assert len(selected) == limit
+    cases = [
+        SimpleNamespace(
+            nodeid=node,
+            status="failed" if node == red else "passed",
+            detail="known red failure" if node == red else "",
+        )
+        for node in sorted(inventory)
+    ]
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=1
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: list(cases))
+    outcomes, echo, _cwds, codes, result_paths = host._run_full_layers(
+        _cmd(),
+        "FULL_1",
+        {"unit": section},
+        inventory,
+        selected,
+        {red},
+    )
+    assert echo["unit"] == ["pytest", result_paths["unit"]]
+    assert codes == {"unit": 1}
+    assert [outcome["node"] for outcome in outcomes] == selected
+    assert red not in {outcome["node"] for outcome in outcomes}
+    assert all(outcome["status"] == "passed" for outcome in outcomes)
+
+
+def test_run_full_layers_large_subset_missing_selected_node_fails_closed(
+    tmp_path: Path, monkeypatch
+):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest {nodes} {result}",
+        cwd=".",
+    )
+    limit = full_chain._FULL_ARGV_NODE_LIMIT
+    inventory = {
+        f"tests/unit/test_a.py::t{i}": "unit" for i in range(limit + 1)
+    }
+    red = "tests/unit/test_a.py::t0"
+    selected = sorted(node for node in inventory if node != red)
+    missing = selected[-1]
+    cases = [
+        SimpleNamespace(nodeid=node, status="passed", detail="")
+        for node in sorted(inventory)
+        if node != missing
+    ]
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=0
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: list(cases))
+    with pytest.raises(
+        full_chain.TestSelectError, match="selected nodes absent from result"
+    ):
+        host._run_full_layers(
+            _cmd(),
+            "FULL_1",
+            {"unit": section},
+            inventory,
+            selected,
+            {red},
+        )
+
+
 def test_run_full_layers_whole_layer_uses_run_not_run_selected(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
     section = SimpleNamespace(
@@ -354,7 +443,10 @@ def test_run_full_layers_whole_layer_exclusion_raises(tmp_path: Path, monkeypatc
     assert calls == []
 
 
-def test_full_f_reuse_identity_matches_full_round_identity(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("node_count", [3, 201])
+def test_full_f_reuse_identity_matches_full_round_identity(
+    tmp_path: Path, monkeypatch, node_count
+):
     class _IdentityHost(_Host, ExecVerifyGatesMixin):
         def _emit(self, event, payload=None, **kwargs):
             self.emitted.append((event, payload, kwargs))
@@ -378,14 +470,12 @@ def test_full_f_reuse_identity_matches_full_round_identity(tmp_path: Path, monke
         verify_gates, "git", lambda *a, **k: SimpleNamespace(stdout="COMMIT\n")
     )
     inventory = {
-        "tests/unit/test_a.py::t1": "unit",
-        "tests/unit/test_a.py::t2": "unit",
-        "tests/unit/test_a.py::t3": "unit",
+        f"tests/unit/test_a.py::t{i}": "unit" for i in range(node_count)
     }
+    red = f"tests/unit/test_a.py::t{node_count - 1}"
+    selected_nodes = sorted(node for node in inventory if node != red)
     host._collect_all_declared_layers = lambda: (dict(inventory), None)
-    (host._vdir() / "known-red.txt").write_text(
-        "tests/unit/test_a.py::t3\n", encoding="utf-8"
-    )
+    (host._vdir() / "known-red.txt").write_text(f"{red}\n", encoding="utf-8")
     monkeypatch.setattr(
         full_chain,
         "execute_gate_command",
@@ -416,9 +506,11 @@ def test_full_f_reuse_identity_matches_full_round_identity(tmp_path: Path, monke
         host._declared_full_identity(
             {"unit": section, "integration": section, "e2e": section},
             inventory,
-            ["tests/unit/test_a.py::t1", "tests/unit/test_a.py::t2"],
+            selected_nodes,
         )
     )
+    if node_count >= full_chain._FULL_ARGV_NODE_LIMIT:
+        assert all("not performance" not in item for item in current["command"])
 
 
 # ---------------------------------------------------------------------------

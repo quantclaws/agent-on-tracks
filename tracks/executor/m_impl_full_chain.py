@@ -39,6 +39,7 @@ from tracks.project import load_contract
 # framework collects zero tests ("no tests collected") -- legal ONLY for a
 # layer that declares no anchor nodes (see _declared_anchor_layers).
 _FULL_LAYERS = ("unit", "integration", "e2e")
+_FULL_ARGV_NODE_LIMIT = 200
 
 
 _EMPTY_LAYER_RC = frozenset({5})
@@ -166,7 +167,11 @@ class MImplFullChainMixin:
                     )
                 template = (
                     section.run
-                    if not layer_inventory or set(selected) == set(layer_inventory)
+                    if (
+                        not layer_inventory
+                        or set(selected) == set(layer_inventory)
+                        or len(selected) >= _FULL_ARGV_NODE_LIMIT
+                    )
                     else section.run_selected
                 )
             commands[layer] = resolve_selected_command(
@@ -176,9 +181,10 @@ class MImplFullChainMixin:
         return self._full_command_identity(commands, cwds)
 
     def _run_full_layers(  # pylint: disable=too-many-locals
-        self, cmd, round_name: str, sections, inventory, nodes
+        self, cmd, round_name: str, sections, inventory, nodes, known_red=None
     ):
         """Run every declared FULL layer, staging one test result per layer."""
+        excluded = set(self._known_red_nodes() if known_red is None else known_red)
         outcomes: list[dict] = []
         command_echo: dict[str, list[str]] = {}
         command_cwds: dict[str, str] = {}
@@ -201,7 +207,8 @@ class MImplFullChainMixin:
                     cmd.command_id, f"full-{round_name.lower()}-{layer}"
                 )
                 result_paths[layer] = str(result_path)
-                if not layer_inventory or set(selected) == set(layer_inventory):
+                whole_layer = not layer_inventory or set(selected) == set(layer_inventory)
+                if whole_layer or len(selected) >= _FULL_ARGV_NODE_LIMIT:
                     staged.append(result_path)
                     result_path.unlink(missing_ok=True)
                     argv = resolve_selected_command(
@@ -234,6 +241,8 @@ class MImplFullChainMixin:
                 command_cwds[layer] = str(Path(obs.cwd).resolve())
                 command_exit_codes[layer] = obs.exit_code
                 cases = parse_test_result(result_path)
+                if not whole_layer and len(selected) >= _FULL_ARGV_NODE_LIMIT:
+                    cases = [case for case in cases if case.nodeid not in excluded]
                 mapping = require_exact_node_coverage(cases, selected)
                 outcomes.extend(
                     {
@@ -524,9 +533,15 @@ class MImplFullChainMixin:
         header = self._full_round_header(
             cmd, state, round_name, ledger, candidate_sha, judgment_reason
         )
+        known_red = self._known_red_nodes()
         run = _FullRun(
             *self._run_full_layers(
-                cmd, round_name, header.sections, header.inventory, header.nodes
+                cmd,
+                round_name,
+                header.sections,
+                header.inventory,
+                header.nodes,
+                known_red,
             )
         )
         evidence = self._full_round_evidence(header, run)
