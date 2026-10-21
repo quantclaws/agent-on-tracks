@@ -38,6 +38,7 @@ Pinned final review findings:
 
 from __future__ import annotations
 
+import os
 import shlex
 import sys
 from types import SimpleNamespace
@@ -408,6 +409,24 @@ def _real_staging_paths(ex, cid):
     shutil.rmtree(result_path.parent, ignore_errors=True)  # drop prior-session residue
     result_path.parent.mkdir(parents=True, exist_ok=True)
     return result_path, result_path.parent
+
+
+def test_result_staging_path_is_process_scoped(monkeypatch):
+    from tracks.executor import test_collect
+
+    executor = object.__new__(Executor)
+    executor.run_id = "RUN-STAGING-SCOPE"
+    pid = os.getpid()
+    first = executor._result_staging_path("C-1", "unit")
+    second = executor._result_staging_path("C-1", "unit")
+    assert first == second
+    assert first.name == f"{pid}-C-1-unit.xml"
+
+    monkeypatch.setattr(test_collect.os, "getpid", lambda: pid + 1)
+    other = executor._result_staging_path("C-1", "unit")
+    assert other != first
+    assert other.parent == first.parent
+    assert other.name == f"{pid + 1}-C-1-unit.xml"
 
 
 def test_result_xml_unlinked_and_dir_removed_after_parse_success(monkeypatch, tmp_path):

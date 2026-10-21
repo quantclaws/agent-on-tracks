@@ -449,6 +449,9 @@ class MImplFullChainMixin:
         # comes from the same event-derived extraction every other consumer
         # uses -- the audit list stays on the payload.
         blocking, waived_nodes = self._split_waived_failures(failed)
+        known_red = self._known_red_nodes()
+        known_red_in_round = sorted(known_red & set(header.inventory))
+        waived_nodes = sorted(set(waived_nodes) | set(known_red_in_round))
         return _FullEvidence(
             command_identity,
             env_identity,

@@ -17,6 +17,7 @@ import pytest
 from tracks.executor import m_impl_full_chain as full_chain
 from tracks.executor import verify_gates
 from tracks.executor.m_impl_full_chain import MImplFullChainMixin
+from tracks.executor.m_verify import judge_full_f_reuse
 from tracks.executor.verify_gates import ExecVerifyGatesMixin
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State
@@ -480,7 +481,9 @@ def test_full_f_reuse_identity_matches_full_round_identity(
         full_chain,
         "execute_gate_command",
         lambda command, cwd, label: SimpleNamespace(
-            argv=shlex.split(command), cwd=cwd, exit_code=0
+            argv=shlex.split(command),
+            cwd=cwd,
+            exit_code=1 if node_count >= full_chain._FULL_ARGV_NODE_LIMIT else 0,
         ),
     )
     monkeypatch.setattr(full_chain, "parse_test_result", lambda path: [])
@@ -494,6 +497,8 @@ def test_full_f_reuse_identity_matches_full_round_identity(
     round_payload = host._execute_full_round(
         _cmd("C-ROUND"), State(run_id="RUN"), "FULL_1", {}
     )
+    assert round_payload["full_f_eligible"] is True
+    assert round_payload["waived_nodes"] == [red]
     selection_payload = next(
         payload for event, payload, _kwargs in host.emitted if event == "test.selected"
     )
@@ -511,6 +516,13 @@ def test_full_f_reuse_identity_matches_full_round_identity(
     )
     if node_count >= full_chain._FULL_ARGV_NODE_LIMIT:
         assert all("not performance" not in item for item in current["command"])
+    decision = judge_full_f_reuse(
+        candidate_sha=round_payload["execution_commit"],
+        full_f_evidence={"identity_basis": round_payload["identity_basis"]},
+        identity_quadruple=current,
+        stale_marks=(),
+    )
+    assert decision.decision == "reuse"
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +542,7 @@ def test_split_waived_failures_and_eligibility(tmp_path: Path):
     assert eligible([{"node": "x"}], [], {"unit": 0}, {}) is False
     assert eligible([], ["waived"], {"unit": 1}, {}) is True
     assert eligible([], [], {"unit": 0}, {}) is True
+    assert eligible([], [], {"unit": 1}, {}) is False
     assert eligible([], [], {"unit": 5}, {"unit": True}) is True
     assert eligible([], [], {"unit": 5}, {"unit": False}) is False
 
@@ -577,6 +590,7 @@ def test_full_round_evidence_declared_layers_and_blob_failure(tmp_path: Path, mo
         tree_stamp="TREE",
         selection_id="SEL",
         state=State(run_id="RUN"),
+        inventory={"n": "unit"},
     )
     run = SimpleNamespace(
         command_exit_codes={"unit": 5},
@@ -602,6 +616,52 @@ def test_full_round_evidence_declared_layers_and_blob_failure(tmp_path: Path, mo
     assert evidence.empty_pass_layers == {"unit": True}  # undeclared layer, rc5
     assert [f["node"] for f in evidence.blocking] == ["n"]
     assert evidence.outcomes_ref == "ref"
+
+
+def test_full_round_waives_known_red_layer_rc_and_stays_eligible(
+    tmp_path: Path, monkeypatch
+):
+    class _EmittingHost(_Host):
+        def _emit(self, event, payload=None, **kwargs):
+            self.emitted.append((event, payload, kwargs))
+            return SimpleNamespace(
+                seq=len(self.emitted), command_id=kwargs.get("command_id")
+            )
+
+    host = _EmittingHost(tmp_path)
+    selected = "tests/unit/test_a.py::selected"
+    known_red = "tests/unit/test_a.py::red"
+    host._collect_all_declared_layers = lambda: (
+        {selected: "unit", known_red: "unit"},
+        None,
+    )
+    (host._vdir() / "known-red.txt").write_text(
+        f"{known_red}\n", encoding="utf-8"
+    )
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest {nodes} {result}",
+        cwd=".",
+    )
+    contract = SimpleNamespace(unit=section, integration=section, e2e=section)
+    monkeypatch.setattr(full_chain, "load_contract", lambda repo: contract)
+    monkeypatch.setattr(
+        full_chain, "git", lambda *a, **k: SimpleNamespace(stdout="COMMIT\n")
+    )
+    host._run_full_layers = lambda *a: (
+        [{"node": selected, "status": "passed", "detail": ""}],
+        {"unit": ["pytest", "x"]},
+        {"unit": str(host.repo)},
+        {"unit": 1},
+        {"unit": "/tmp/result.xml"},
+    )
+    payload = host._execute_full_round(
+        _cmd("C-ROUND"), State(run_id="RUN"), "FULL_1", {}
+    )
+    assert payload["passed"] is True
+    assert payload["failed_nodes"] == []
+    assert payload["waived_nodes"] == [known_red]
+    assert payload["full_f_eligible"] is True
 
 
 def test_finalize_full_round_payload(tmp_path: Path):

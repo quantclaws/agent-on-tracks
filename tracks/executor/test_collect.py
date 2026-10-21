@@ -839,11 +839,13 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
     def _result_staging_path(self, command_id: str, section: str) -> Path:
         """Runtime-provided unique writable ``{result}`` test result path.
 
-        Lives in system temp staging (per run/command/layer), never inside the
-        repo tree, so it enters no tree identity and no write attribution."""
+        Lives in system temp staging (per process/command/layer), never inside
+        the repo tree, so it enters no tree identity and no write attribution.
+        The PID prefix keeps concurrent processes sharing a run id from ever
+        sharing a staging file."""
         base = Path(tempfile.gettempdir()) / "tracks-results" / self.run_id
         base.mkdir(parents=True, exist_ok=True)
-        return base / f"{command_id}-{section}.xml"
+        return base / f"{os.getpid()}-{command_id}-{section}.xml"
 
     def _has_persisted_unit_only_increment(self) -> bool:
         """Review-6: the empty-R2 hotfix bypass requires an explicit PERSISTED
