@@ -56,6 +56,23 @@ def _reset_m_impl_cycle(s: State) -> None:
     s.current_manifest = None
 
 
+def _reset_m_test_cycle(s: State) -> None:
+    """SM-01.1: fresh M-TEST cycle — reset the per-substate progress fields.
+
+    ``current_attempt`` (the shared <=3 budget) is reset by the stage
+    entry/rollback reducers, not here."""
+    s.test_collected = s.red_validated = s.trace_passed = False
+    s.test_committed = False
+    s.red_findings = s.criteria_pack_loaded = None
+    s.diagnose_classification = None
+    s.diagnose_report = None
+    # D-41: a fresh M-TEST cycle re-captures the R1 snapshot (the prior
+    # capture belongs to the previous cycle's event prefix) and starts
+    # with no selection identity.
+    s.baseline_captured = False
+    s.active_selection_id = None
+
+
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     if not s.version and ev.version:
         # T-015: every event envelope carries the run's version identity
@@ -97,16 +114,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.stage == "M-TEST":
         # SM-01.1: fresh M-TEST cycle. current_attempt (shared <=3 budget) is
         # already reset above; reset the per-substate progress fields.
-        s.test_collected = s.red_validated = s.trace_passed = False
-        s.test_committed = False
-        s.red_findings = s.criteria_pack_loaded = None
-        s.diagnose_classification = None
-        s.diagnose_report = None
-        # D-41: a fresh M-TEST cycle re-captures the R1 snapshot (the prior
-        # capture belongs to the previous cycle's event prefix) and starts
-        # with no selection identity.
-        s.baseline_captured = False
-        s.active_selection_id = None
+        _reset_m_test_cycle(s)
     if s.stage == "M-IMPL":
         # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
         _reset_m_impl_cycle(s)
@@ -131,6 +139,11 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     # DRAFT literal. Author stages keep DRAFT; the M-HOTFIX-TRIAGE branch
     # below still overrides to SAGE_TRIAGE.
     s.substate = _rolled_back_entry_substate(p["to_stage"])
+    if s.stage == "M-TEST":
+        # #211 OOB rev2: a rollback INTO M-TEST (e.g. human.return from
+        # M-IMPL) starts a fresh test cycle exactly like stage.entered so the
+        # stale pre-WRITE baseline from the previous cycle is not reused.
+        _reset_m_test_cycle(s)
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0

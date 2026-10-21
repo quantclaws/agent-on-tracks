@@ -34,6 +34,7 @@ from tests.unit.m_test_machine_support import (
     SHIELD_FAILED,
     STUB_GAP_OUTCOME,
     TERMINAL_EVENTS,
+    TEST_COMMITTED,
     TO_COLLECT,
     TO_PRISM_REVIEW,
     TO_RED_CHECK,
@@ -151,6 +152,80 @@ def test_enter_m_test_resets_fields():
     assert s2.current_attempt == 0
     assert s2.substate == "DISPATCH"
     assert s2.baseline_captured is False  # fresh cycle re-captures the snapshot
+
+
+# -- #211 OOB rev2: rollback into M-TEST resets the stale cycle fields ---------------
+
+
+def test_rollback_to_m_test_resets_stale_cycle():
+    """#211 OOB rev2: a human.return rollback from M-IMPL to M-TEST starts a
+    fresh cycle, clearing every stale per-substate field (including the
+    pre-WRITE baseline, which must be recaptured after the stage's assets)."""
+    base = (
+        *ENTER_M_TEST,
+        *TO_RED_CHECK,
+        RUN_CMD,
+        RED_VALID,
+        ("test.selected", {"selection_id": "sel-x"}),
+        TRACE_CMD,
+        TRACE_PASS,
+        COMMIT_CMD,
+        TEST_COMMITTED,
+    )
+    pre = project(seq(*base))
+    assert pre.baseline_captured is True
+    assert pre.test_collected is True
+    assert pre.red_validated is True
+    assert pre.trace_passed is True
+    assert pre.test_committed is True
+    assert pre.active_selection_id == "sel-x"
+    s = project(
+        seq(
+            *base,
+            (
+                "stage.rolled_back",
+                {"to_stage": "M-TEST", "reason": "human_return"},
+            ),
+        )
+    )
+    assert s.stage == "M-TEST"
+    assert s.substate == "DISPATCH"
+    assert s.baseline_captured is False
+    assert s.test_collected is False
+    assert s.red_validated is False
+    assert s.trace_passed is False
+    assert s.test_committed is False
+    assert s.active_selection_id is None
+
+
+def test_rollback_to_non_m_test_preserves_baseline_capture():
+    """The reset is scoped to rollbacks INTO M-TEST: a rollback to another
+    stage (e.g. stub_gap -> M-DESIGN) must not clear the baseline flag."""
+    s = project(
+        seq(
+            *ENTER_M_TEST,
+            *PRE_WRITE,
+            (
+                "stage.rolled_back",
+                {"to_stage": "M-DESIGN", "reason": "stub_gap"},
+            ),
+        )
+    )
+    assert s.stage == "M-DESIGN"
+    assert s.baseline_captured is True
+
+
+def test_fresh_enter_m_test_clears_baseline_capture():
+    """A fresh stage.entered(M-TEST) keeps clearing the baseline flag so the
+    next cycle captures its own pre-WRITE snapshot."""
+    s = project(
+        seq(
+            *ENTER_M_TEST,
+            *PRE_WRITE,
+            ("stage.entered", {"stage": "M-TEST"}),
+        )
+    )
+    assert s.baseline_captured is False
 
 
 # -- AC-FR0020-01@v0.4: DISPATCH creates Shield tasks -> WRITE -----------------------
