@@ -265,7 +265,8 @@ def test_ac_0352_01_reinstall_replaces_managed_and_preserves_user(tmp_path, caps
     rc = main(
         ["install", str(target), "--version", "9.9.9", "--wheel", str(wheel_a)]
     )
-    assert rc == 0, capsys.readouterr().err
+    _, err = capsys.readouterr()
+    assert rc == 0, err
 
     user_file = target / "user-code.py"
     user_file.write_text("print('user')\n", encoding="utf-8")
@@ -307,7 +308,8 @@ def test_ac_0352_02_user_modified_managed_file_overwritten(tmp_path, capsys):
         str(wheel),
     ]
     rc = main(install)
-    assert rc == 0, capsys.readouterr().err
+    _, err = capsys.readouterr()
+    assert rc == 0, err
 
     managed = target / ".opencode" / "skills" / "tracks-devon-rgr" / "SKILL.md"
     managed.write_text("user hand edit\n", encoding="utf-8")
@@ -335,7 +337,8 @@ def test_ac_0354_01_same_version_reinstall_converges(tmp_path, capsys):
         str(wheel),
     ]
     rc = main(install)
-    assert rc == 0, capsys.readouterr().err
+    _, err = capsys.readouterr()
+    assert rc == 0, err
     first_files = sorted(
         str(path.relative_to(target))
         for path in (target / ".opencode").rglob("*")

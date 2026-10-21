@@ -237,6 +237,7 @@ Test assertions **may only** land on the external observable outlets defined in 
 | AC-FR0349-01 | integration + e2e | tests/integration/test_install_package.py::test_global_trac_help_zero_repo + tests/e2e/test_install_journey.py::test_global_trac_available_anywhere | IF-INSTALLPKG-001, IF-GLOBALCLI-001 |
 | AC-FR0349-02 | integration | tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused | IF-GLOBALCLI-001, IF-SERVERLIFE-001 |
 | AC-FR0350-01 | integration + e2e | tests/integration/test_server_lifecycle.py::test_background_survives_shell_and_reports_locked_version + tests/e2e/test_install_journey.py::test_project_server_background_roundtrip | IF-SERVERLIFE-001, IF-PROJECTCLI-001, IF-VERSIONVIS-001 |
+| AC-FR0350-01 | integration | tests/integration/test_server_lifecycle.py::test_background_on_taken_port_fails_without_pidfile | IF-SERVERLIFE-001, IF-PROJECTCLI-001 |
 | AC-FR0350-02 | integration | tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused | IF-SERVERLIFE-001, IF-GLOBALCLI-001 |
 | AC-FR0351-01 | integration + e2e | tests/integration/test_install_versions.py::test_explicit_version_and_global_project_split + tests/e2e/test_install_journey.py::test_install_old_version_while_global_new | IF-INSTALL-001, IF-PROJECTCLI-001, IF-VERSIONVIS-001 |
 | AC-FR0351-02 | integration | tests/integration/test_install_targets.py::test_empty_dir_and_existing_project | IF-INSTALL-001, IF-PROJLAYOUT-001 |
