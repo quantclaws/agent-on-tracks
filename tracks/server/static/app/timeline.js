@@ -937,8 +937,8 @@ function lastFailure(events) {
   return null;
 }
 
-/** One-sentence, decision-oriented failure summary. The raw check/evidence
- * stays behind the "技术详情" fold (humans do not debug the machinery). */
+/** One-sentence, cause-only failure summary. The raw check/evidence stays
+ * behind the "技术详情" fold; the summary never tells the human what to do. */
 function failureSummary(failure) {
   if (!failure) return "";
   const check = String(failure.check || "");
@@ -948,44 +948,128 @@ function failureSummary(failure) {
       .split(";")
       .filter((part) => /missing from closure/.test(part)).length;
     if (count > 0) {
-      return `实现计划没有覆盖全部接口契约（${count} 个接口未被任务覆盖）。请重试当前步骤，或回退到设计阶段修正接口契约。`;
+      return `实现计划没有覆盖全部接口契约（${count} 个接口未被任务覆盖）。`;
     }
     if (/reach|unreachable|not reachable/i.test(reason)) {
-      return "实现计划的可达性校验未通过：部分任务无法从入口到达。请重试当前步骤，或回退到设计阶段调整任务依赖。";
+      return "实现计划的可达性校验未通过：部分任务无法从入口到达。";
     }
-    return "实现计划的接口闭包校验未通过。请重试当前步骤，或回退到设计阶段修正接口契约。";
+    return "实现计划的接口闭包校验未通过。";
   }
   if (check === "test_tasks") {
-    return "计划任务校验未通过。请重试当前步骤。";
+    return "计划任务校验未通过。";
   }
   if (check === "test_defect" || check === "full_suite") {
-    return "测试或实现校验未通过（测试失败）。请重试当前步骤。";
+    return "测试或实现校验未通过（测试失败）。";
   }
   if (check === "lineage") {
-    return "阶段追溯/血缘校验未通过。请重试当前步骤，或回退到更早阶段。";
+    return "阶段追溯/血缘校验未通过。";
   }
   if (["reply_format_error", "manifest_malformed", "evidence_malformed"].includes(check)) {
-    return "Agent 回复格式不符合协议（通常是机械性错误）。请重试当前步骤。";
+    return "Agent 回复格式不符合协议（通常是机械性错误）。";
   }
   if (check === "tasks_md_projection") {
-    return "计划文件生成方式不正确（tasks.md 应由 tasks.json 自动生成，不能手工修改）。请重试当前步骤。";
+    return "计划文件生成方式不正确（tasks.md 应由 tasks.json 自动生成，不能手工修改）。";
   }
   if (check === "test_freeze_contamination") {
-    return "测试基线被未提交的测试改动阻止冻结。请清理工作树后重试当前步骤。";
+    return "测试基线被未提交的测试改动阻止冻结。";
   }
   if (check === "collect_defect" || check === "contract_error") {
-    return "测试执行没有产出可读结果（环境或采集问题）。请重试当前步骤。";
+    return "测试执行没有产出可读结果（环境或采集问题）。";
   }
   if (check === "trace") {
-    return "阶段追溯校验未通过。请重试当前步骤，或回退到更早阶段。";
+    return "阶段追溯校验未通过。";
   }
-  return "本阶段校验未通过。请重试当前步骤，或回退到更早阶段重做。";
+  return "本阶段校验未通过。";
+}
+
+/** Runtime-status line for an active (not awaiting) run: it reports the
+ * failure without pretending the human has a pending decision. */
+function activeStatusLine(failure, diagnosis) {
+  const summary = failureSummary(failure);
+  if (!summary) return "";
+  const attempts = diagnosis && Number.isFinite(Number(diagnosis.attempts))
+    ? Number(diagnosis.attempts)
+    : Number(failure && failure.attempt);
+  const retrying = !diagnosis || diagnosis.retry_worthy !== false;
+  if (!retrying) return `上一轮失败：${summary}`;
+  if (Number.isFinite(attempts) && attempts > 0) {
+    return `第 ${attempts} 次尝试失败：${summary}。runtime 正在自动重试。`;
+  }
+  return `上一轮失败：${summary}。runtime 正在自动重试。`;
+}
+
+const DIAGNOSIS_ACTION_LABELS = {
+  retry: "重试当前步骤",
+  replan: "重新规划实现任务",
+  redesign: "重新设计",
+  return_m_test: "回到 M-TEST 阶段重新处理测试",
+  unknown: "暂无明确建议",
+};
+
+/** The gate decision brief: root cause, attempts, convergence judgement,
+ * the last agent's advice and a suggested path. Suggestions never widen
+ * the legal return targets (return_options still owns that set). */
+function diagnosisBrief(diagnosis) {
+  const brief = element("div", {
+    class: "gate-diagnosis",
+    "data-testid": "gate-diagnosis",
+  });
+  const attempts = Number.isFinite(Number(diagnosis.attempts))
+    ? Number(diagnosis.attempts)
+    : 0;
+  const max = Number.isFinite(Number(diagnosis.attempts_max))
+    ? Number(diagnosis.attempts_max)
+    : 3;
+  brief.append(
+    element("p", {
+      class: "gate-diagnosis-cause",
+      "data-testid": "gate-diagnosis-cause",
+      text: `根因：${diagnosis.cause_label || "本阶段校验未通过"}`,
+    }),
+    element("p", {
+      class: "gate-diagnosis-attempts",
+      "data-testid": "gate-diagnosis-attempts",
+      text: `已用尝试：${attempts}/${max} 次`,
+    }),
+    element("p", {
+      class: "gate-diagnosis-retry",
+      "data-testid": "gate-diagnosis-retry",
+      text: diagnosis.retry_worthy === false
+        ? `重试预计不会改变结果：${diagnosis.retry_reason || "失败原因未收敛"}`
+        : `重试可能改变结果：${diagnosis.retry_reason || "尚未形成相同失败签名"}`,
+    })
+  );
+  if (diagnosis.agent_advice) {
+    brief.append(
+      element("p", {
+        class: "gate-diagnosis-advice",
+        "data-testid": "gate-diagnosis-advice",
+        text: `上一轮 agent 建议：${diagnosis.agent_advice}`,
+      })
+    );
+  }
+  const path = DIAGNOSIS_ACTION_LABELS[diagnosis.suggested_action] || DIAGNOSIS_ACTION_LABELS.unknown;
+  const candidates = Array.isArray(diagnosis.return_candidates)
+    ? diagnosis.return_candidates.filter((stage) => typeof stage === "string" && stage)
+    : [];
+  const stages = candidates.length ? `（建议回退到 ${candidates.join("、")}）` : "";
+  brief.append(
+    element("p", {
+      class: "gate-diagnosis-suggestion",
+      "data-testid": "gate-diagnosis-suggestion",
+      text: `建议路径：${path}${stages}。`,
+    })
+  );
+  return brief;
 }
 
 function gateSummary(gate, events) {
   const failure = lastFailure(events);
   if (gate && gate.type === "escalation") {
-    return failureSummary(failure) || "本阶段失败，需要你决定：重试当前步骤，或回退到更早阶段重做。";
+    const cause = failureSummary(failure);
+    return cause
+      ? `${cause}需要你决定：重试当前步骤，或回退到更早阶段。`
+      : "本阶段失败，需要你决定：重试当前步骤，或回退到更早阶段重做。";
   }
   if (gate && gate.type === "rollback") return "本阶段需要确认回退到哪个阶段。";
   if (gate && gate.type === "approval") return "请批准本轮基线，或退回修改。";
@@ -1945,11 +2029,15 @@ function stageTrack(stages, events, detail) {
     const nodeActions = element("div", { class: "stage-node-actions" });
     nodeActions.addEventListener("keydown", (event) => event.stopPropagation());
     if (isCurrent && gate && gate.primary_action === "retry") {
+      const retryWorthy = !(gate.diagnosis && gate.diagnosis.retry_worthy === false);
       const retry = element("button", {
         type: "button",
         class: "stage-node-action",
         "data-testid": "stage-action-retry",
-        title: "重新派发当前步骤（保留本阶段已产出）",
+        title: retryWorthy
+          ? "重新派发当前步骤（保留本阶段已产出）"
+          : "重试预计不会改变结果；建议改用「回退…」选择更早阶段",
+        ...(retryWorthy ? {} : { "data-retry-worthy": "false" }),
         text: "重试当前步骤",
       });
       retry.addEventListener("click", (event) => {
@@ -2288,7 +2376,10 @@ function nodeDetail(stage, detail, events) {
     // do not repeat it here (the detail pane stays stage-scoped).
     const isGateStage = !!(detail && detail.awaiting_gate && detail.stage === stage);
     if (failure && !isGateStage) {
-      const summary = failureSummary(failure);
+      const liveDiagnosis = detail && detail.stage === stage
+        ? ((detail.awaiting_gate && detail.awaiting_gate.diagnosis) || null)
+        : { retry_worthy: false };
+      const summary = activeStatusLine(failure, liveDiagnosis);
       if (summary) {
         box.append(element("p", { class: "detail-error", text: summary }));
       }
@@ -2488,6 +2579,7 @@ export function gateActionPanel(detail, gate, events = []) {
         text: "在你做出决定前，run 不会继续推进。",
       })
     );
+    if (gate.diagnosis) panel.append(diagnosisBrief(gate.diagnosis));
     const details = element("details", {
       class: "gate-details",
       "data-testid": "gate-details",

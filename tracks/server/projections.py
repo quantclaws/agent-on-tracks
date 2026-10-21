@@ -20,6 +20,7 @@ import contextlib
 import json
 import re
 import sqlite3
+import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -595,6 +596,202 @@ def _run_branch(state: State) -> str | None:
     return None
 
 
+# -- OOB gate diagnosis (decision brief) -------------------------------------
+
+_DIAGNOSIS_ATTEMPTS_MAX = 3
+_DIAGNOSIS_CAUSE_BY_CHECK = {
+    "island": "plan", "plan_defect": "plan", "test_tasks": "plan",
+    "test_defect": "test", "full_suite": "test", "red_defect": "test",
+    "impl_defect": "implementation",
+    "stub_gap": "design",
+    "ac_gap": "acceptance",
+    "spec_gap": "spec",
+    "contract_error": "runtime", "collect_defect": "runtime",
+    "test_freeze_contamination": "runtime",
+    "reply_format_error": "runtime", "manifest_malformed": "runtime",
+    "evidence_malformed": "runtime",
+    "lineage": "process", "trace": "process", "commit": "process",
+}
+_DIAGNOSIS_CAUSE_LABELS = {
+    "plan": "实现计划未通过校验",
+    "test": "测试资产或测试执行未通过",
+    "implementation": "实现未满足已定义的测试",
+    "design": "设计缺失或设计不可行",
+    "acceptance": "验收标准需要修改",
+    "spec": "规格需要修改",
+    "runtime": "运行环境或采集流程的问题",
+    "process": "阶段流程校验未通过",
+    "unknown": "本阶段校验未通过",
+}
+_DIAGNOSIS_SUGGESTED_ACTIONS = {
+    "plan": "replan", "test": "return_m_test", "implementation": "retry",
+    "design": "redesign", "acceptance": "return_m_test", "spec": "return_m_test",
+    "runtime": "retry", "process": "retry", "unknown": "unknown",
+}
+_DIAGNOSIS_RETURN_CANDIDATES = {
+    "plan": ["M-DESIGN"], "test": ["M-TEST"], "implementation": ["M-DESIGN"],
+    "design": ["M-DESIGN"], "acceptance": ["M-ACC"], "spec": ["M-SPEC"],
+    "runtime": [], "process": ["M-DESIGN"], "unknown": [],
+}
+_DIAGNOSIS_DIGITS = re.compile(r"\d+")
+_DIAGNOSIS_HEX = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
+_DIAGNOSIS_PATH = re.compile(r"(?:/[\w.\-]+)+")
+_DIAGNOSIS_SHA = re.compile(r"^[0-9a-fA-F]{4,64}$")
+
+
+def _diagnosis_cause(check: object) -> str:
+    """Map a verdict check onto the closed coarse-cause set."""
+    return _DIAGNOSIS_CAUSE_BY_CHECK.get(str(check or ""), "unknown")
+
+
+def _failure_signature(payload: dict) -> str:
+    """check + reason with digits/ids/paths normalized away."""
+    payload = payload if isinstance(payload, dict) else {}
+    reason = str(payload.get("reason") or "")
+    reason = _DIAGNOSIS_PATH.sub("<path>", reason)
+    reason = _DIAGNOSIS_HEX.sub("<sha>", reason)
+    reason = _DIAGNOSIS_DIGITS.sub("#", reason)
+    return f"{payload.get('check') or ''}\n{reason}"
+
+
+def _stage_failure_window(
+    events: list[EventEnvelope], stage: str | None,
+) -> list[tuple[int, EventEnvelope]]:
+    """Failures after the last ``stage.entered`` for the current stage."""
+    start = -1
+    for index, event in enumerate(events):
+        payload = event.payload or {}
+        if event.type == "stage.entered" and str(payload.get("stage") or "") == str(stage or ""):
+            start = index
+    window = events[start + 1:] if start >= 0 else events
+    offset = start + 1 if start >= 0 else 0
+    return [
+        (index + offset, event) for index, event in enumerate(window)
+        if event.type == "verdict.failed"
+    ]
+
+
+def _new_information_between(
+    events: list[EventEnvelope], earlier_index: int, earlier: dict, later_index: int,
+) -> str | None:
+    """What genuinely NEW information arrived between two same-check failures.
+
+    Only two sources count as new information:
+
+    - a reviewer verdict that carries findings (``prism.verdict`` with
+      ``findings``/``review_summary``) -- e.g. Prism spotted a small bug, so
+      the next attempt has something to fix;
+    - a failure whose SIGNATURE differs from the previous one -- the failure
+      itself changed shape.
+
+    The agent's own per-round commits (``result.checkpointed`` /
+    ``test.written``) do NOT count: a fresh sha is what "try again" PRODUCES,
+    so treating it as new information would make every repeated attempt look
+    like progress and would always recommend retrying a non-converging loop.
+    """
+    previous_signature = _failure_signature(earlier)
+    for event in events[earlier_index + 1:later_index]:
+        payload = event.payload or {}
+        if event.type == "prism.verdict":
+            if payload.get("findings") or payload.get("review_summary"):
+                return "prism"
+        elif event.type == "verdict.failed":
+            if _failure_signature(payload) != previous_signature:
+                return "verdict"
+    return None
+
+
+def _retry_worthiness(
+    failures: list[tuple[int, EventEnvelope]], events: list[EventEnvelope],
+) -> tuple[bool, str]:
+    """Convergence judgement over same-check failures in the current stage."""
+    if not failures:
+        return False, "本轮尚无失败记录，无法判断重试是否会有不同"
+    if len(failures) == 1:
+        return True, "首次失败，重试可能得到不同结果"
+    later_index, later_event = failures[-1]
+    earlier_index, earlier_event = failures[-2]
+    later_signature = _failure_signature(later_event.payload or {})
+    earlier_signature = _failure_signature(earlier_event.payload or {})
+    if later_signature != earlier_signature:
+        return True, "失败原因已变化，重试有可能不同"
+    new_information = _new_information_between(
+        events, earlier_index, earlier_event.payload or {}, later_index)
+    if new_information is not None:
+        if new_information == "prism":
+            return True, "上一轮评审发现了新问题，重试有可能不同"
+        return True, "两轮失败之间出现了新信息，重试有可能不同"
+    consecutive = 1
+    for _index, event in reversed(failures[:-1]):
+        if _failure_signature(event.payload or {}) != later_signature:
+            break
+        consecutive += 1
+    return False, f"连续 {consecutive} 次同一失败签名且无新信息，重试不会不同"
+
+
+def _git_commit_subject(repo_path: str | None, sha: object) -> str:
+    """The commit subject for ``sha`` from the run repo ("" when unresolvable)."""
+    value = str(sha or "").strip()
+    if not repo_path or not _DIAGNOSIS_SHA.match(value):
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "show", "-s", "--format=%s", value],
+            cwd=str(repo_path), capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _diagnosis_agent_advice(events: list[EventEnvelope], repo_path: str | None) -> str:
+    """Last checkpoint/test commit subject, else the latest failure reason."""
+    for event in reversed(events):
+        if event.type not in ("result.checkpointed", "test.written"):
+            continue
+        subject = _git_commit_subject(repo_path, (event.payload or {}).get("commit_sha"))
+        if subject:
+            return subject
+    for event in reversed(events):
+        if event.type != "verdict.failed":
+            continue
+        reason = (event.payload or {}).get("reason")
+        return reason.strip() if isinstance(reason, str) else ""
+    return ""
+
+
+def _gate_diagnosis(
+    events: list[EventEnvelope], state: State, repo_path: str | None,
+) -> dict:
+    """The additive ``awaiting_gate.diagnosis`` decision brief."""
+    latest_failure = None
+    for event in reversed(events):
+        if event.type == "verdict.failed":
+            latest_failure = event.payload or {}
+            break
+    check = (latest_failure or {}).get("check")
+    cause = _diagnosis_cause(check)
+    same_check = [
+        (index, event) for index, event in _stage_failure_window(events, state.stage)
+        if str((event.payload or {}).get("check") or "") == str(check or "")
+    ]
+    retry_worthy, retry_reason = _retry_worthiness(same_check, events)
+    attempts = max(int(state.current_attempt or 0), len(same_check))
+    return {
+        "cause": cause,
+        "cause_label": _DIAGNOSIS_CAUSE_LABELS[cause],
+        "attempts": attempts,
+        "attempts_max": _DIAGNOSIS_ATTEMPTS_MAX,
+        "retry_worthy": retry_worthy,
+        "retry_reason": retry_reason,
+        "agent_advice": _diagnosis_agent_advice(events, repo_path),
+        "suggested_action": _DIAGNOSIS_SUGGESTED_ACTIONS[cause],
+        "return_candidates": list(_DIAGNOSIS_RETURN_CANDIDATES[cause]),
+    }
+
+
 def _owner_is_human(owner: str, repo_path: str | None) -> bool:
     """根评论 adjudication owner 是否为人类（单一来源）.
 
@@ -666,6 +863,7 @@ def _stage_pending_human_threads(
 
 def _awaiting_gate(
     state: State, repo_path: str | None = None, version: str | None = None,
+    events: list[EventEnvelope] | None = None,
 ) -> dict | None:
     """The run-detail ``awaiting_gate`` field group (§1k.1) or None.
 
@@ -686,7 +884,8 @@ def _awaiting_gate(
         "impact": "在你做出决定前，run 不会继续推进。",
         "primary_action": primary,
         "pending_human_threads": _stage_pending_human_threads(
-            repo_path, version, state.stage),}
+            repo_path, version, state.stage),
+        "diagnosis": _gate_diagnosis(events or [], state, repo_path),}
 
 
 class _RunStoreView:
@@ -1086,7 +1285,7 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
             ),
             "pause": pause, "wait": wait,
             "awaiting_gate": _awaiting_gate(
-                state, repo_path, state.version or version),
+                state, repo_path, state.version or version, events),
             "return_options": _return_options(repo_path, run_id),
             "progress": {
                 "tasks_done": state.tasks_completed, "tasks_total": state.tasks_total,
