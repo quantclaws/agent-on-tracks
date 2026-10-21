@@ -2,13 +2,11 @@ diff --git a/tracks/cli/main.py b/tracks/cli/main.py
 index 054bf17..175190b 100644
 --- a/tracks/cli/main.py
 +++ b/tracks/cli/main.py
-@@ -504,6 +504,9 @@ _COMMANDS = {
- }
- 
- 
-+_COMMANDS.pop("install", None)  # counterexample: install face disabled
+@@ -512,4 +512,7 @@ def main(argv=None) -> int:
+         return 0
+     cmd, rest = args[0], args[1:]
++    if cmd == "install":
++        return _err(USAGE)  # counterexample: the install face is disabled
 +
-+
- def main(argv=None) -> int:
-     args = list(sys.argv[1:] if argv is None else argv)
-     if not args or args[0] in ("--help", "-h", "help"):
+     entry = _COMMANDS.get(cmd)
+     if entry is None or (entry[1] is not None and len(rest) != entry[1]):
