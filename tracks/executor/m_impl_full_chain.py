@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.executor.helpers import git
+from tracks.executor.m_impl_testops import MImplTestOpsMixin
 from tracks.executor.quality_gate import execute_gate_command
 from tracks.executor.test_select import (
     EvidenceIdentity,
@@ -203,12 +204,11 @@ class MImplFullChainMixin:
                         f"[{layer}] FULL selection excludes the entire layer"
                     )
                 section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
-                result_path = self._result_staging_path(
-                    cmd.command_id, f"full-{round_name.lower()}-{layer}"
-                )
-                result_paths[layer] = str(result_path)
+                staging_key = f"full-{round_name.lower()}-{layer}"
                 whole_layer = not layer_inventory or set(selected) == set(layer_inventory)
                 if whole_layer or len(selected) >= _FULL_ARGV_NODE_LIMIT:
+                    result_path = self._result_staging_path(cmd.command_id, staging_key)
+                    result_paths[layer] = str(result_path)
                     staged.append(result_path)
                     result_path.unlink(missing_ok=True)
                     argv = resolve_selected_command(
@@ -228,14 +228,17 @@ class MImplFullChainMixin:
                             f"[{layer}] FULL argv diverges from contract"
                         )
                 else:
-                    argv = stage_audited_selection(
+                    result_path, argv = MImplTestOpsMixin._stage_selection_argv(
+                        self,
+                        cmd,
+                        staging_key,
                         section,
                         selected,
-                        result_path,
                         section_cwd,
                         staged,
                         f"[{layer}] FULL argv diverges from contract",
                     )
+                    result_paths[layer] = str(result_path)
                 obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
                 command_echo[layer] = list(obs.argv)
                 command_cwds[layer] = str(Path(obs.cwd).resolve())
@@ -343,14 +346,7 @@ class MImplFullChainMixin:
 
     def _full_round_selection(self, cmd, round_name: str) -> _FullSelection:
         """Collect + persist the FULL selection identity (nodes blob event)."""
-        inventory, collect_error = self._collect_all_declared_layers()
-        if inventory is None:
-            raise TestSelectError(collect_error or "FULL collect failed")
-        excluded = self._known_red_nodes()
-        nodes = sorted(node for node in inventory if node not in excluded)
-        if not nodes:
-            raise TestSelectError("FULL selection is empty after known-red exclusion")
-        baseline = self._current_baseline_digest()
+        inventory, nodes, baseline = MImplTestOpsMixin._full_inventory_and_baseline(self)
         if not baseline:
             raise TestSelectError("FULL lacks a frozen M-IMPL baseline identity")
         commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()

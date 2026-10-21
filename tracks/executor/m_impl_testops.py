@@ -860,6 +860,25 @@ class MImplTestOpsMixin:
             self._resolve_one_acceptance_ref(raw, by_path, out)
         return out
 
+    def _full_inventory_and_baseline(self):
+        """Collect declared layer nodes (known-red excluded) and baseline digest."""
+        inventory, collect_error = self._collect_all_declared_layers()
+        if inventory is None:
+            raise TestSelectError(collect_error or "FULL collect failed")
+        excluded = self._known_red_nodes()
+        nodes = sorted(node for node in inventory if node not in excluded)
+        if not nodes:
+            raise TestSelectError("FULL selection is empty after known-red exclusion")
+        return inventory, nodes, self._current_baseline_digest()
+
+    def _stage_selection_argv(
+        self, cmd, staging_key: str, section, selected, cwd, staged, message: str
+    ):
+        """Build a layer result path and stage its audited selected argv."""
+        result_path = self._result_staging_path(cmd.command_id, staging_key)
+        argv = stage_audited_selection(section, selected, result_path, cwd, staged, message)
+        return result_path, argv
+
     def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):  # pylint: disable=too-many-locals
         """Execute the SELECT_TASK layers owning selected nodes.
 
@@ -894,11 +913,11 @@ class MImplTestOpsMixin:
                 if not selected:
                     continue
                 section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
-                result_path = self._result_staging_path(cmd.command_id, f"green-{layer}")
-                argv = stage_audited_selection(
+                result_path, argv = self._stage_selection_argv(
+                    cmd,
+                    f"green-{layer}",
                     section,
                     selected,
-                    result_path,
                     section_cwd,
                     staged,
                     f"[{layer}] selected argv diverges from contract",

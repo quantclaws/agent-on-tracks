@@ -477,6 +477,126 @@ def _task_display(raw: dict) -> tuple[str, bool]:
     return text[:60], verification_only
 
 
+def _task_completed(events: list[EventEnvelope]) -> tuple[int, set[str]]:
+    graph_event = next(
+        (event for event in reversed(events) if event.type == "taskgraph.committed"),
+        None,
+    )
+    graph_seq = graph_event.seq if graph_event is not None else 0
+    completed = {
+        event.payload.get("task_id") or event.task_id
+        for event in events
+        if event.type == "task.completed" and event.seq > graph_seq
+    }
+    completed = {task_id for task_id in completed if isinstance(task_id, str) and task_id}
+    if graph_event is not None:
+        retained = (graph_event.payload or {}).get("retained_completed_task_ids")
+        if isinstance(retained, list):
+            completed.update(
+                task_id for task_id in retained
+                if isinstance(task_id, str) and task_id
+            )
+    return graph_seq, completed
+
+
+def _task_event_state(events: list[EventEnvelope]) -> dict[str, Any]:
+    """Derive the current generation's completions, starts, failures, running."""
+    graph_seq, completed = _task_completed(events)
+    starts: dict[str, int] = {}
+    failures: dict[str, int] = {}
+    for event in events:
+        if event.seq <= graph_seq:
+            continue
+        task_id = (event.payload or {}).get("task_id") or event.task_id
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        if event.type == "task.started":
+            starts[task_id] = event.seq
+        elif event.type == "verdict.failed":
+            failures[task_id] = event.seq
+
+    running = None
+    for task_id, _seq in sorted(starts.items(), key=lambda item: item[1], reverse=True):
+        if task_id not in completed:
+            running = task_id
+            break
+
+    return {
+        "completed": completed,
+        "starts": starts,
+        "failures": failures,
+        "running": running,
+    }
+
+
+def _task_row(raw: dict, event_state: dict[str, Any], state: State) -> dict:
+    task_id = raw["task_id"]
+    if task_id in event_state["completed"]:
+        task_state = "done"
+    elif event_state["failures"].get(task_id, 0) > event_state["starts"].get(task_id, 0):
+        task_state = "failed"
+    elif task_id == event_state["running"]:
+        task_state = "running"
+    else:
+        task_state = "pending"
+    phase = (
+        state.substate
+        if task_state == "running" and state.stage == "M-IMPL"
+        else None
+    )
+    title, verification_only = _task_display(raw)
+    raw_depends = raw.get("depends_on")
+    depends_on = (
+        [dep for dep in raw_depends if isinstance(dep, str)]
+        if isinstance(raw_depends, list)
+        else []
+    )
+    row = {
+        "task_id": task_id, "title": title, "state": task_state,
+        "phase": phase, "depends_on": depends_on,
+    }
+    if verification_only:
+        row["verification_only"] = True
+    return row
+
+
+def _task_batches(
+    tasks: list[dict], event_state: dict[str, Any], state: State
+) -> dict[str, Any]:
+    groups: dict[int | str | None, list[dict]] = {}
+    task_batches: dict[str, int | str | None] = {}
+    order: list[int | str | None] = []
+    for raw in tasks:
+        task_id = raw["task_id"]
+        batch = _batch_value(raw.get("batch"))
+        task_batches[task_id] = batch
+        if batch not in groups:
+            groups[batch] = []
+            order.append(batch)
+        groups[batch].append(_task_row(raw, event_state, state))
+
+    batches_detail = [
+        {"batch": batch, "tasks": groups[batch]}
+        for batch in sorted(order, key=_batch_sort_key)
+    ]
+    running = event_state["running"]
+    current_batch = task_batches.get(running) if running else None
+    if running is None:
+        upcoming = next(
+            (row["task_id"] for group in batches_detail for row in group["tasks"]
+             if row["state"] != "done"),
+            None,
+        )
+        current_batch = task_batches.get(upcoming) if upcoming else (
+            order[-1] if order else None
+        )
+    return {
+        "groups": groups,
+        "batches_detail": batches_detail,
+        "current_batch": current_batch,
+    }
+
+
 def _task_progress(
     repo_path: str, version: str | None, state: State, events: list[EventEnvelope]
 ) -> dict | None:
@@ -509,104 +629,18 @@ def _task_progress(
     if not tasks:
         return None
 
-    graph_event = next(
-        (event for event in reversed(events) if event.type == "taskgraph.committed"),
-        None,
-    )
-    graph_seq = graph_event.seq if graph_event is not None else 0
-    completed = {
-        event.payload.get("task_id") or event.task_id
-        for event in events
-        if event.type == "task.completed" and event.seq > graph_seq
-    }
-    completed = {task_id for task_id in completed if isinstance(task_id, str) and task_id}
-    if graph_event is not None:
-        retained = (graph_event.payload or {}).get("retained_completed_task_ids")
-        if isinstance(retained, list):
-            completed.update(
-                task_id for task_id in retained
-                if isinstance(task_id, str) and task_id
-            )
-
-    starts: dict[str, int] = {}
-    failures: dict[str, int] = {}
-    for event in events:
-        if event.seq <= graph_seq:
-            continue
-        task_id = (event.payload or {}).get("task_id") or event.task_id
-        if not isinstance(task_id, str) or not task_id:
-            continue
-        if event.type == "task.started":
-            starts[task_id] = event.seq
-        elif event.type == "verdict.failed":
-            failures[task_id] = event.seq
-
-    running = None
-    for task_id, _seq in sorted(starts.items(), key=lambda item: item[1], reverse=True):
-        if task_id not in completed:
-            running = task_id
-            break
-
-    groups: dict[int | str | None, list[dict]] = {}
-    task_batches: dict[str, int | str | None] = {}
-    order: list[int | str | None] = []
-    for raw in tasks:
-        task_id = raw["task_id"]
-        batch = _batch_value(raw.get("batch"))
-        task_batches[task_id] = batch
-        if batch not in groups:
-            groups[batch] = []
-            order.append(batch)
-        if task_id in completed:
-            task_state = "done"
-        elif failures.get(task_id, 0) > starts.get(task_id, 0):
-            task_state = "failed"
-        elif task_id == running:
-            task_state = "running"
-        else:
-            task_state = "pending"
-        title, verification_only = _task_display(raw)
-        raw_depends = raw.get("depends_on")
-        depends_on = (
-            [dep for dep in raw_depends if isinstance(dep, str)]
-            if isinstance(raw_depends, list)
-            else []
-        )
-        phase = (
-            state.substate
-            if task_state == "running" and state.stage == "M-IMPL"
-            else None
-        )
-        row = {
-            "task_id": task_id, "title": title, "state": task_state,
-            "phase": phase, "depends_on": depends_on,
-        }
-        if verification_only:
-            row["verification_only"] = True
-        groups[batch].append(row)
-
-    batches_detail = [
-        {"batch": batch, "tasks": groups[batch]}
-        for batch in sorted(order, key=_batch_sort_key)
-    ]
-    current_batch = task_batches.get(running) if running else None
-    if running is None:
-        upcoming = next(
-            (row["task_id"] for group in batches_detail for row in group["tasks"]
-             if row["state"] != "done"),
-            None,
-        )
-        current_batch = task_batches.get(upcoming) if upcoming else (
-            order[-1] if order else None
-        )
+    event_state = _task_event_state(events)
+    batches = _task_batches(tasks, event_state, state)
     return {
-        "done": sum(1 for task in tasks if task["task_id"] in completed),
+        "done": sum(
+            1 for task in tasks if task["task_id"] in event_state["completed"]
+        ),
         "total": len(tasks),
-        "batch": current_batch,
-        "batches": len(groups),
-        "current_task_id": running,
+        "batch": batches["current_batch"],
+        "batches": len(batches["groups"]),
+        "current_task_id": event_state["running"],
         "current_phase": state.substate if state.stage == "M-IMPL" else None,
-        "batches_detail": batches_detail,
+        "batches_detail": batches["batches_detail"],
     }
 
 

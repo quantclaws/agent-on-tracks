@@ -28,6 +28,7 @@ from tracks.executor.local_gate_evidence import (
     has_complete_passed_gates,
     normalized_result_payload,
 )
+from tracks.executor.m_impl_testops import MImplTestOpsMixin
 from tracks.executor.registry_gate import execute_registry_gate
 from tracks.executor.release_gate import complete_version_facts
 from tracks.executor.test_select import (
@@ -228,14 +229,7 @@ the runtime-materialized default contract lives here."""
         sections = {"unit": contract.unit, "integration": contract.integration, "e2e": contract.e2e}
         if any(section is None for section in sections.values()):
             raise TestSelectError("FULL requires unit, integration, and e2e sections")
-        inventory, collect_error = self._collect_all_declared_layers()
-        if inventory is None:
-            raise TestSelectError(collect_error or "FULL collect failed")
-        excluded = self._known_red_nodes()
-        nodes = sorted(node for node in inventory if node not in excluded)
-        if not nodes:
-            raise TestSelectError("FULL selection is empty after known-red exclusion")
-        baseline = self._current_baseline_digest()
+        inventory, nodes, baseline = MImplTestOpsMixin._full_inventory_and_baseline(self)
         commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
         tree_stamp = self._dirty_tree_stamp()
         basis = str(selection.payload.get("basis") or "")
