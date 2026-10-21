@@ -220,6 +220,7 @@ class MImplAnchorMixin:
             pre_dirty,
         )
         vdir = self._vdir()
+        assignment["pre_tasks_md_identity"] = self._path_identity(vdir / "tasks.md")
         acc_path, _ = resolve_inherited_baseline_docs(vdir / "test-plan.md")
         self._add_assignment_role_fields(assignment, state, params)
         if state.hotfix_issue is not None:

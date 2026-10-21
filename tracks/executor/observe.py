@@ -179,6 +179,26 @@ and the remaining surface via self."""
             files.add(path.strip().strip('"'))
         return files
 
+    def _runtime_owned_dirty_path(self, path: str) -> bool:
+        """True when a dirty path is runtime-owned, not writer liability.
+
+        Runtime state under ``.tracks/`` (and a relocated ``TRACKS_HOME`` that
+        still resolves inside the repo) is managed by Tracks itself: writers
+        never consume it from the card, and carrying its identities in every
+        ``pre_dirty_snapshot`` was the M5 assignment-budget bloat (a live
+        GREEN card spent 3KB on deployment/project artifacts)."""
+        if path == ".tracks" or path.startswith(".tracks/"):
+            return True
+        try:
+            repo = Path(self.repo).resolve()
+            home = paths.tracks_home(self.repo).resolve()
+            prefix = home.relative_to(repo).as_posix()
+        except (OSError, ValueError):
+            return False
+        if prefix in ("", "."):
+            return False
+        return path == prefix or path.startswith(prefix + "/")
+
     def _dirty_snapshot(self) -> dict[str, str]:
         """Content-identity snapshot of all dirty files: {path: identity}.
 
@@ -186,7 +206,10 @@ and the remaining surface via self."""
         for symlinks, ``missing`` for deleted entries, ``unreadable`` for
         non-regular/permission-denied files. No mtime — deterministic and
         JSON-serializable so it can be persisted in ``command.issued`` and
-        compared after the Agent returns (or after crash recovery)."""
+        compared after the Agent returns (or after crash recovery).
+        Runtime-owned artifacts (``.tracks/`` and a relocated ``TRACKS_HOME``
+        inside the repo) are excluded: they are not the writer's liability and
+        their identities bloated M5 assignment cards past the hard budget."""
         proc = git(self.repo, "status", "--porcelain", "-uall", check=False)
         snapshot: dict[str, str] = {}
         for line in proc.stdout.splitlines():
@@ -196,6 +219,8 @@ and the remaining surface via self."""
             if " -> " in path:
                 path = path.split(" -> ", 1)[1]
             path = path.strip().strip('"')
+            if self._runtime_owned_dirty_path(path):
+                continue
             snapshot[path] = self._path_identity(self.repo / path)
         return snapshot
 
@@ -281,6 +306,17 @@ and the remaining surface via self."""
             return "ok"
         return _TasksMdGuard(tasks_md_path, rendered, post_md)
 
+    @staticmethod
+    def _pre_tasks_md_identity(params: dict) -> str | None:
+        """Pre-dispatch tasks.md identity (snapshot excludes runtime paths)."""
+        assignment = params.get("assignment")
+        if isinstance(assignment, dict):
+            baseline = assignment.get("pre_tasks_md_identity")
+            if isinstance(baseline, str):
+                return baseline
+        baseline = params.get("pre_tasks_md_identity")
+        return baseline if isinstance(baseline, str) else None
+
     def _apply_tasks_md_guard(self, cmd, state, task_id, params: dict, guard) -> str:
         """Mismatch → decide violation vs system_repaired via attribution."""
         from tracks.executor.taskgraph import classify_tasks_md_guard
@@ -291,7 +327,16 @@ and the remaining surface via self."""
         except Exception:
             post_snapshot = {}
         rel_md = self._tasks_md_relpath(guard.path)
-        pre_contains = self._is_path_in_diff(rel_md, pre, post_snapshot)
+        if self._runtime_owned_dirty_path(rel_md):
+            baseline = self._pre_tasks_md_identity(params)
+            if baseline is None:
+                baseline = (pre or {}).get(rel_md)
+            pre_contains = (
+                baseline is not None
+                and baseline != self._path_identity(guard.path)
+            )
+        else:
+            pre_contains = self._is_path_in_diff(rel_md, pre, post_snapshot)
         decision = classify_tasks_md_guard(pre_contains, guard.rendered, guard.post_md)
         if decision == "violation":
             # Mechanical error with exactly one correct outcome: the agent

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from tests.unit.helpers import git_repo, git_strip
 from tracks.executor import observe
 from tracks.executor.observe import ExecObserveMixin
 
@@ -74,6 +75,53 @@ def test_dirty_snapshot_blank_and_rename_lines(monkeypatch, tmp_path):
     snapshot = host._dirty_snapshot()
     assert list(snapshot) == ["new.py"]
     assert len(snapshot["new.py"]) == 64
+
+
+def test_dirty_snapshot_excludes_runtime_owned_paths(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRACKS_HOME", raising=False)
+    repo = git_repo(tmp_path)
+    host = _Host(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git_strip(repo, "add", "src/a.py")
+    git_strip(repo, "commit", "-m", "src")
+    (repo / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
+    tasks = repo / ".tracks" / "projects" / "v1" / "tasks.json"
+    tasks.parent.mkdir(parents=True)
+    tasks.write_text('{"tasks": []}\n', encoding="utf-8")
+    intake = repo / ".tracks" / "service" / "intakes" / "x" / "assignment.md"
+    intake.parent.mkdir(parents=True)
+    intake.write_text("assignment\n", encoding="utf-8")
+
+    snapshot = host._dirty_snapshot()
+
+    assert "src/a.py" in snapshot
+    assert len(snapshot["src/a.py"]) == 64
+    assert not any(
+        path == ".tracks" or path.startswith(".tracks/") for path in snapshot
+    )
+
+
+def test_dirty_snapshot_excludes_relocated_tracks_home_inside_repo(
+    tmp_path, monkeypatch
+):
+    repo = git_repo(tmp_path)
+    host = _Host(tmp_path)
+    home = repo / "runtime-home"
+    monkeypatch.setenv("TRACKS_HOME", str(home))
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    artifact = home / "projects" / "v1" / "tasks.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text('{"tasks": []}\n', encoding="utf-8")
+
+    snapshot = host._dirty_snapshot()
+
+    assert "src/a.py" in snapshot
+    assert len(snapshot["src/a.py"]) == 64
+    assert not any(path.startswith("runtime-home/") for path in snapshot)
+    assert host._runtime_owned_dirty_path("runtime-home/projects/v1/tasks.json")
+    assert not host._runtime_owned_dirty_path("src/a.py")
 
 
 def test_resolve_pre_dirty_legacy_fallback(tmp_path):

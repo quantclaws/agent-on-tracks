@@ -275,8 +275,9 @@ def test_inherited_dirty_self_healed_with_system_repaired(tmp_path: Path):
         {"r_sha": "r" * 40, "task_id": "T-001", "sanction": None},
     )
     state = store.state(run_id)
-    # The pre_dirty_snapshot is captured by the materializer at this point,
-    # so the tampered tasks.md (inherited dirty) lands in the baseline.
+    # The lean card snapshot excludes runtime paths; the guard baseline is
+    # carried separately so inherited dirty tasks.md still self-heals as
+    # system_repaired rather than a false violation.
     params = {
         "role": "devon",
         "substate": "GREEN",
@@ -290,9 +291,9 @@ def test_inherited_dirty_self_healed_with_system_repaired(tmp_path: Path):
     }
     assignment = ex._materialize_m_impl_assignment(state, params, new_ulid())
     pre_snap = assignment.get("pre_dirty_snapshot")
-    # Verify pre contains tasks.md tampered
     rel_md = str((vdir / "tasks.md").relative_to(repo).as_posix())
-    assert rel_md in pre_snap
+    assert rel_md not in pre_snap
+    assert assignment["pre_tasks_md_identity"] == ex._path_identity(vdir / "tasks.md")
 
     cmd = Command(
         kind="dispatch_agent",
