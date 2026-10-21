@@ -204,3 +204,35 @@ def test_thread_write_failure_fails_the_command_without_the_event(review_serve):
         "a failed thread write must not record human.review"
     )
     assert len(_threads(vdir)) == 0, "a failed thread write must not leave a thread"
+
+
+# AC-FR0359-01@v0.12 TRACKS-TRACE a second decision with a fresh key is refused
+def test_second_decision_with_a_fresh_key_is_refused(review_serve):
+    """AC-FR0359-01: once the review gate has been recorded, a further
+    decision under a fresh idempotency key is refused by the awaiting
+    precondition (422 ``awaiting_mismatch``) and writes neither a second
+    ``human.review`` event nor a second thread (§1h.2, §1h.4)."""
+    base, cookie, csrf, repo, vdir = review_serve
+    status, body = _post_review(
+        base, cookie, csrf, {"action": "comment", "comments": _COMMENTS}, "review-first-1"
+    )
+    assert status in (200, 202), body[:200]
+    settled = _wait_command(base, cookie, json.loads(body)["command_id"])
+    assert settled["status"] == "completed", settled
+    wait_event(repo, _RUN_ID, "human.review")
+
+    second_status, second_body = _post_review(
+        base, cookie, csrf, {"action": "comment", "comments": _COMMENTS}, "review-second-1"
+    )
+    assert second_status == 422, second_body[:200]
+    assert json.loads(second_body)["error"]["reason"] == "awaiting_mismatch", (
+        second_body[:200]
+    )
+    time.sleep(0.5)
+    human_events = [
+        item for item in events(repo, _RUN_ID) if item["type"] == "human.review"
+    ]
+    assert len(human_events) == 1, (
+        f"a refused decision must not add a second event: {human_events!r}"
+    )
+    assert len(_threads(vdir)) == 1, "a refused decision must not add a second thread"

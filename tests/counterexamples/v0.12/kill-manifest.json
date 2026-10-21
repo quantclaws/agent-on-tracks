@@ -2,13 +2,13 @@
  "version": "v0.12",
  "contract": "one counterexample per required test (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
  "verification": {
-  "write_head_session": "2026-10-19 M-TEST WRITE revision at head c169023 (Prism revise PRISM-MTEST-008): the kill records now name the current tree. The AC-FR0355-01/02 and test_version_bump patches were applied at c169023, each bound node failed on its behavioral assertion, and each product file was restored clean; the 18 arrival-green guards and the 18 killed bindings were reproduced at this head. The revised test-plan's prefix install layout and e2e collect marker already match tests/_support/v012_install.py and project.toml.",
-  "apply_check": "every patch passes git apply --check at the WRITE head c169023; after each kill the product file was restored with git checkout -- and git status shows only tests/** changes",
-  "guard_kill_session": "reproduced at the WRITE head c169023: AC-FR0348-01 (integration declaration + wheel), AC-FR0349-01 (usage parity integration + e2e), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02 (integration + UI), AC-FR0358-01, AC-FR0359-02, AC-FR0360-01 (no-cache + API), AC-NFR0160-01. Each mutation produced the bound test's behavioral assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
+  "write_head_session": "2026-10-21 M-TEST WRITE revision 4 (worktree head 0ce2be6, baseline 47d780f8 / expected_green 82 nodes): the operator landed the kernel fix 'M-TEST rollback re-entry must re-capture the pre-WRITE baseline', so the stale red window is gone - the delivered T-001 anchors now measure green and classify retained_green. Every kill record below was re-verified at this head with the apply -> run bound node -> assert behavioural failure -> revert cycle, and each product file was restored clean (git status shows only tests/** changes).",
+  "apply_check": "every patch passes git apply --check at the WRITE head 0ce2be6; after each kill the product file was restored with git checkout -- and git status shows only tests/** changes",
+  "guard_kill_session": "re-verified at the WRITE head 0ce2be6: all 21 killed bindings - AC-FR0348-01 (integration declaration + wheel), AC-FR0348-01 version, AC-FR0349-01 (usage parity integration + e2e), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02 (integration + UI), AC-FR0358-01, AC-FR0359-02, AC-FR0360-01 (no-cache + API), AC-NFR0160-01 and the two per-round blob degradations. Each mutation produced the bound test's behavioural assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
   "red_window_kill_session": "the remaining bindings are legal Red at the WRITE head by design (test-plan §8.1: install/version/lifecycle/review-thread nodes are waiting for Devon). Their patches are minimal single-seam deviations against the declared implementation seams; at the delivered tree the same apply -> run bound node -> assert behavioral failure -> revert cycle is required (and re-anchored if context drifted).",
   "failclosed_revision_session": "2026-10-21 M-TEST WRITE revision (worktree head 487d7b3, baseline 27807f92): the v0.12 install/version/serve fail-closed clauses gained integration nodes (tests/integration/test_install_failclosed.py, the three new tests/integration/test_server_lifecycle.py nodes) and the per-round blob degradation clause (interfaces §1f.2) was folded into the existing tests/integration/test_run_rounds.py::test_missing_thinking_degrades guard. The two blob patches were applied at this head, each bound node failed on its behavioural assertion (input {} instead of null; output null instead of {unavailable: true}) and the product file was restored clean with git checkout --; the guard passed again after the revert. The install/serve fail-closed nodes are legal Red at this head by design (the install/version/serve faces are not delivered yet), so their patches are the same minimal single-seam deviations against the declared seams: ce_ac-fr0354-01.patch (install face absent -> the closed usage reason is never produced), ce_ac-fr0353-01.patch (version face absent -> the corrupt project is never detected), ce_ac-fr0350-01.patch (background face fails -> the already-running report never happens) and ce_ac-nfr0159-01_stop.patch (stop face ignores the pidfile -> no ownership check, no stale cleanup). Every patch passes git apply --check at this head; the apply -> run bound node -> assert behavioural failure -> revert cycle for those four bindings must be run at the delivered tree (and re-anchored if context drifted).",
-  "delivered_green_window_session": "2026-10-21 M-TEST WRITE revision 2 (worktree head bd52edb, baseline 27807f92): the T-001 install/version contract is fully delivered (the receipt carries the closed §1b.1 field set with the managed/seeded split, .tracks/env/.gitignore is '*', the root opencode.json is seeded-only, a user-owned root opencode.json and .opencode/opencode.json are never overwritten, git init -b main runs, and the project root is discovered by walking up), so the T-001 acceptance anchors are GREEN by delivery and the pre-WRITE baseline (captured before the implementation) still demands red for them. This revision therefore (a) folded the uncovered §1b.1/§1b.2/§1b.4 receipt-and-ownership clauses into the T-001 anchor tests/integration/test_install_targets.py::test_empty_dir_and_existing_project (verified green against the delivered implementation) and (b) added the still-missing §1b.5/§1e.2/§1e.4/§1e.5 serve-lifecycle clauses as red anchors for the undelivered T-002 in tests/integration/test_server_lifecycle.py (documented pidfile, service log, --status on a stale pidfile, Windows --stop). No test-asset rewrite can turn the delivered T-001 anchors back into a legal red: the legal-green levers are the §8.1 guard registry (M-DESIGN), the expected-green measurement (a baseline re-capture) and the operator OOB acceptance of the delivered test files — all outside the Shield write scope.",
-  "red_anchor_tightening_session": "2026-10-21 M-TEST WRITE revision 3 (worktree head 247be0b, baseline 27807f92): the RED_CHECK still reports the same 30 unexpected_pass nodes - the delivered T-001 chain (tests/integration/test_install_failclosed.py, test_install_overwrite.py, test_install_versions.py, test_distribution.py, tests/e2e/test_install_journey.py) plus Devon's unit RED tests - so the pre-WRITE baseline remains the only blocker. This revision therefore sharpened the red anchors inside the DECLARED task scopes instead of adding more of them: the review thread-write failure (interfaces 1h.3, test-plan 10 row 22, inside T-003's declared scope) gained an integration node that injects the failure black-box (read-only version directory and documents) and the T-002 anchor now asserts the full running status rendering (pid/version/url agreeing with the serving line). Both were verified as legal Red: the bound nodes fail on their behavioural assertions and the delivered tree confirms the clause is still unimplemented (the decision completes and the human.review event lands without any document thread)."
+  "delivered_green_window_session": "2026-10-21 M-TEST WRITE revision 2 (worktree head bd52edb): the T-001 install/version contract is fully delivered (the receipt carries the closed interfaces 1b.1 field set with the managed/seeded split, .tracks/env/.gitignore is '*', the root opencode.json is seeded-only, a user-owned root opencode.json and .opencode/opencode.json are never overwritten, git init -b main runs, and the project root is discovered by walking up), so the T-001 acceptance anchors are GREEN by delivery. The pre-WRITE baseline captured before the implementation still demanded red for them, which RED_CHECK reported as unexpected_pass. The operator resolved it in revision 4 by landing the kernel fix that re-captures the pre-WRITE baseline on a rollback re-entry (the re-captured baseline measures 82 green nodes, and the delivered T-001 anchors now classify retained_green).",
+  "red_anchor_tightening_session": "2026-10-21 M-TEST WRITE revision 3 (worktree head 247be0b): the red anchors inside the DECLARED task scopes were sharpened - the review thread-write failure (interfaces 1h.3, test-plan 10 row 22, inside T-003's scope) gained an integration node whose failure is injected black-box (read-only version directory and documents), the T-002 anchor now asserts the full running status rendering (pid/version/url agreeing with the serving line), and revision 4 added the awaiting-precondition node (interfaces 1h.2/1h.4, a fresh idempotency key after the gate was recorded is refused with 422 awaiting_mismatch and adds neither a second event nor a second thread). All three were verified legal Red and are inside T-002/T-003's declared scope."
  },
  "test_bindings": [
   {
@@ -16,14 +16,14 @@
    "test": "tests/integration/test_install_package.py::test_scaffold_package_resources_declared",
    "patch": "ce_ac-fr0348-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: package-data must declare assets/opencode.json -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: package-data must declare assets/opencode.json -> reverted clean"
   },
   {
    "ac": "AC-FR0348-01",
    "test": "tests/integration/test_install_package.py::test_wheel_carries_capability_resources",
    "patch": "ce_ac-fr0348-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: tracks/assets/opencode.json missing from the built wheel -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: tracks/assets/opencode.json missing from the built wheel -> reverted clean"
   },
   {
    "ac": "AC-FR0348-01",
@@ -44,21 +44,21 @@
    "test": "tests/integration/test_install_package.py::test_global_trac_help_zero_repo",
    "patch": "ce_ac-fr0349-01_usage.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: usage must advertise install -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: usage must advertise install -> reverted clean"
   },
   {
    "ac": "AC-FR0349-01",
    "test": "tests/integration/test_install_package.py::test_subcommand_tokens_registered",
    "patch": "ce_ac-fr0349-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: TRAC_SUBCOMMANDS must register install -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: TRAC_SUBCOMMANDS must register install -> reverted clean"
   },
   {
    "ac": "AC-FR0349-01",
    "test": "tests/e2e/test_install_journey.py::test_global_trac_available_anywhere",
    "patch": "ce_ac-fr0349-01_usage.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: usage must advertise install -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert install in the printed usage -> reverted clean"
   },
   {
    "ac": "AC-FR0349-02",
@@ -163,56 +163,56 @@
    "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
    "patch": "ce_ac-fr0355-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at c169023 -> AssertionError: the path must render a attention node -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the path must render a attention node -> reverted clean"
   },
   {
    "ac": "AC-FR0355-02",
    "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable",
    "patch": "ce_ac-fr0355-02.patch",
    "result": "killed",
-   "kill_evidence": "applied at c169023 -> AssertionError: the no-events line is replaced by a fabricated start/end -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: no recorded events for M-START yet not rendered -> reverted clean"
   },
   {
    "ac": "AC-FR0356-01",
    "test": "tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds",
    "patch": "ce_ac-fr0356-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: expected '派发 4 次', got '派发 0 次' -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the dispatch count collapsed to 0 -> reverted clean"
   },
   {
    "ac": "AC-FR0357-01",
    "test": "tests/integration/test_run_rounds.py::test_rounds_list_and_detail",
    "patch": "ce_ac-fr0357-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: [] == [1, 2] -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: [] == [1, 2] (the round list lost its rounds) -> reverted clean"
   },
   {
    "ac": "AC-FR0357-01",
    "test": "tests/e2e/test_run_workflow_ui.py::test_per_round_detail_lazy_accordion",
    "patch": "ce_ac-fr0357-01_ui.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the rounds list must not load before the first expansion -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the rounds list must not load before the first expansion -> reverted clean"
   },
   {
    "ac": "AC-FR0357-02",
    "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
    "patch": "ce_ac-fr0357-02.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: thinking_available True is not False -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert True is False (the rotation degradation vanished) -> reverted clean"
   },
   {
    "ac": "AC-FR0357-02",
    "test": "tests/e2e/test_run_workflow_ui.py::test_round_thinking_missing_message",
    "patch": "ce_ac-fr0357-02.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the rotated-log explanation disappeared from the UI -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the rotation explanation is missing -> reverted clean"
   },
   {
    "ac": "AC-FR0358-01",
    "test": "tests/e2e/test_run_workflow_ui.py::test_run_card_local_time_and_heartbeat_not_reset",
    "patch": "ce_ac-fr0358-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: wait was 5s (heartbeat) instead of >=60s (business event) -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the wait must start at the last business event, not the heartbeat -> reverted clean"
   },
   {
    "ac": "AC-FR0359-01",
@@ -233,21 +233,21 @@
    "test": "tests/e2e/test_run_workflow_ui.py::test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure",
    "patch": "ce_ac-fr0359-02.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: a normal review gate must not stack template reason text -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a normal review gate must not stack template reason text -> reverted clean"
   },
   {
    "ac": "AC-FR0360-01",
    "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
    "patch": "ce_ac-fr0360-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: Cache-Control is None instead of no-cache -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert None == no-cache -> reverted clean"
   },
   {
    "ac": "AC-FR0360-01",
    "test": "tests/integration/test_static_cache.py::test_api_semantics_unchanged",
    "patch": "ce_ac-fr0360-01_api.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: API routes must not receive the static no-cache header -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: API routes must not receive the static no-cache header -> reverted clean"
   },
   {
    "ac": "AC-NFR0159-01",
@@ -268,35 +268,35 @@
    "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304",
    "patch": "ce_ac-fr0360-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: Cache-Control is None instead of no-cache -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert None == no-cache -> reverted clean"
   },
   {
    "ac": "AC-NFR0160-01",
    "test": "tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint",
    "patch": "ce_ac-nfr0160-01.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the first paint must not fetch per-round data -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: the first paint must not fetch per-round data -> reverted clean"
   },
   {
    "ac": "AC-FR0348-01",
    "test": "tests/integration/test_install_package.py::test_version_bump_matches",
    "patch": "ce_ac-fr0348-01-version.patch",
    "result": "killed",
-   "kill_evidence": "applied at c169023 -> AssertionError: __version__ 0.11.0 != the 0.12.0 design version -> reverted clean"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: assert 0.11.0 == 0.12.0 -> reverted clean"
   },
   {
    "ac": "AC-FR0357-01",
    "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
    "patch": "ce_ac-fr0357-01_blobs.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head 487d7b3 -> AssertionError: a missing output blob degrades to the unavailable marker (output null instead of {unavailable: true}) -> reverted clean, guard green again"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a missing output blob degrades to the unavailable marker -> reverted clean"
   },
   {
    "ac": "AC-FR0357-01",
    "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
    "patch": "ce_ac-fr0357-01_input.patch",
    "result": "killed",
-   "kill_evidence": "applied at the WRITE head 487d7b3 -> AssertionError: a missing input blob degrades to null (input {} instead of null) -> reverted clean, guard green again"
+   "kill_evidence": "re-verified at the WRITE head 0ce2be6 -> AssertionError: a missing input blob degrades to null -> reverted clean"
   },
   {
    "ac": "AC-FR0354-01",
@@ -381,6 +381,13 @@
    "patch": "ce_ac-fr0350-01.patch",
    "result": "red-window",
    "kill_evidence": "legal Red at the WRITE head (the background/status face is not delivered); the patch changes the background outlet's error semantics to background_failed, so the running status line (running pid=... version=... url=...) is never rendered (interfaces 1e.4) — the kill cycle is required at the delivered tree"
+  },
+  {
+   "ac": "AC-FR0359-01",
+   "test": "tests/integration/test_review_decision_contract.py::test_second_decision_with_a_fresh_key_is_refused",
+   "patch": "ce_ac-fr0359-01_thread.patch",
+   "result": "red-window",
+   "kill_evidence": "legal Red at the WRITE head (the document thread write is not delivered, so the first decision records no thread and the node's thread assertion fails); the patch drops the document artifact from the review checkpoint, so a decision never touches the document and the awaiting precondition can no longer distinguish a fresh decision from a duplicate one (outside interfaces 1h.2/1h.4) — the same apply -> run bound node -> assert behavioural failure -> revert cycle is required at the delivered tree"
   }
  ]
 }
