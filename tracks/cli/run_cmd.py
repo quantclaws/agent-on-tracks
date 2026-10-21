@@ -438,7 +438,7 @@ def _review_action_params(action: str, stage: str, has_comments: bool = False) -
     """Returns pipeline params for a review action."""
     if action == "revise":
         return {
-            "requires_diff": False if has_comments else True,
+            "requires_diff": not has_comments,
             "forbid_diff": False,
             "discussion_only": False,
             "checks": ["template"],
@@ -521,9 +521,15 @@ def _pipeline_outcome(result, label: str, success_line: str) -> int:
 
 
 def _review_checkpoint(
-    repo: Path, state, actor: str | None, action: str, comments: str | None = None
+    repo: Path, state, actor: str | None, action: str, comments: str | None = None,
+    *, doc_thread: tuple[str, str] | None = None,
 ) -> _HumanCheckpoint:
-    """Assemble the review checkpoint (action params resolved up front)."""
+    """Assemble the review checkpoint (action params resolved up front).
+
+    ``doc_thread`` is the worker face's (doc label, thread id) pair written
+    into the stage document ahead of the event (§1h.3 / §1j.1); the CLI face
+    passes None and keeps its historic payload.
+    """
     actor_name = actor or _human_actor(repo)
     doc = _stage_doc(state.stage)
     params = _review_action_params(
@@ -533,6 +539,8 @@ def _review_checkpoint(
     payload: dict = {"actor": actor_name}
     if comments is not None and params["verdict"] == "comment":
         payload["comments"] = comments
+    if doc_thread is not None:
+        payload["doc"], payload["thread_id"] = doc_thread
     return _HumanCheckpoint(
         label="review",
         event_type="human.review",

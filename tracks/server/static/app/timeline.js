@@ -2638,24 +2638,25 @@ export function gateActionPanel(detail, gate, events = []) {
 }
 
 /** Review-gate decision row: [通过] posts no_comment (comments must be
- * empty); [退回] posts comment with comments carried directly to Scribe
- * (comments must be non-empty, no document thread write). Returns
- * { _actions, _body }: the caller mounts _actions into the head-row slot
- * (same line as gate-status) and _body below the head. */
+ * empty); [退回] posts comment — the worker writes the opinion as a root
+ * thread in the current stage document first and still carries it to Scribe
+ * (comments must be non-empty). Returns { _actions, _body }: the caller
+ * mounts _actions into the head-row slot (same line as gate-status) and
+ * _body below the head. */
 function reviewDecisionFace(detail, encoded) {
   void detail;
   const body = element("div", { class: "review-decision-face" });
   const comments = element("textarea", {
     class: "review-comments",
     "data-testid": "review-comments",
-    "aria-label": "评审意见（退回时必填，直接传给 Scribe）",
+    "aria-label": "评审意见（退回时必填；先写入当前阶段文档线程，再传给 Scribe）",
     rows: 3,
     placeholder: "填写退回意见（为空则通过）",
   });
   const hint = element("p", {
     class: "review-hint",
     "data-testid": "review-hint",
-    text: "通过将直接推进；如需退回请填写意见",
+    text: "通过将直接推进；如需退回请填写意见（先写入文档线程，并传给 Scribe）",
   });
   const feedback = element("p", {
     class: "review-feedback",
@@ -2687,8 +2688,8 @@ function reviewDecisionFace(detail, encoded) {
     approve.disabled = !empty;
     ret.disabled = empty;
     hint.textContent = empty
-      ? "通过将直接推进；如需退回请填写意见"
-      : "将带意见退回（意见将直接传给 Scribe）";
+      ? "通过将直接推进；如需退回请填写意见（先写入文档线程，并传给 Scribe）"
+      : "将带意见退回：先写入当前阶段文档线程，并直接传给 Scribe";
   };
   comments.addEventListener("input", sync);
   sync();

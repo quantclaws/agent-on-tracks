@@ -856,6 +856,19 @@ class CommandService:
         if state is None or state.awaiting not in values:
             deny("awaiting_mismatch",
                 f"run {request.get('run_id')!r} is not awaiting {'|'.join(sorted(values))}")
+        # §1h.2 comments-shape validation stays after the awaiting preflight:
+        # a gate that is not awaiting review keeps answering awaiting_mismatch
+        # (the v0.11 closed refusal order), only a review-gate submission has
+        # a shape to validate.
+        if kind == "record_review":
+            comments = request.get("comments")
+            has_comments = isinstance(comments, str) and bool(comments.strip())
+            if value == "comment" and not has_comments:
+                deny("validation_failed",
+                    "record_review action 'comment' requires a non-empty comments string")
+            if value == "no_comment" and has_comments:
+                deny("validation_failed",
+                    "record_review action 'no_comment' requires comments omitted or empty")
 
     def _preflight_return_stage(self, store: ServiceDB, request: dict, deny: RejectFn) -> None:
         """v0.9 §1b#11 as revised by v0.11 PLANNING round 1 IF-RETURN-001"""

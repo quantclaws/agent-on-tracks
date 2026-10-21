@@ -36,7 +36,9 @@ from tracks.cli.release_cmd import (
     _ReleaseRequest,
 )
 from tracks.cli.run_cmd import _review_checkpoint, _triage_checkpoint
-from tracks.executor.result_checkpoint import run_human_gate_pipeline
+from tracks.discuss import writer as discuss_writer
+from tracks.discuss.parser import parse_threads
+from tracks.executor.result_checkpoint import _stage_doc, run_human_gate_pipeline
 from tracks.kernel.machine_verdicts import _REVIEW_PENDING_THREADS
 from tracks.store import Store
 
@@ -53,6 +55,17 @@ GATE_KINDS = frozenset(
 # actions `trac review` accepts (§1j.3 与 CLI 等价): `comment` carries the
 # reviewer's revise round, `no_comment` closes the review.
 _REVIEW_ACTIONS = {"comment": "revise", "no_comment": "no_comment"}
+
+# §1j.1 human.review.payload.doc is the trio label, never the file name.
+_REVIEW_DOC_LABELS = {
+    "story.md": "story",
+    "spec.md": "spec",
+    "acceptance.md": "acceptance",
+}
+
+
+class ReviewThreadWriteError(Exception):
+    """The return opinion could not land as a stage-document root thread."""
 
 
 def execute_gate_command(
@@ -125,12 +138,58 @@ def _execute_triage(repo: Path, run_id: str, params: dict, actor: str, actor_kin
         store.close()
 
 
+def _write_review_thread(home: Path, state, actor: str, comments: str) -> tuple[str, str]:
+    """Write the return opinion as a root thread before ``human.review``.
+
+    §1h.3: under the caller's writer_lock, reuse the pure
+    ``discuss.writer.start`` transform and do the tmp+replace here — the
+    discuss CLI's flock path is not called (same process would double-lock).
+    Returns the ``(doc label, thread id)`` pair the event payload carries.
+    """
+    doc_file = _stage_doc(state.stage)
+    label = _REVIEW_DOC_LABELS.get(doc_file or "")
+    if doc_file is None or label is None:
+        raise ReviewThreadWriteError(
+            f"stage {state.stage!r} has no reviewable stage document"
+        )
+    path = paths.version_dir(home, state.version) / doc_file
+    text = path.read_text(encoding="utf-8")
+    anchor_line = next(
+        (idx for idx, line in enumerate(text.splitlines(), start=1) if line.strip()),
+        None,
+    )
+    if anchor_line is None:
+        raise ReviewThreadWriteError(f"document {path} has no non-empty line")
+    updated = discuss_writer.start(text, anchor_line, actor, comments)
+    root_line = discuss_writer.format_root(actor, "open", comments)[0]
+    thread_id = next(
+        (
+            thread.thread_id
+            for thread in parse_threads(updated)
+            if thread.root_text == root_line
+        ),
+        None,
+    )
+    if thread_id is None:
+        raise ReviewThreadWriteError("discussion writer produced no parseable root thread")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(updated, encoding="utf-8")
+    tmp.replace(path)
+    return label, thread_id
+
+
 def _execute_review(repo: Path, run_id: str, params: dict, actor: str, actor_kind: str = "human"):
     cli_action = _REVIEW_ACTIONS.get(str(params.get("action") or ""))
     if cli_action is None:
         return None, _rejected(
             f"unknown review action {params.get('action')!r};"
             " closed set is comment|no_comment"
+        )
+    comments = params.get("comments")
+    comments_text = comments if isinstance(comments, str) else None
+    if cli_action == "revise" and not (comments_text and comments_text.strip()):
+        return None, _rejected(
+            "record_review action 'comment' requires a non-empty comments string"
         )
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -144,10 +203,20 @@ def _execute_review(repo: Path, run_id: str, params: dict, actor: str, actor_kin
                     "run not awaiting review"
                     f" (awaiting={state.awaiting or 'nothing'})"
                 )
-            comments = params.get("comments")
+            doc_thread = None
+            if cli_action == "revise":
+                try:
+                    doc_thread = _write_review_thread(
+                        home, state, actor, comments_text
+                    )
+                except Exception as exc:  # any write failure fails the command closed
+                    failure = _rejected("review_thread_write_failed")
+                    failure["detail"] = f"{type(exc).__name__}: {exc}"
+                    return None, failure
             checkpoint = _review_checkpoint(
                 repo, state, actor, cli_action,
-                comments if isinstance(comments, str) else None,
+                comments_text,
+                doc_thread=doc_thread,
             )
             return _run_pipeline(repo, store, run_id, state, checkpoint, "review")
     finally:

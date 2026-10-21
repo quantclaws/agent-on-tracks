@@ -112,6 +112,9 @@ _ENDPOINT_STATUS: dict[tuple[str, str], int] = {
     # own explicit 400 (service-side) and outranks this map in _accept.
     ("decide_intake", "validation_failed"): 422,
     ("submit_clarification", "validation_failed"): 422,
+    # §1h.2 / §2c #5: the review decision face's comments-shape refusals are
+    # 422 validation_failed (the awaiting refusal already maps there).
+    ("record_review", "validation_failed"): 422,
 }
 
 
