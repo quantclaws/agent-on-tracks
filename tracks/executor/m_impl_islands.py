@@ -9,6 +9,7 @@ compliance (C0302); code moved verbatim.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from tracks.executor.taskgraph import parse_tasks_json, validate_island_closure
@@ -189,16 +190,20 @@ class MImplIslandsMixin:
             )
             return
         try:
-            ledger = rebuild_ledger(
-                [
-                    {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
-                    for ev in self.store.events(self.run_id)
-                ]
+            ledger = self._drop_known_red_identities(
+                rebuild_ledger(
+                    [
+                        {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
+                        for ev in self.store.events(self.run_id)
+                    ]
+                )
             )
             full_rows = [ev for ev in self.store.events(self.run_id) if ev.type == "full.executed"]
             if full_rows and not full_rows[-1].payload.get("passed"):
                 self._reconcile_full_failure_wal(cmd, state, full_rows[-1], ledger)
-                ledger = rebuild_ledger(self.store.events(self.run_id))
+                ledger = self._drop_known_red_identities(
+                    rebuild_ledger(self.store.events(self.run_id))
+                )
             if not full_rows:
                 round_name = "FULL_1"
             elif not ledger:
@@ -269,6 +274,16 @@ class MImplIslandsMixin:
                 )
         return "FULL_F"
 
+    def _drop_known_red_identities(self, ledger):
+        excluded = self._known_red_nodes()
+        if not excluded:
+            return ledger
+        return {
+            key: value
+            for key, value in ledger.items()
+            if json.loads(key)[0] not in excluded
+        }
+
     def _settle_stale_island_2_open(self, cmd, state, ledger) -> None:
         """IF-FULLCHAIN-001 stale-identity settlement closure (island_2 OPEN).
 
@@ -284,7 +299,9 @@ class MImplIslandsMixin:
         """
         full = self._execute_full_round(cmd, state, "full_settlement", ledger)
         self._record_full_failures(cmd, state, full, ledger)
-        ledger = rebuild_ledger(self.store.events(self.run_id))
+        ledger = self._drop_known_red_identities(
+            rebuild_ledger(self.store.events(self.run_id))
+        )
         round_failures = [
             (failure["node"], failure["failure_signature"]) for failure in full["failures"]
         ]
@@ -298,7 +315,9 @@ class MImplIslandsMixin:
                 },
                 command_id=cmd.command_id,
             )
-        rebuilt = rebuild_ledger(self.store.events(self.run_id))
+        rebuilt = self._drop_known_red_identities(
+            rebuild_ledger(self.store.events(self.run_id))
+        )
         if full["failed_nodes"]:
             self._emit(
                 "verdict.failed",

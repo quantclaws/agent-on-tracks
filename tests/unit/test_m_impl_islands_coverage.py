@@ -7,6 +7,7 @@ settlement closure.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -81,6 +82,9 @@ class _Host(MImplIslandsMixin):
         self.emitted.append(("record_failures", full))
 
     def _waived_nodes(self, failing):
+        return set()
+
+    def _known_red_nodes(self):
         return set()
 
 
@@ -286,6 +290,73 @@ def test_empty_ledger_round_name_corrupt_and_waived(tmp_path):
     assert host._empty_ledger_round_name(rows) == "FULL_F"
     passed = [SimpleNamespace(payload={"passed": True, "failed_nodes": []})]
     assert host._empty_ledger_round_name(passed) == "FULL_F"
+
+
+def test_check_island_2_drops_known_red_ledger_identities(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "tracks.checks.reach.check_reach_file",
+        lambda repo: SimpleNamespace(status="pass", errors=[], islands=[]),
+    )
+    red_node = "tests/unit/test_red.py::t"
+    normal_node = "tests/unit/test_normal.py::t"
+    red_key = json.dumps([red_node, "sig-red"])
+    normal_key = json.dumps([normal_node, "sig-normal"])
+    done = SimpleNamespace(seq=1, type="full.executed", payload={"passed": True})
+
+    host = _Host(tmp_path, events=[done])
+    host._known_red_nodes = lambda: {red_node}
+    monkeypatch.setattr(
+        islands,
+        "rebuild_ledger",
+        lambda _events: {red_key: "CLASSIFIED", normal_key: "OPEN"},
+    )
+    monkeypatch.setattr(islands, "ledger_is_clean", lambda ledger: False)
+    host._do_check_island_2(_Cmd(), _island_state(), None, False)
+    assert host.emitted == [("settle", {normal_key: "OPEN"})]
+
+    only_red = _Host(tmp_path, events=[done])
+    only_red._known_red_nodes = lambda: {red_node}
+    monkeypatch.setattr(
+        islands, "rebuild_ledger", lambda _events: {red_key: "CLASSIFIED"}
+    )
+    only_red._do_check_island_2(_Cmd(), _island_state(), None, False)
+    assert ("passed", False) in only_red.emitted
+    assert all(event[0] != "settle" for event in only_red.emitted)
+
+
+def test_settle_stale_island_2_open_filters_known_red_identities(
+    tmp_path, monkeypatch
+):
+    red_node = "tests/unit/test_red.py::t"
+    normal_node = "tests/unit/test_normal.py::t"
+    red_key = json.dumps([red_node, "sig-red"])
+    normal_key = json.dumps([normal_node, "sig-normal"])
+    host = _Host(tmp_path)
+    host._known_red_nodes = lambda: {red_node}
+    settle_ledgers: list = []
+    monkeypatch.setattr(
+        islands,
+        "settle_stale_identities",
+        lambda ledger, evidence, failures: settle_ledgers.append(dict(ledger)) or [],
+    )
+    rebuilt = iter(
+        [
+            {red_key: "FIXED", normal_key: "OPEN"},
+            {red_key: "FIXED", normal_key: "PROVEN"},
+        ]
+    )
+    monkeypatch.setattr(islands, "rebuild_ledger", lambda _events: next(rebuilt))
+    host._execute_full_round = lambda *_a: {
+        "failed_nodes": [],
+        "failures": [],
+        "evidence_by_node": {},
+        "outcomes_ref": "ref",
+    }
+    MImplIslandsMixin._settle_stale_island_2_open(
+        host, _Cmd(), _island_state(), {red_key: "OPEN"}
+    )
+    assert settle_ledgers == [{normal_key: "OPEN"}]
+    assert ("passed", False) in host.emitted
 
 
 def test_settle_stale_island_2_open_paths(tmp_path, monkeypatch):

@@ -296,6 +296,9 @@ class _IslandHost(MImplIslandsMixin):
     def _waived_nodes(self, failing):
         return set()
 
+    def _known_red_nodes(self):
+        return set()
+
 
 def _island_state(**overrides):
     base = {"version": "v0.8", "current_attempt": 0, "island_2_passed": False}
