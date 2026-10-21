@@ -71,6 +71,9 @@ class _Host(ExecVerifyGatesMixin):
     def _waived_nodes(self, nodes):
         return set()
 
+    def _known_red_nodes(self):
+        return set()
+
     def _fail_verify_block(self, cmd, candidate_sha, reason, detail):
         self.failed_blocks.append((candidate_sha, reason, detail))
 
@@ -269,7 +272,7 @@ def test_current_full_f_identity_requires_collect_and_basis(tmp_path: Path, monk
     with pytest.raises(verify_gates.TestSelectError, match="basis"):
         host._current_full_f_identity(SimpleNamespace(payload={"basis": ""}))
 
-    host._declared_full_identity = lambda sections, inventory: ("cmd",)
+    host._declared_full_identity = lambda sections, inventory, nodes=None: ("cmd",)
     host._gate_environment_identity = lambda: "ENV"
     identity = host._current_full_f_identity(SimpleNamespace(payload={"basis": "basis-1"}))
     assert identity["tree"] == "TREE"

@@ -146,19 +146,38 @@ class MImplFullChainMixin:
             for layer in sorted(commands)
         )
 
-    def _declared_full_identity(self, sections, inventory):
+    def _declared_full_identity(self, sections, inventory, nodes=None):
         """Derive current FULL commands without executing them."""
         commands = {}
         cwds = {}
         for layer, section in sections.items():
             section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+            if nodes is None:
+                selected = []
+                template = section.run
+            else:
+                layer_inventory = [
+                    node for node, owner in inventory.items() if owner == layer
+                ]
+                selected = [node for node in nodes if inventory.get(node) == layer]
+                if not selected and layer_inventory:
+                    raise TestSelectError(
+                        f"[{layer}] FULL selection excludes the entire layer"
+                    )
+                template = (
+                    section.run
+                    if not layer_inventory or set(selected) == set(layer_inventory)
+                    else section.run_selected
+                )
             commands[layer] = resolve_selected_command(
-                section.run, [], "<result>", Path(section_cwd)
+                template, selected, "<result>", Path(section_cwd)
             )
             cwds[layer] = str(Path(section_cwd).resolve())
         return self._full_command_identity(commands, cwds)
 
-    def _run_full_layers(self, cmd, round_name: str, sections, inventory):  # pylint: disable=too-many-locals
+    def _run_full_layers(  # pylint: disable=too-many-locals
+        self, cmd, round_name: str, sections, inventory, nodes
+    ):
         """Run every declared FULL layer, staging one test result per layer."""
         outcomes: list[dict] = []
         command_echo: dict[str, list[str]] = {}
@@ -169,28 +188,47 @@ class MImplFullChainMixin:
         try:
             for layer, section in sections.items():
                 assert section is not None
-                selected = sorted(node for node, owner in inventory.items() if owner == layer)
+                layer_inventory = [
+                    node for node, owner in inventory.items() if owner == layer
+                ]
+                selected = [node for node in nodes if inventory.get(node) == layer]
+                if not selected and layer_inventory:
+                    raise TestSelectError(
+                        f"[{layer}] FULL selection excludes the entire layer"
+                    )
                 section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
                 result_path = self._result_staging_path(
                     cmd.command_id, f"full-{round_name.lower()}-{layer}"
                 )
-                staged.append(result_path)
                 result_paths[layer] = str(result_path)
-                result_path.unlink(missing_ok=True)
-                argv = resolve_selected_command(
-                    section.run,
-                    [],
-                    str(result_path),
-                    Path(section_cwd),
-                )
-                if not audit_selection_argv(
-                    section.run,
-                    [],
-                    str(result_path),
-                    list(argv),
-                    Path(section_cwd),
-                ):
-                    raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
+                if not layer_inventory or set(selected) == set(layer_inventory):
+                    staged.append(result_path)
+                    result_path.unlink(missing_ok=True)
+                    argv = resolve_selected_command(
+                        section.run,
+                        [],
+                        str(result_path),
+                        Path(section_cwd),
+                    )
+                    if not audit_selection_argv(
+                        section.run,
+                        [],
+                        str(result_path),
+                        list(argv),
+                        Path(section_cwd),
+                    ):
+                        raise TestSelectError(
+                            f"[{layer}] FULL argv diverges from contract"
+                        )
+                else:
+                    argv = stage_audited_selection(
+                        section,
+                        selected,
+                        result_path,
+                        section_cwd,
+                        staged,
+                        f"[{layer}] FULL argv diverges from contract",
+                    )
                 obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
                 command_echo[layer] = list(obs.argv)
                 command_cwds[layer] = str(Path(obs.cwd).resolve())
@@ -280,12 +318,29 @@ class MImplFullChainMixin:
             raise TestSelectError("FULL requires unit, integration, and e2e sections")
         return sections
 
+    def _known_red_nodes(self) -> set[str]:
+        """Version-scoped known-red exclusions for the FULL gate selection."""
+        path = self._vdir() / "known-red.txt"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return set()
+        nodes: set[str] = set()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                nodes.add(stripped)
+        return nodes
+
     def _full_round_selection(self, cmd, round_name: str) -> _FullSelection:
         """Collect + persist the FULL selection identity (nodes blob event)."""
         inventory, collect_error = self._collect_all_declared_layers()
         if inventory is None:
             raise TestSelectError(collect_error or "FULL collect failed")
-        nodes = sorted(inventory)
+        excluded = self._known_red_nodes()
+        nodes = sorted(node for node in inventory if node not in excluded)
+        if not nodes:
+            raise TestSelectError("FULL selection is empty after known-red exclusion")
         baseline = self._current_baseline_digest()
         if not baseline:
             raise TestSelectError("FULL lacks a frozen M-IMPL baseline identity")
@@ -471,7 +526,7 @@ class MImplFullChainMixin:
         )
         run = _FullRun(
             *self._run_full_layers(
-                cmd, round_name, header.sections, header.inventory
+                cmd, round_name, header.sections, header.inventory, header.nodes
             )
         )
         evidence = self._full_round_evidence(header, run)

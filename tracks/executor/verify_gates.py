@@ -231,7 +231,10 @@ the runtime-materialized default contract lives here."""
         inventory, collect_error = self._collect_all_declared_layers()
         if inventory is None:
             raise TestSelectError(collect_error or "FULL collect failed")
-        nodes = sorted(inventory)
+        excluded = self._known_red_nodes()
+        nodes = sorted(node for node in inventory if node not in excluded)
+        if not nodes:
+            raise TestSelectError("FULL selection is empty after known-red exclusion")
         baseline = self._current_baseline_digest()
         commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
         tree_stamp = self._dirty_tree_stamp()
@@ -246,7 +249,7 @@ the runtime-materialized default contract lives here."""
             commit=commit,
             tree_stamp=tree_stamp,
         )
-        command = self._declared_full_identity(sections, inventory)
+        command = self._declared_full_identity(sections, inventory, nodes)
         env = self._gate_environment_identity()
         return {
             "tree": tree_stamp,

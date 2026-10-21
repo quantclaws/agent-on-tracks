@@ -8,13 +8,16 @@ through a bare mixin host with the process/collect seams stubbed
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tracks.executor import m_impl_full_chain as full_chain
+from tracks.executor import verify_gates
 from tracks.executor.m_impl_full_chain import MImplFullChainMixin
+from tracks.executor.verify_gates import ExecVerifyGatesMixin
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State
 
@@ -159,7 +162,7 @@ def test_run_full_layers_success(tmp_path: Path, monkeypatch):
         lambda cases, selected: {node: SimpleNamespace(status="passed", detail="") for node in selected},
     )
     outcomes, echo, cwds, codes, result_paths = host._run_full_layers(
-        _cmd(), "FULL_1", {"unit": section}, {"n": "unit"}
+        _cmd(), "FULL_1", {"unit": section}, {"n": "unit"}, ["n"]
     )
     assert outcomes == [{"node": "n", "status": "passed", "detail": ""}]
     assert echo == {"unit": ["pytest", "x"]}
@@ -173,7 +176,249 @@ def test_run_full_layers_audit_divergence_raises(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(full_chain, "resolve_selected_command", lambda *a: ["pytest", "x"])
     monkeypatch.setattr(full_chain, "audit_selection_argv", lambda *a: False)
     with pytest.raises(full_chain.TestSelectError, match="FULL argv diverges"):
-        host._run_full_layers(_cmd(), "FULL_1", {"unit": section}, {"n": "unit"})
+        host._run_full_layers(_cmd(), "FULL_1", {"unit": section}, {"n": "unit"}, ["n"])
+
+
+def test_known_red_nodes_parses_lines_comments_and_missing(tmp_path: Path):
+    host = _Host(tmp_path)
+    assert host._known_red_nodes() == set()
+    (host._vdir() / "known-red.txt").write_text(
+        "# operator exclusions\n\ntests/unit/test_a.py::t1\n"
+        "  tests/unit/test_b.py::t2  \n# trailing comment\n",
+        encoding="utf-8",
+    )
+    assert host._known_red_nodes() == {
+        "tests/unit/test_a.py::t1",
+        "tests/unit/test_b.py::t2",
+    }
+
+
+def test_full_round_selection_excludes_known_red(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    (host._vdir() / "known-red.txt").write_text(
+        "tests/unit/test_a.py::red\n", encoding="utf-8"
+    )
+    host._collect_all_declared_layers = lambda: (
+        {
+            "tests/unit/test_a.py::red": "unit",
+            "tests/unit/test_a.py::green": "unit",
+            "tests/integration/test_b.py::green": "integration",
+        },
+        None,
+    )
+    monkeypatch.setattr(full_chain, "git", lambda *a, **k: SimpleNamespace(stdout="COMMIT\n"))
+    selection = host._full_round_selection(_cmd("C-9"), "FULL_1")
+    assert selection.nodes == [
+        "tests/integration/test_b.py::green",
+        "tests/unit/test_a.py::green",
+    ]
+    assert selection.inventory == {
+        "tests/unit/test_a.py::red": "unit",
+        "tests/unit/test_a.py::green": "unit",
+        "tests/integration/test_b.py::green": "integration",
+    }
+    assert host.emitted[0][1]["nodes"] == selection.nodes
+    assert [entry["node"] for entry in host.store.blobs[0]] == selection.nodes
+
+
+def test_full_round_selection_empty_after_exclusion_fails_closed(tmp_path: Path):
+    host = _Host(tmp_path)
+    (host._vdir() / "known-red.txt").write_text("only\n", encoding="utf-8")
+    host._collect_all_declared_layers = lambda: ({"only": "unit"}, None)
+    with pytest.raises(full_chain.TestSelectError, match="empty after known-red"):
+        host._full_round_selection(_cmd(), "FULL_1")
+
+
+def test_run_full_layers_partial_selection_uses_run_selected(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest -m 'not performance' {nodes} {result}",
+        cwd=".",
+    )
+    inventory = {
+        "tests/unit/test_a.py::t1": "unit",
+        "tests/unit/test_a.py::t2": "unit",
+        "tests/unit/test_a.py::t3": "unit",
+    }
+    selected = ["tests/unit/test_a.py::t1", "tests/unit/test_a.py::t3"]
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=0
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: [])
+    monkeypatch.setattr(
+        full_chain,
+        "require_exact_node_coverage",
+        lambda cases, selected: {
+            node: SimpleNamespace(status="passed", detail="") for node in selected
+        },
+    )
+    outcomes, echo, _cwds, _codes, result_paths = host._run_full_layers(
+        _cmd(),
+        "FULL_1",
+        {"unit": section},
+        inventory,
+        selected,
+    )
+    argv = echo["unit"]
+    assert argv[:3] == ["pytest", "-m", "not performance"]
+    assert argv[3:-1] == selected
+    assert argv[-1] == result_paths["unit"]
+    assert [outcome["node"] for outcome in outcomes] == selected
+    assert set(echo) == set(result_paths) == {"unit"}
+
+
+def test_run_full_layers_whole_layer_uses_run_not_run_selected(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest {nodes} {result}",
+        cwd=".",
+    )
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=0
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: [])
+    monkeypatch.setattr(
+        full_chain,
+        "require_exact_node_coverage",
+        lambda cases, selected: {
+            node: SimpleNamespace(status="passed", detail="") for node in selected
+        },
+    )
+    nodes = ["tests/unit/test_a.py::t1"]
+    outcomes, echo, _cwds, _codes, result_paths = host._run_full_layers(
+        _cmd(), "FULL_1", {"unit": section}, {nodes[0]: "unit"}, nodes
+    )
+    assert echo["unit"] == ["pytest", result_paths["unit"]]
+    assert nodes[0] not in echo["unit"]
+    assert [outcome["node"] for outcome in outcomes] == nodes
+
+
+def test_run_full_layers_empty_layer_keeps_original_run_path(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest {nodes} {result}",
+        cwd=".",
+    )
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=5
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: [])
+    monkeypatch.setattr(
+        full_chain, "require_exact_node_coverage", lambda cases, selected: {}
+    )
+    outcomes, echo, _cwds, codes, result_paths = host._run_full_layers(
+        _cmd(), "FULL_1", {"unit": section}, {}, []
+    )
+    assert outcomes == []
+    assert echo["unit"] == ["pytest", result_paths["unit"]]
+    assert codes == {"unit": 5}
+
+
+def test_run_full_layers_whole_layer_exclusion_raises(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest {nodes} {result}",
+        cwd=".",
+    )
+    calls: list = []
+    monkeypatch.setattr(
+        full_chain, "execute_gate_command", lambda *args: calls.append(args)
+    )
+    with pytest.raises(
+        full_chain.TestSelectError,
+        match=r"\[unit\] FULL selection excludes the entire layer",
+    ):
+        host._run_full_layers(
+            _cmd(),
+            "FULL_1",
+            {"unit": section},
+            {"tests/unit/test_a.py::t1": "unit"},
+            [],
+        )
+    assert calls == []
+
+
+def test_full_f_reuse_identity_matches_full_round_identity(tmp_path: Path, monkeypatch):
+    class _IdentityHost(_Host, ExecVerifyGatesMixin):
+        def _emit(self, event, payload=None, **kwargs):
+            self.emitted.append((event, payload, kwargs))
+            return SimpleNamespace(
+                seq=len(self.emitted), command_id=kwargs.get("command_id")
+            )
+
+    host = _IdentityHost(tmp_path)
+    section = SimpleNamespace(
+        run="pytest {result}",
+        run_selected="pytest -m 'not performance' {nodes} {result}",
+        cwd=".",
+    )
+    contract = SimpleNamespace(unit=section, integration=section, e2e=section)
+    monkeypatch.setattr(full_chain, "load_contract", lambda repo: contract)
+    monkeypatch.setattr(verify_gates, "load_contract", lambda repo: contract)
+    monkeypatch.setattr(
+        full_chain, "git", lambda *a, **k: SimpleNamespace(stdout="COMMIT\n")
+    )
+    monkeypatch.setattr(
+        verify_gates, "git", lambda *a, **k: SimpleNamespace(stdout="COMMIT\n")
+    )
+    inventory = {
+        "tests/unit/test_a.py::t1": "unit",
+        "tests/unit/test_a.py::t2": "unit",
+        "tests/unit/test_a.py::t3": "unit",
+    }
+    host._collect_all_declared_layers = lambda: (dict(inventory), None)
+    (host._vdir() / "known-red.txt").write_text(
+        "tests/unit/test_a.py::t3\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        full_chain,
+        "execute_gate_command",
+        lambda command, cwd, label: SimpleNamespace(
+            argv=shlex.split(command), cwd=cwd, exit_code=0
+        ),
+    )
+    monkeypatch.setattr(full_chain, "parse_test_result", lambda path: [])
+    monkeypatch.setattr(
+        full_chain,
+        "require_exact_node_coverage",
+        lambda cases, selected: {
+            node: SimpleNamespace(status="passed", detail="") for node in selected
+        },
+    )
+    round_payload = host._execute_full_round(
+        _cmd("C-ROUND"), State(run_id="RUN"), "FULL_1", {}
+    )
+    selection_payload = next(
+        payload for event, payload, _kwargs in host.emitted if event == "test.selected"
+    )
+    current = host._current_full_f_identity(SimpleNamespace(payload=selection_payload))
+    assert round_payload["identity"]["command"] == current["command"]
+    assert round_payload["identity"]["selection_id"] == current["selection_id"]
+    assert round_payload["identity"]["tree"] == current["tree"]
+    assert round_payload["identity"]["env"] == current["env"]
+    assert current["command"] == list(
+        host._declared_full_identity(
+            {"unit": section, "integration": section, "e2e": section},
+            inventory,
+            ["tests/unit/test_a.py::t1", "tests/unit/test_a.py::t2"],
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +554,7 @@ def test_execute_full_round_composes_pieces(tmp_path: Path):
     host = _Host(tmp_path)
     calls: list = []
     host._full_round_header = lambda *a: calls.append("header") or SimpleNamespace(
-        sections={"unit": SimpleNamespace()}, inventory={}
+        sections={"unit": SimpleNamespace()}, inventory={}, nodes=[]
     )
     host._run_full_layers = lambda *a: ([], {}, {}, {}, {})
     host._full_round_evidence = lambda header, run: calls.append("evidence") or "EVIDENCE"

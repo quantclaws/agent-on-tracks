@@ -12,8 +12,11 @@ import sys
 import uuid
 from pathlib import Path
 
+import pytest
+
 from tests.unit.helpers import git_repo
 from tracks.executor.executor import Executor
+from tracks.executor.test_select import TestSelectError as FullSelectionError
 from tracks.kernel.events import Command
 from tracks.store import Store
 
@@ -299,6 +302,22 @@ def test_declared_layer_with_zero_collected_stays_fail_closed(tmp_path):
     assert full.payload["empty_pass_layers"]["unit"] is False
     assert full.payload["passed"] is True
     assert full.payload["full_f_eligible"] is False
+    store.close()
+
+
+def test_known_red_whole_layer_exclusion_fails_closed(tmp_path):
+    """Excluding every node of a non-empty layer is a fail-closed selection
+    defect, never a silent layer skip."""
+    repo, store, executor = _full_host(tmp_path)
+    vdir = repo / ".tracks" / "projects" / "v0.8"
+    (vdir / "known-red.txt").write_text(
+        "tests/unit/test_counter.py::test_full_counter\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        FullSelectionError,
+        match=r"\[unit\] FULL selection excludes the entire layer",
+    ):
+        _run_real_full(executor, store)
     store.close()
 
 
