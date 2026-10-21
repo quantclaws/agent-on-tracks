@@ -14,10 +14,13 @@ surface is unchanged.
 
 from __future__ import annotations
 
+import os
 import pathlib
+import subprocess
 import sys
 from pathlib import Path
 
+from tracks import project_runtime
 from tracks.discuss.cli import run_discuss
 from tracks.executor import (  # noqa: F401  (§1.0.9 assembly)
     Executor,
@@ -145,6 +148,12 @@ from .hotfix_cmd import (
 )
 from .hotfix_cmd import (
     cmd_hotfix as cmd_hotfix,
+)
+from .install_cmd import (
+    cmd_install as cmd_install,
+)
+from .install_cmd import (
+    cmd_version as cmd_version,
 )
 from .release_cmd import (
     _ATTENTION_RECOVERY_EVENTS as _ATTENTION_RECOVERY_EVENTS,
@@ -479,9 +488,15 @@ USAGE = (
     " [--background|--stop|--status]"
 )
 
+# Commands always handled by the global CLI (never delegated to a project
+# launcher): install/version are global faces, serve has its own entry check.
+_DELEGATE_EXEMPT = frozenset({"install", "version", "serve"})
+
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
 _COMMANDS = {
     "init": (cmd_init, 0),
+    "install": (cmd_install, None),
+    "version": (cmd_version, None),
     "start": (cmd_start, None),
     "run": (cmd_run, None),
     "hotfix": (cmd_hotfix, None),
@@ -504,7 +519,36 @@ _COMMANDS = {
 }
 
 
+def _project_delegate(repo: Path, cmd: str, rest: list[str]) -> int | None:
+    """Run a non-global command through the locked project launcher.
+
+    Returns the launcher exit code, or None when the command stays on the
+    global CLI (project外 / already inside the launcher / exempt command).
+    """
+    if cmd in _DELEGATE_EXEMPT or os.environ.get("TRAC_PROJECT_ACTIVE") == "1":
+        return None
+    try:
+        root = project_runtime.find_project(repo)
+        if root is None:
+            return None
+        receipt = project_runtime.read_receipt(root)
+    except project_runtime.ProjectCorrupt as exc:
+        return _err(f"install_corrupt: {exc}")
+    environment = dict(os.environ)
+    environment["TRAC_PROJECT_ACTIVE"] = "1"
+    try:
+        completed = subprocess.run(
+            [receipt["python"], str(root / receipt["launcher"]), cmd, *rest],
+            cwd=str(root),
+            env=environment,
+        )
+    except OSError as exc:
+        return _err(f"install_corrupt: cannot run project launcher: {exc}")
+    return completed.returncode
+
+
 def main(argv=None) -> int:
+    os.environ["TRAC_CLI_ENTRY"] = "1"
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in ("--help", "-h", "help"):
         # Zero-dependency public outlet: --help prints usage and exits 0
@@ -515,6 +559,9 @@ def main(argv=None) -> int:
     entry = _COMMANDS.get(cmd)
     if entry is None or (entry[1] is not None and len(rest) != entry[1]):
         return _err(USAGE)
+    delegated = _project_delegate(Path.cwd(), cmd, rest)
+    if delegated is not None:
+        return delegated
     try:
         return entry[0](Path.cwd(), *rest)
     except LockHeld as e:
