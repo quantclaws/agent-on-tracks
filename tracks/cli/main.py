@@ -342,6 +342,9 @@ from .run_cmd import (
     cmd_triage as cmd_triage,
 )
 from .serve_cmd import (
+    cli_entry_scope as cli_entry_scope,
+)
+from .serve_cmd import (
     cmd_serve as cmd_serve,
 )
 from .status_cmd import (
@@ -475,6 +478,7 @@ USAGE = (
     "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
     "|version [--json]|start <version>"
     "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
+    " [--watch|--no-watch]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|recover --reason TEXT"
@@ -548,26 +552,30 @@ def _project_delegate(repo: Path, cmd: str, rest: list[str]) -> int | None:
 
 
 def main(argv=None) -> int:
-    os.environ["TRAC_CLI_ENTRY"] = "1"
-    args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] in ("--help", "-h", "help"):
-        # Zero-dependency public outlet: --help prints usage and exits 0
-        # (the post-install smoke probe relies on it; no repo context needed).
-        print(USAGE)
-        return 0
-    cmd, rest = args[0], args[1:]
-    entry = _COMMANDS.get(cmd)
-    if entry is None or (entry[1] is not None and len(rest) != entry[1]):
-        return _err(USAGE)
-    delegated = _project_delegate(Path.cwd(), cmd, rest)
-    if delegated is not None:
-        return delegated
-    try:
-        return entry[0](Path.cwd(), *rest)
-    except LockHeld as e:
-        return _err(f"runtime lock held by pid {e.pid}")
-    except RuntimeError as e:
-        return _err(str(e))
+    # interfaces §1d.4: the CLI-entry marker is scoped to this call (the
+    # context manager also restores any caller-provided environment value),
+    # so a direct ``cmd_serve`` call afterwards is distinguishable from the
+    # user face (tests/management backdoor; PRISM-RED-T002-04).
+    with cli_entry_scope():
+        args = list(sys.argv[1:] if argv is None else argv)
+        if not args or args[0] in ("--help", "-h", "help"):
+            # Zero-dependency public outlet: --help prints usage and exits 0
+            # (the post-install smoke probe relies on it; no repo context needed).
+            print(USAGE)
+            return 0
+        cmd, rest = args[0], args[1:]
+        entry = _COMMANDS.get(cmd)
+        if entry is None or (entry[1] is not None and len(rest) != entry[1]):
+            return _err(USAGE)
+        delegated = _project_delegate(Path.cwd(), cmd, rest)
+        if delegated is not None:
+            return delegated
+        try:
+            return entry[0](Path.cwd(), *rest)
+        except LockHeld as e:
+            return _err(f"runtime lock held by pid {e.pid}")
+        except RuntimeError as e:
+            return _err(str(e))
 
 
 if __name__ == "__main__":

@@ -24,12 +24,14 @@ random free port and the real bound port is what gets announced.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import getpass
 import json
 import os
 import re
 import signal
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -39,7 +41,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from tracks import __version__, paths
+from tracks import __version__, paths, project_runtime
 from tracks.server import auth
 from tracks.server.app import create_app
 from tracks.supervisor import intake as intake_worker
@@ -63,7 +65,14 @@ _FLAG_SPECS: dict[str, tuple[str, Any]] = {
     "--poll-idle-cap-s": ("poll_idle_cap_s", 60),
 }
 _REPEAT_FLAG = "--repo"
-_BOOL_FLAGS = frozenset({"--password-stdin"})
+# Boolean flags map to their ``opts`` key; lifecycle flags are POSIX-only
+# except ``--status`` (interfaces §1e.5).
+_BOOL_FLAGS: dict[str, str] = {
+    "--password-stdin": "password_stdin",
+    "--background": "background",
+    "--stop": "stop",
+    "--status": "status",
+}
 _PASSWORD_HINT = (
     "trac serve: first start needs a password before logins are accepted.\n"
     "supply it with --password-stdin, the TRAC_SERVE_PASSWORD environment\n"
@@ -144,14 +153,17 @@ class _UsageError(ValueError):
 
 
 def _parse_serve_args(args: list[str]) -> dict:
-    opts: dict[str, Any] = {"repo": [], "home": None, "password_stdin": False}
+    opts: dict[str, Any] = {"repo": [], "home": None}
     for name, default in _FLAG_SPECS.values():
         opts[name] = default
+    for option in _BOOL_FLAGS.values():
+        opts[option] = False
     index = 0
     while index < len(args):
         flag = args[index]
-        if flag in _BOOL_FLAGS:
-            opts["password_stdin"] = True
+        boolean_option = _BOOL_FLAGS.get(flag)
+        if boolean_option is not None:
+            opts[boolean_option] = True
             index += 1
             continue
         spec = _FLAG_SPECS.get(flag)
@@ -398,8 +410,11 @@ def _supervisor_loop(
             reaped = False
         if reaped:
             continue  # drive the just-freed run at once; poll() fires once so no hot loop
-        busy = bool(state.in_flight or state.gate_in_flight or state.intake_in_flight)
-        wait_s = min(interval, _BUSY_POLL_S) if busy else interval
+        wait_s = (
+            min(interval, _BUSY_POLL_S)
+            if state.in_flight or state.gate_in_flight or state.intake_in_flight
+            else interval
+        )
         if wake is None:
             stop.wait(wait_s)
         else:
@@ -643,14 +658,107 @@ def _log(level: str, msg: str) -> None:
 # -- the entry face -----------------------------------------------------------
 
 
-def cmd_serve(repo: Path, *args: str) -> int:
-    """Parse serve flags and run the service until stopped (interfaces §2a)."""
-    del repo  # the command context; the serve scope comes from --repo flags
+@dataclass(frozen=True)
+class _ServiceProject:
+    """The installed project a lifecycle call operates on (interfaces §1e)."""
+
+    root: Path
+    receipt: dict
+
+
+# The CLI-entry scope: the environment variable is what delegated/background
+# children observe, while this in-process depth lets a direct ``cmd_serve``
+# call (tests/management backdoor) stay distinguishable from the user face
+# even when the ambient environment already carries TRAC_CLI_ENTRY=1
+# (interfaces §1d.4; PRISM-RED-T002-04).
+_CLI_ENTRY_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "trac_cli_entry_depth", default=0
+)
+
+
+@contextlib.contextmanager
+def cli_entry_scope():
+    """Scope ``TRAC_CLI_ENTRY=1`` to one ``trac.cli.main.main`` call."""
+    previous = os.environ.get("TRAC_CLI_ENTRY")
+    token = _CLI_ENTRY_DEPTH.set(_CLI_ENTRY_DEPTH.get() + 1)
+    os.environ["TRAC_CLI_ENTRY"] = "1"
     try:
-        opts = _parse_serve_args(list(args))
+        yield
+    finally:
+        _CLI_ENTRY_DEPTH.reset(token)
+        if previous is None:
+            os.environ.pop("TRAC_CLI_ENTRY", None)
+        else:
+            os.environ["TRAC_CLI_ENTRY"] = previous
+
+
+def _user_face() -> bool:
+    """True for the global ``trac`` entry, false inside the project launcher."""
+    return (
+        _CLI_ENTRY_DEPTH.get() > 0
+        and os.environ.get("TRAC_PROJECT_ACTIVE") != "1"
+    )
+
+
+def _is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
+def _find_service_project(repo: Path) -> tuple[_ServiceProject | None, str | None]:
+    """Resolve ``--repo`` into an installed project, fail-closed (§1d.4)."""
+    try:
+        found = project_runtime.find_project(repo)
+        if found is None:
+            return (
+                None,
+                f"not_installed: {repo} is not an installed tracks project; "
+                f"run `trac install {repo}` first",
+            )
+        receipt = project_runtime.read_receipt(found)
+    except project_runtime.ProjectCorrupt as exc:
+        return None, f"install_corrupt: {exc}"
+    return _ServiceProject(root=found, receipt=receipt), None
+
+
+def cmd_serve(repo: Path, *args: str) -> int:
+    """Parse serve flags and dispatch the lifecycle face (interfaces §2a)."""
+    del repo  # the command context; the serve scope comes from --repo flags
+    raw_args = list(args)
+    try:
+        opts = _parse_serve_args(raw_args)
     except _UsageError as exc:
         print(f"trac serve: {exc}", file=sys.stderr)
         return 1
+    project, error = _dispatch_project(opts)
+    if error is not None:
+        print(f"trac serve: {error}", file=sys.stderr)
+        return 1
+    if _is_windows() and (opts["background"] or opts["stop"]):
+        print(
+            "trac serve: unsupported_platform: --background/--stop need POSIX",
+            file=sys.stderr,
+        )
+        return 1
+    if opts["stop"]:
+        return _cmd_stop(project, opts)
+    if opts["status"]:
+        return _cmd_status(project, opts)
+    if opts["background"]:
+        return _cmd_background(project, opts)
+    if _user_face():
+        return _delegate_foreground(project, raw_args)
+    return _run_foreground(opts)
+
+
+def _dispatch_project(opts: dict) -> tuple[_ServiceProject | None, str | None]:
+    """The project a user-face or lifecycle call must be bound to."""
+    if _user_face() or opts["stop"] or opts["status"] or opts["background"]:
+        return _find_service_project(opts["repo"][0])
+    return None, None
+
+
+def _run_foreground(opts: dict) -> int:
+    """Legacy in-process foreground serve (direct ``cmd_serve`` face)."""
     home = _resolve_home(opts)
     db = _open_store(home)
     if db is None:
@@ -664,6 +772,312 @@ def cmd_serve(repo: Path, *args: str) -> int:
             auth.provision_password(conn, password)
         _log("info", "first-start password provisioned")
     return _serve(opts, home, db)
+
+
+def _delegate_foreground(project: _ServiceProject, raw_args: list[str]) -> int:
+    """Run the project launcher's foreground serve with TRAC_PROJECT_ACTIVE=1."""
+    environment = dict(os.environ)
+    environment["TRAC_PROJECT_ACTIVE"] = "1"
+    command = [
+        project.receipt["python"],
+        str(project.root / project.receipt["launcher"]),
+        "serve",
+        *raw_args,
+    ]
+    try:
+        completed = subprocess.run(command, cwd=str(project.root), env=environment)
+    except OSError as exc:
+        print(
+            f"trac serve: install_corrupt: cannot run project launcher: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    return completed.returncode
+
+
+def _cmd_stop(project: _ServiceProject, opts: dict) -> int:
+    result = project_runtime.stop_service(
+        _resolve_home(opts), project.receipt, project.root
+    )
+    state = result["state"]
+    if state == "stopped":
+        print(f"stopped pid={result['pid']}")
+        return 0
+    if state == "stale_removed":
+        print("not running (stale pidfile removed)")
+        return 0
+    if state == "not_running":
+        print("not running")
+        return 0
+    print(
+        f"stop_refused: pid {result['pid']} does not belong to {project.root}",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _cmd_status(project: _ServiceProject, opts: dict) -> int:
+    result = project_runtime.pidfile_status(
+        _resolve_home(opts), project.receipt, project.root
+    )
+    state = result["state"]
+    if state == "stopped":
+        print("stopped")
+        return 0
+    if state == "stale":
+        print("stopped (stale pidfile)")
+        return 0
+    if state == "running":
+        print(
+            f"running pid={result['pid']} version={result['version']} "
+            f"url={result['url']}"
+        )
+        return 0
+    print(f"running (unhealthy: {result.get('detail') or 'unhealthy'})")
+    return 1
+
+
+def _cmd_background(project: _ServiceProject, opts: dict) -> int:
+    home = _resolve_home(opts)
+    running = _already_running(home, project)
+    if running is not None:
+        print(running)
+        return 0
+    log_path = home / project_runtime.SERVICE_LOG_NAME
+    home.mkdir(parents=True, exist_ok=True)
+    process = _spawn_background(project, opts, log_path)
+    port, error = _wait_for_background(
+        process, opts["host"], opts["port"], log_path, opts["wait_initial_s"]
+    )
+    if error is not None:
+        _terminate_background(process)
+        _report_background_failure(error, log_path)
+        return 1
+    payload = {
+        "pid": process.pid,
+        "host": opts["host"],
+        "port": port,
+        "version": project.receipt["version"],
+        "repo": str(project.root.resolve()),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    project_runtime.write_pidfile(home, payload)
+    print(
+        f"serving on http://{opts['host']}:{port} "
+        f"(pid {process.pid}, version {payload['version']}, background)",
+        flush=True,
+    )
+    return 0
+
+
+def _already_running(home: Path, project: _ServiceProject) -> str | None:
+    """The idempotent face when the pidfile names a healthy owned service."""
+    payload = project_runtime.read_pidfile(home)
+    if payload is None:
+        return None
+    pid = payload.get("pid")
+    owned = project_runtime.launcher_owns_pid(project.root, project.receipt, pid)
+    if not project_runtime.pid_alive(pid) or not owned:
+        project_runtime.remove_pidfile(home)
+        return None
+    host = str(payload.get("host") or "127.0.0.1")
+    try:
+        port = int(payload.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    ok, _ = project_runtime.healthz(host, port)
+    if not ok:
+        project_runtime.remove_pidfile(home)
+        return None
+    return f"already running pid={int(pid)} url=http://{host}:{port}"
+
+
+def _spawn_background(
+    project: _ServiceProject, opts: dict, log_path: Path
+) -> subprocess.Popen:
+    """Spawn the project launcher's foreground serve detached (§1e.2)."""
+    environment = dict(os.environ)
+    environment["TRAC_PROJECT_ACTIVE"] = "1"
+    if opts["password_stdin"]:
+        password = sys.stdin.readline().strip()
+        if password:
+            environment["TRAC_SERVE_PASSWORD"] = password
+    command = [
+        project.receipt["python"],
+        str(project.root / project.receipt["launcher"]),
+        *_background_child_args(opts),
+    ]
+    with log_path.open("ab", buffering=0) as log_handle:
+        return subprocess.Popen(
+            command,
+            cwd=str(project.root),
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=log_handle,
+            start_new_session=True,
+        )
+
+
+def _background_child_args(opts: dict) -> list[str]:
+    args = ["serve"]
+    for repo_path in opts["repo"]:
+        args += ["--repo", str(repo_path)]
+    args += ["--host", str(opts["host"]), "--port", str(opts["port"])]
+    for flag, key in (
+        ("--wait-initial-s", "wait_initial_s"),
+        ("--wait-cap-s", "wait_cap_s"),
+        ("--poll-interval-s", "poll_interval_s"),
+        ("--poll-idle-cap-s", "poll_idle_cap_s"),
+    ):
+        args += [flag, str(opts[key])]
+    if opts.get("home"):
+        args += ["--home", str(opts["home"])]
+    return args
+
+
+_SERVING_LINE = re.compile(r"serving on http://[^\s:]+:(\d+)")
+
+
+def _wait_for_background(
+    process: subprocess.Popen,
+    host: str,
+    requested_port: int,
+    log_path: Path,
+    timeout: float,
+) -> tuple[int, str | None]:
+    """Bounded wait for *this child's* ``/healthz`` or child exit (§1e.2).
+
+    A healthz 200 only proves that *some* listener answers on the port; it
+    cannot distinguish our spawned child from a foreign listener occupying
+    the requested port. Readiness therefore also requires the child to hold
+    the LISTEN socket itself — otherwise a bind-failed child would be
+    announced as serving and the pidfile would name a dead process.
+    """
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while True:
+        code = process.poll()
+        if code is not None:
+            return 0, f"child exited with code {code}"
+        port = requested_port or _announced_port(log_path)
+        if port:
+            healthy, _ = project_runtime.healthz(host, port)
+            if healthy and _child_owns_port(process.pid, int(port)):
+                return int(port), None
+        if time.monotonic() >= deadline:
+            return 0, f"health check timed out after {timeout}s"
+        time.sleep(0.05)
+
+
+def _child_owns_port(pid: int, port: int) -> bool:
+    """True when *pid* itself holds the LISTEN socket on *port*.
+
+    Linux resolves the socket inode through ``/proc`` (no external tool);
+    other POSIX hosts use ``lsof``, the standard process inspector (macOS
+    ships it). Background serving is POSIX-only (§1e.5).
+    """
+    if sys.platform.startswith("linux"):
+        inodes = _linux_listen_inodes(port)
+        if inodes is not None:
+            return _pid_holds_socket(pid, inodes)
+    return _lsof_owns_port(pid, port)
+
+
+def _linux_listen_inodes(port: int) -> set[str] | None:
+    """Listening socket inodes for *port* from /proc; None when unavailable."""
+    inodes: set[str] = set()
+    tables = 0
+    for name in ("tcp", "tcp6"):
+        try:
+            lines = Path(f"/proc/net/{name}").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        tables += 1
+        inodes.update(_listen_inodes(lines, port))
+    return inodes if tables else None
+
+
+def _listen_inodes(lines: list[str], port: int) -> set[str]:
+    """Inodes of ``state 0A`` (LISTEN) rows on *port* in a /proc/net table."""
+    inodes: set[str] = set()
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) < 10 or fields[3] != "0A":
+            continue
+        try:
+            local_port = int(fields[1].rsplit(":", 1)[1], 16)
+        except (IndexError, ValueError):
+            continue
+        if local_port == port:
+            inodes.add(fields[9])
+    return inodes
+
+
+def _pid_holds_socket(pid: int, inodes: set[str]) -> bool:
+    """True when *pid*'s file descriptors reference one of *inodes*."""
+    if not inodes:
+        return False
+    targets = {f"socket:[{inode}]" for inode in inodes}
+    try:
+        handles = list(Path(f"/proc/{pid}/fd").iterdir())
+    except OSError:
+        return False
+    for handle in handles:
+        try:
+            if os.readlink(handle) in targets:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _lsof_owns_port(pid: int, port: int) -> bool:
+    """True when ``lsof`` lists *pid* among the LISTEN owners of *port*."""
+    try:
+        completed = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and str(pid) in completed.stdout.split()
+
+
+def _announced_port(log_path: Path) -> int:
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    matches = _SERVING_LINE.findall(text)
+    return int(matches[-1]) if matches else 0
+
+
+def _log_tail(log_path: Path, limit: int = 2000) -> str:
+    try:
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[-limit:].strip()
+
+
+def _report_background_failure(error: str, log_path: Path) -> None:
+    tail = _log_tail(log_path)
+    detail = f"{error}; log tail: {tail}" if tail else error
+    print(f"background_failed: {detail}", file=sys.stderr)
+
+
+def _terminate_background(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _serve(opts: dict, home: Path, db: ServiceDB) -> int:

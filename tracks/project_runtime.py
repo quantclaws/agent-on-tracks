@@ -9,15 +9,25 @@ global version.
 
 from __future__ import annotations
 
+import contextlib
+import http.client
 import json
 import os
 import re
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 RECEIPT_REL = ".tracks/install.json"
 LAUNCHER_REL = ".tracks/bin/trac.py"
 SITE_PACKAGES_TEMPLATE = ".tracks/env/{version}/site-packages"
+SERVICE_DIR_REL = ".tracks/service"
+PIDFILE_NAME = "serve.pid"
+SERVICE_LOG_NAME = "serve.log"
+# A stopped service must leave promptly; SIGKILL only backstops a wedged one.
+STOP_TIMEOUT_S = 5.0
 
 # `.tracks` scaffold gitignores mirror `trac init`'s .tracks-level semantics
 # (interfaces §1b.4); the host root .gitignore is deliberately never touched.
@@ -179,3 +189,209 @@ def scaffold_tracks_dirs(root: Path) -> None:
         keep = tracks_dir / name / ".gitkeep"
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
+
+
+# -- background service state (interfaces §1e, IF-SERVERLIFE-001) -------------
+
+
+def service_home(root: Path) -> Path:
+    """The project's runtime service directory (``.tracks/service``)."""
+    return Path(root) / SERVICE_DIR_REL
+
+
+def pidfile_path(home: Path) -> Path:
+    return Path(home) / PIDFILE_NAME
+
+
+def read_pidfile(home: Path) -> dict | None:
+    """Load the service pidfile; missing or malformed reads as no service."""
+    try:
+        data = json.loads(pidfile_path(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_pidfile(home: Path, payload: dict) -> Path:
+    """Atomically write the documented pidfile payload (interfaces §1b.5)."""
+    path = pidfile_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def remove_pidfile(home: Path) -> None:
+    with contextlib.suppress(OSError):
+        pidfile_path(home).unlink()
+
+
+def pid_alive(pid: object) -> bool:
+    """True when *pid* names a live (non-zombie) process."""
+    try:
+        numeric = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if numeric <= 0:
+        return False
+    if sys.platform.startswith("win"):
+        # ``os.kill(pid, 0)`` terminates a process on Windows; tasklist is the
+        # safe read-only probe there (stop/background are POSIX-only anyway).
+        return _windows_pid_alive(numeric)
+    try:
+        os.kill(numeric, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return not _is_zombie(numeric)
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    try:
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return str(pid) in completed.stdout
+
+
+def _is_zombie(pid: int) -> bool:
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.stdout.strip().upper().startswith("Z")
+
+
+def process_command(pid: int) -> str | None:
+    """The process command line, via /proc when available, else ``ps``."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        raw = b""
+    if raw:
+        return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
+    try:
+        completed = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return completed.stdout.strip() or None
+
+
+def launcher_owns_pid(root: Path, receipt: dict, pid: object) -> bool:
+    """True when *pid*'s command line runs this project's launcher (§1e.3)."""
+    try:
+        numeric = int(pid)
+    except (TypeError, ValueError):
+        return False
+    command = process_command(numeric)
+    if command is None:
+        return False
+    launcher = (Path(root) / str(receipt.get("launcher") or "")).resolve()
+    return str(launcher) in command
+
+
+def healthz(host: str, port: object, timeout: float = 0.5) -> tuple[bool, str]:
+    """Probe ``/healthz`` on the documented loopback service address."""
+    try:
+        numeric = int(port)
+    except (TypeError, ValueError):
+        return False, "invalid port"
+    connection = http.client.HTTPConnection(host, numeric, timeout=timeout)
+    try:
+        connection.request("GET", "/healthz")
+        response = connection.getresponse()
+        response.read()
+        if response.status == 200:
+            return True, ""
+        return False, f"HTTP {response.status}"
+    except (OSError, http.client.HTTPException) as exc:
+        return False, str(exc) or exc.__class__.__name__
+    finally:
+        connection.close()
+
+
+def pidfile_status(home: Path, receipt: dict, root: Path) -> dict:
+    """Classify the pidfile for ``serve --status`` (interfaces §1e.4).
+
+    Stale pidfiles are removed here (the documented cleanup); a live PID is
+    probed over ``/healthz`` and reported running or unhealthy.
+    """
+    payload = read_pidfile(home)
+    if payload is None:
+        return {"state": "stopped"}
+    pid = payload.get("pid")
+    if not pid_alive(pid):
+        remove_pidfile(home)
+        return {"state": "stale"}
+    host = str(payload.get("host") or "127.0.0.1")
+    try:
+        port = int(payload.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    ok, detail = healthz(host, port)
+    result = {
+        "state": "running" if ok else "unhealthy",
+        "pid": int(pid),
+        "version": str(payload.get("version") or receipt.get("version") or ""),
+        "url": f"http://{host}:{port}",
+    }
+    if not ok:
+        result["detail"] = detail
+    return result
+
+
+def stop_service(home: Path, receipt: dict, root: Path) -> dict:
+    """Stop the recorded service after launcher-ownership validation (§1e.3).
+
+    Returns a state payload; refusal leaves both the process and pidfile
+    untouched, while successful/stale paths consume the pidfile.
+    """
+    payload = read_pidfile(home)
+    if payload is None:
+        return {"state": "not_running"}
+    pid = payload.get("pid")
+    if not pid_alive(pid):
+        remove_pidfile(home)
+        return {"state": "stale_removed"}
+    numeric = int(pid)
+    if not launcher_owns_pid(root, receipt, numeric):
+        return {"state": "refused", "pid": numeric}
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(numeric, signal.SIGTERM)
+    if not _wait_pid_gone(numeric, STOP_TIMEOUT_S):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(numeric, signal.SIGKILL)
+        _wait_pid_gone(numeric, 1.0)
+    remove_pidfile(home)
+    return {"state": "stopped", "pid": numeric}
+
+
+def _wait_pid_gone(pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.05)
+    return not pid_alive(pid)
