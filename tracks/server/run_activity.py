@@ -46,7 +46,8 @@ def collect_run_activity(
     response tail quota and the serialization budget match the intake face.
     Only sessions still owning a surviving item are returned.
     """
-    states = [(path, intake_activity._ingest(path)) for path in intake_activity._log_files(Path(repo_path))]
+    log_files = intake_activity._log_files(Path(repo_path))
+    states = [(path, intake_activity._ingest(path)) for path in log_files]
     sessions = sorted(
         {item for _, state in states for item in state.runs.get(version, ())}
     )
