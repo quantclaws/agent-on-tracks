@@ -197,10 +197,10 @@ def _assert_incomplete_wheel_rejected(
 
 
 # AC-FR0348-02@v0.12 TRACKS-TRACE incomplete wheel rejected before candidate
-# The test-plan/task anchor is this bare node. The pre-WRITE baseline still
-# lists the superseded [omission] nodes, so compatibility aliases below keep
-# those node ids alive with the same assertions; they can be removed once the
-# runtime re-captures the baseline for the bare anchor.
+# One bare node, exactly the test-plan/task anchor. The superseded [omission]
+# compatibility aliases were removed at M-VERIFY: they made a selected bare
+# node report extra testcases (closure exact-coverage failure), and the bare
+# anchor itself is in the live collect inventory.
 def test_incomplete_wheel_rejected(v012_global, incomplete_wheels, tmp_path):
     """AC-FR0348-02: a wheel missing agents/skills/templates/default
     ``opencode.json`` is refused with ``package_incomplete`` and leaves no
@@ -215,18 +215,3 @@ def test_incomplete_wheel_rejected(v012_global, incomplete_wheels, tmp_path):
             v012_global, incomplete_wheels, tmp_path, omission
         )
 
-
-def _incomplete_wheel_case(omission: str):
-    def case(v012_global, incomplete_wheels, tmp_path):
-        _assert_incomplete_wheel_rejected(
-            v012_global, incomplete_wheels, tmp_path, omission
-        )
-
-    case.__name__ = f"test_incomplete_wheel_rejected[{omission}]"
-    return case
-
-
-for _omission in sorted(_OMISSIONS):
-    globals()[f"test_incomplete_wheel_rejected[{_omission}]"] = _incomplete_wheel_case(
-        _omission
-    )
