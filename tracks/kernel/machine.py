@@ -48,6 +48,7 @@ from .m_impl import (
     _on_green_no_change,
     _on_ledger_opened,
     _on_ledger_transitioned,
+    _on_ledger_waived,
     _on_red_checkpointed,
     _on_refactor_committed,
     _on_refactor_no_change,
@@ -380,7 +381,7 @@ class State:
     baseline_captured: bool = False  # test.baseline_captured(passed) persisted
     active_selection_id: str | None = None  # latest test.selected identity
     full_chain_round: str | None = None  # FULL_1 | FULL_F | fallback_full
-    ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries
+    ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries (WAIVED is terminal)
     ledger_rebuilt: bool = False  # ledger WAL has been projected during replay
     ledger_entries: dict = field(default_factory=dict)  # identity -> replay metadata/state
     # Review pin (FR-0244-04): the explicit persisted unit-only hotfix
@@ -594,6 +595,7 @@ _APPLY = {
     "full.executed": _on_full_executed,
     "ledger.opened": _on_ledger_opened,
     "ledger.transitioned": _on_ledger_transitioned,
+    "ledger.waived": _on_ledger_waived,
     # v0.5 batch 2: M-TEST Shield WRITE pipeline publish
     "test.written": _on_test_written,
     # v0.5 ResultCheckpoint pipeline (batch 1)

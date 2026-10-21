@@ -312,7 +312,15 @@ def test_check_island_2_drops_known_red_ledger_identities(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(islands, "ledger_is_clean", lambda ledger: False)
     host._do_check_island_2(_Cmd(), _island_state(), None, False)
-    assert host.emitted == [("settle", {normal_key: "OPEN"})]
+    assert host.emitted[0][0] == "ledger.waived"
+    assert host.emitted[0][1] == {
+        "node_refs": [red_node],
+        "reason": "known-red baseline exclusion (operator OOB)",
+        "actor": "operator",
+        "known_red_file": str(host._vdir() / "known-red.txt"),
+    }
+    assert host.emitted[0][2] == {"command_id": "CMD-ISLAND"}
+    assert host.emitted[1] == ("settle", {normal_key: "OPEN"})
 
     only_red = _Host(tmp_path, events=[done])
     only_red._known_red_nodes = lambda: {red_node}
@@ -320,8 +328,19 @@ def test_check_island_2_drops_known_red_ledger_identities(tmp_path, monkeypatch)
         islands, "rebuild_ledger", lambda _events: {red_key: "CLASSIFIED"}
     )
     only_red._do_check_island_2(_Cmd(), _island_state(), None, False)
+    waived_events = [event for event in only_red.emitted if event[0] == "ledger.waived"]
+    assert len(waived_events) == 1
+    assert waived_events[0][1]["node_refs"] == [red_node]
     assert ("passed", False) in only_red.emitted
     assert all(event[0] != "settle" for event in only_red.emitted)
+
+    no_red = _Host(tmp_path, events=[done])
+    monkeypatch.setattr(
+        islands, "rebuild_ledger", lambda _events: {normal_key: "OPEN"}
+    )
+    no_red._do_check_island_2(_Cmd(), _island_state(), None, False)
+    assert all(event[0] != "ledger.waived" for event in no_red.emitted)
+    assert ("settle", {normal_key: "OPEN"}) in no_red.emitted
 
 
 def test_settle_stale_island_2_open_filters_known_red_identities(
@@ -356,6 +375,9 @@ def test_settle_stale_island_2_open_filters_known_red_identities(
         host, _Cmd(), _island_state(), {red_key: "OPEN"}
     )
     assert settle_ledgers == [{normal_key: "OPEN"}]
+    waived_events = [event for event in host.emitted if event[0] == "ledger.waived"]
+    assert len(waived_events) == 1
+    assert waived_events[0][1]["node_refs"] == [red_node]
     assert ("passed", False) in host.emitted
 
 

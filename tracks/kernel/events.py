@@ -62,6 +62,7 @@ EVENT_TYPES = (
     "full.executed",
     "ledger.opened",
     "ledger.transitioned",
+    "ledger.waived",
     # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
     # capture -> validate -> independent checkpoint -> publish result/verdict.
     "result.submitted",

@@ -74,6 +74,77 @@ def test_registered_known_issue_lifts_park_and_waives_task():
     assert isinstance(cmd, Command) and cmd.kind == "select_task"
 
 
+def test_ledger_waived_marks_known_red_terminal_and_is_idempotent():
+    red_node = "tests/unit/test_red.py::red"
+    normal_node = "tests/unit/test_normal.py::normal"
+    waived = {
+        "node_refs": [red_node],
+        "reason": "known-red baseline exclusion (operator OOB)",
+        "actor": "operator",
+        "known_red_file": ".tracks/projects/v0.8/known-red.txt",
+    }
+    s = project(
+        seq(
+            ("ledger.opened", {
+                "node": red_node,
+                "failure_signature": "sig-red",
+                "state": "OPEN",
+            }),
+            ("ledger.opened", {
+                "node": normal_node,
+                "failure_signature": "sig-normal",
+                "state": "OPEN",
+            }),
+            ("ledger.waived", waived),
+            ("ledger.waived", waived),
+        )
+    )
+    entries = {entry["node"]: entry for entry in s.ledger_entries.values()}
+    assert s.ledger_open == 1
+    assert entries[red_node]["state"] == "WAIVED"
+    assert entries[normal_node]["state"] == "OPEN"
+
+
+def test_rebuild_ledger_ignores_ledger_waived_events():
+    ledger = rebuild_ledger(
+        seq(
+            ("ledger.opened", {
+                "node": "tests/unit/test_normal.py::normal",
+                "failure_signature": "sig-normal",
+                "state": "OPEN",
+            }),
+            ("ledger.waived", {
+                "node_refs": ["tests/unit/test_red.py::red"],
+                "reason": "known-red baseline exclusion (operator OOB)",
+                "actor": "operator",
+                "known_red_file": ".tracks/projects/v0.8/known-red.txt",
+            }),
+        )
+    )
+    assert list(ledger.values()) == ["OPEN"]
+
+
+def test_m_impl_exit_gate_uses_ledger_open_after_waiver():
+    from tracks.kernel.m_impl import _decide_m_impl_exit
+    from tracks.kernel.machine import State
+
+    state = State(
+        run_id="RUN",
+        stage="M-IMPL",
+        substate="EXIT",
+        status="active",
+        island_2_passed=True,
+        full_chain_round="FULL_F",
+        ledger_open=0,
+        stage_exited=False,
+    )
+    command = _decide_m_impl_exit(state)
+    assert command is not None and command.kind == "write_frontmatter"
+
+    state.ledger_open = 1
+    assert _decide_m_impl_exit(state) is None
+
+
 def test_all_tasks_waived_reaches_island_and_exit():
     s = project(
         seq(

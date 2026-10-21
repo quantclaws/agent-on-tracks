@@ -217,6 +217,24 @@ def _on_ledger_opened(s: State, p: dict, ev: EventEnvelope) -> None:
         s.r_tree_identity = p.get("r_sha") or None
 
 
+def _on_ledger_waived(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Operator-declared known-red identities become terminal WAIVED.
+
+    A known-red node is outside the gate's selection by operator declaration,
+    so its stale identity is void for this gate -- never folded into PROVEN.
+    The transition is idempotent: PROVEN/WAIVED entries are never touched."""
+    s.ledger_rebuilt = True
+    node_refs = {str(node) for node in (p.get("node_refs") or []) if node}
+    if not node_refs:
+        return
+    for key, entry in list(s.ledger_entries.items()):
+        if entry.get("state") not in ("OPEN", "CLASSIFIED", "FIXED", "STALE"):
+            continue
+        if str(entry.get("node") or "") in node_refs:
+            s.ledger_entries[key] = {**entry, "state": "WAIVED"}
+            s.ledger_open = max(0, s.ledger_open - 1)
+
+
 def _on_ledger_transitioned(s: State, p: dict, ev: EventEnvelope) -> None:
     """Project non-terminal ledger count across the closed transition set."""
     s.ledger_rebuilt = True
