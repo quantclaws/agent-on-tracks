@@ -336,7 +336,10 @@ def test_run_detail_appends_awaiting_gate_closed_mapping(tmp_path: Path):
             f"{run_id} must carry the run-detail awaiting_gate field group"
             " (interfaces §1k.1; the field is currently absent)"
         )
-        assert set(gate) == {"type", "reason", "impact", "primary_action"}, (
+        assert set(gate) == {
+            "type", "reason", "impact", "primary_action",
+            "pending_human_threads", "diagnosis",
+        }, (
             f"{run_id} awaiting_gate is the closed field group of §1k.1,"
             f" got {sorted(gate)}"
         )
@@ -550,7 +553,7 @@ def test_releases_endpoint_unknown_project_is_not_found(tmp_path: Path):
     assert _error_reason(payload) == "not_found"
 
 
-# AC-FR0340-01@v0.11 TRACKS-TRACE IF-BACKLOG-001 backlog derives from events with queryable whereabouts
+# AC-FR0340-01@v0.11 TRACKS-TRACE IF-BACKLOG-001 backlog events carry queryable whereabouts
 def test_releases_endpoint_derives_backlog_group_from_events(tmp_path: Path):
     home, _repo = _seed_releases_home(tmp_path)
 
@@ -824,15 +827,15 @@ def test_releases_module_backlog_promotion_uses_intake_channel():
 
 # AC-FR0341-01@v0.11 TRACKS-TRACE IF-HOTFIXUI-001 hotfix entry: scenario + preview + anchoring
 def test_releases_module_hotfix_entry_shows_preview_and_anchoring():
-    releases = _module("releases.js")
-    assert "hotfix-preview" in releases, (
+    wizard = _module("wizard.js")
+    assert "hotfix-preview" in wizard, (
         "the hotfix entry consumes the #44 read-only preview (§1i.1)"
     )
     for scenario in ("post-release", "dev"):
-        assert scenario in releases, (
+        assert scenario in wizard, (
             f"the scenario closed set member {scenario!r} is selectable (§1i.1)"
         )
-    assert "anchored" in releases and "unanchored" in releases, (
+    assert "anchored" in wizard and 'anchoring.status !== "anchored"' in wizard, (
         "the preview's anchoring status renders both ways — an unanchored"
         " result explicitly exits hotfix (§1i.1)"
     )
@@ -951,3 +954,83 @@ def test_views_registry_maps_the_releases_window():
             " carried by the awaiting action panel and the projects/runs"
             " registries merge into Releases (§0.1 #1)"
         )
+
+
+# -- static view layer: M-IMPL batch/task progress + failure scoping ---------
+
+
+def test_timeline_m_impl_batch_progress_and_current_failure_scoping():
+    timeline = _module("timeline.js")
+    for testid in (
+        "m-impl-batch-summary",
+        "m-impl-batch-progress",
+        "m-impl-batch-",
+        "m-impl-task-",
+    ):
+        assert testid in timeline, (
+            f"the M-IMPL detail renders the orthogonal batch/task block with"
+            f" data-testid {testid!r}"
+        )
+    assert "detail.task_progress" in timeline and 'stage === "M-IMPL"' in timeline, (
+        "the batch block consumes run detail task_progress only on the M-IMPL"
+        " stage card — batches never enter the mermaid phase diagram"
+    )
+    assert "task-${state}" in timeline, (
+        "each task row carries its state class (task-done/task-running/"
+        "task-pending/task-failed)"
+    )
+    assert "currentFailure" in timeline, (
+        "the stage failure banner is scoped to unsuperseded verdict.failed"
+        " events"
+    )
+    for event_type in (
+        "verdict.passed",
+        "task.completed",
+        "task.started",
+        "stage.entered",
+        "stage.rolled_back",
+        "human.retry",
+    ):
+        assert f'"{event_type}"' in timeline, (
+            f"{event_type!r} must supersede an earlier failure in the window"
+        )
+
+
+def test_timeline_m_impl_plan_execution_diagram_and_phase_annotation():
+    timeline = _module("timeline.js")
+    assert "renderPlanExecutionDiagram" in timeline, (
+        "the plan/execution map has its own renderer beside the phase diagram"
+    )
+    assert "planExecutionSource" in timeline and 'const lines = ["flowchart LR"]' in timeline, (
+        "the plan map is a mermaid flowchart LR source built from task_progress"
+    )
+    assert (
+        'subgraph b${batchIndex + 1}["批次 ${sanitizeMermaidLabel(batch)}"]'
+        in timeline
+    ), (
+        "one subgraph per batch carries the quoted 批次 label"
+    )
+    assert "${from} --> ${to}" in timeline and "depends_on" in timeline, (
+        "dependency edges follow task depends_on arrows"
+    )
+    assert "PLAN_DIAGRAM_MAX_TASKS = 12" in timeline, (
+        "the plan diagram keeps the 12-task scalability threshold"
+    )
+    assert "total > PLAN_DIAGRAM_MAX_TASKS" in timeline, (
+        "above the threshold the compact grouped rows stay the primary view"
+    )
+    assert "detail.task_progress.current_task_id" in timeline, (
+        "the phase diagram's current node annotation reads the running task id"
+    )
+    assert "`${node.title} · ${runningTaskId}`" in timeline, (
+        "the current phase node label appends · T-xxx to link both views"
+    )
+    assert "✓ 完成 · ● 进行中 · ○ 等待 · ✕ 失败" in timeline, (
+        "the plan map carries the four-state legend"
+    )
+    assert "相位流转（实际）· 批次/任务（计划与执行）" in timeline, (
+        "the caption makes the actual-flow vs plan/execution relationship explicit"
+    )
+    assert "m-impl-plan-diagram" in timeline, (
+        "the plan diagram has its own data-testid host"
+    )

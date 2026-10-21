@@ -222,9 +222,16 @@ export function stageWorkflowSource(detail, events, stage) {
   graph.nodes.forEach((node, index) => {
     nodeIds.set(node.key, `w${index + 1}`);
   });
+  const runningTaskId = detail && detail.stage === stage && detail.task_progress
+    ? detail.task_progress.current_task_id
+    : null;
+  const currentSubstate = detail && detail.substate ? String(detail.substate) : "";
   const lines = ["stateDiagram-v2", "direction LR"];
   for (const node of graph.nodes) {
-    lines.push(`state "${sanitizeMermaidText(node.title)}" as ${nodeIds.get(node.key)}`);
+    const title = runningTaskId && node.key === currentSubstate
+      ? `${node.title} · ${runningTaskId}`
+      : node.title;
+    lines.push(`state "${sanitizeMermaidText(title)}" as ${nodeIds.get(node.key)}`);
   }
   for (const edge of graph.edges) {
     const from = nodeIds.get(edge.from);
@@ -623,6 +630,90 @@ async function renderStageWorkflowDiagram(host, source) {
   }
 }
 
+const PLAN_DIAGRAM_MAX_TASKS = 12;
+
+/** Flowchart label safety: quoted labels still break on structural glyphs. */
+function sanitizeMermaidLabel(text) {
+  return sanitizeMermaidText(text)
+    .replace(/\[/g, "［")
+    .replace(/\]/g, "］")
+    .replace(/\(/g, "（")
+    .replace(/\)/g, "）")
+    .replace(/\|/g, "｜");
+}
+
+/** Plan/execution map: one subgraph per batch, dependency edges between
+ * tasks. The phase diagram stays the ACTUAL flow; this one is the planned
+ * work units plus their live execution state. */
+export function planExecutionSource(progress) {
+  if (!progress || !Array.isArray(progress.batches_detail)) return null;
+  const total = Number(progress.total);
+  if (!Number.isFinite(total) || total <= 0 || total > PLAN_DIAGRAM_MAX_TASKS) {
+    return null;
+  }
+  const nodeIds = new Map();
+  const lines = ["flowchart LR"];
+  let index = 0;
+  for (let batchIndex = 0; batchIndex < progress.batches_detail.length; batchIndex += 1) {
+    const group = progress.batches_detail[batchIndex] || {};
+    const batch = group.batch === null || group.batch === undefined ? "-" : group.batch;
+    lines.push(`subgraph b${batchIndex + 1}["批次 ${sanitizeMermaidLabel(batch)}"]`);
+    for (const task of (Array.isArray(group.tasks) ? group.tasks : [])) {
+      index += 1;
+      const nodeId = `t${index}`;
+      nodeIds.set(task.task_id, nodeId);
+      const state = task.state || "pending";
+      const icon = TASK_STATE_ICONS[state] || "○";
+      let label = `${icon} ${task.task_id}${task.title ? ` ${task.title}` : ""}`;
+      if (state === "running" && task.phase) label += ` · ${task.phase}`;
+      lines.push(`  ${nodeId}["${sanitizeMermaidLabel(label)}"]`);
+    }
+    lines.push("end");
+  }
+  for (const group of progress.batches_detail) {
+    for (const task of (group && Array.isArray(group.tasks) ? group.tasks : [])) {
+      const to = nodeIds.get(task.task_id);
+      if (!to) continue;
+      for (const dep of (Array.isArray(task.depends_on) ? task.depends_on : [])) {
+        const from = nodeIds.get(dep);
+        if (from) lines.push(`${from} --> ${to}`);
+      }
+    }
+  }
+  lines.push("classDef done fill:#e8f5e9,stroke:#2e7d32,color:#1e4620");
+  lines.push("classDef current fill:#fff4e5,stroke:#f5a623,stroke-width:2px,color:#7a4d00");
+  lines.push("classDef pending fill:#f7f7f7,stroke:#d0d0d0,color:#9a9a9a");
+  lines.push("classDef failed fill:#fdecea,stroke:#d93025,color:#8a1c14");
+  for (const group of progress.batches_detail) {
+    for (const task of (group && Array.isArray(group.tasks) ? group.tasks : [])) {
+      const nodeId = nodeIds.get(task.task_id);
+      if (!nodeId) continue;
+      const state = task.state || "pending";
+      const tone = state === "running"
+        ? "current"
+        : (state === "done" || state === "failed" ? state : "pending");
+      lines.push(`class ${nodeId} ${tone}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** Render the plan/execution map beside the phase diagram. Failure is
+ * non-fatal: the grouped batch rows below remain the readable fallback. */
+async function renderPlanExecutionDiagram(host, progress) {
+  const source = planExecutionSource(progress);
+  if (!source) {
+    host.hidden = true;
+    return null;
+  }
+  try {
+    await renderStageWorkflowDiagram(host, source);
+  } catch (error) {
+    host.hidden = true;
+  }
+  return source;
+}
+
 export function stageOrder(timeline) {
   return timeline && Array.isArray(timeline.stage_order) ? timeline.stage_order : [];
 }
@@ -933,6 +1024,33 @@ function lastFailure(events) {
     if (event && event.type === "verdict.failed") {
       return event.payload && typeof event.payload === "object" ? event.payload : {};
     }
+  }
+  return null;
+}
+
+/** Event types that supersede an earlier failure inside the same window.
+ * The failure banner is current-state feedback, not history: once later
+ * progress lands, the old verdict is no longer the stage's headline. */
+const FAILURE_SUPERSEDING_EVENTS = new Set([
+  "verdict.passed",
+  "task.completed",
+  "task.started",
+  "stage.entered",
+  "stage.rolled_back",
+  "human.retry",
+]);
+
+/** The latest verdict.failed payload that has not been superseded by later
+ * progress in the same window; null when the stage moved on. */
+function currentFailure(events) {
+  const list = Array.isArray(events) ? events : [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const event = list[index];
+    if (!event) continue;
+    if (event.type === "verdict.failed") {
+      return event.payload && typeof event.payload === "object" ? event.payload : {};
+    }
+    if (FAILURE_SUPERSEDING_EVENTS.has(event.type)) return null;
   }
   return null;
 }
@@ -2345,6 +2463,103 @@ function selectNode(node, stage, detail, events) {
   }
 }
 
+const TASK_STATE_ICONS = {
+  done: "✓",
+  running: "●",
+  pending: "○",
+  failed: "✕",
+};
+
+function taskProgressLine(task) {
+  const state = task.state || "pending";
+  const title = task.title ? ` ${task.title}` : "";
+  let line = `${TASK_STATE_ICONS[state] || "○"} ${task.task_id}${title}`;
+  if (state === "running" && task.phase) {
+    line += ` · ${task.phase}`;
+  } else if (state === "pending") {
+    line += " · 等待";
+  } else if (state === "failed") {
+    line += " · 失败";
+  }
+  return line;
+}
+
+/** Orthogonal M-IMPL work-unit progress: batches read as rows beside the
+ * phase pipeline (the state diagram keeps owning phase transitions). */
+function mImplBatchProgress(progress) {
+  if (!progress || !Array.isArray(progress.batches_detail)) return null;
+  const box = element("div", {
+    class: "m-impl-batch-progress",
+    "data-testid": "m-impl-batch-progress",
+  });
+  const done = Number.isFinite(Number(progress.done)) ? Number(progress.done) : 0;
+  const total = Number.isFinite(Number(progress.total)) ? Number(progress.total) : 0;
+  const batch = progress.batch === null || progress.batch === undefined ? "-" : progress.batch;
+  const batches = Number.isFinite(Number(progress.batches))
+    ? Number(progress.batches)
+    : 0;
+  let summary = `批次 ${batch}/${batches} · 任务 ${done}/${total} 完成`;
+  if (progress.current_task_id) {
+    const phase = progress.current_phase ? `（${progress.current_phase}）` : "";
+    summary += ` · 当前 ${progress.current_task_id}${phase}`;
+  }
+  box.append(element("p", {
+    class: "m-impl-plan-caption",
+    "data-testid": "m-impl-plan-caption",
+    text: "相位流转（实际）· 批次/任务（计划与执行）",
+  }));
+  box.append(element("p", {
+    class: "detail-line m-impl-batch-summary",
+    "data-testid": "m-impl-batch-summary",
+    text: summary,
+  }));
+  const showPlanDiagram = total > 0 && total <= PLAN_DIAGRAM_MAX_TASKS;
+  if (showPlanDiagram) {
+    const host = element("div", {
+      class: "stage-workflow-diagram m-impl-plan-diagram",
+      "data-testid": "m-impl-plan-diagram",
+    });
+    box.append(host);
+    void renderPlanExecutionDiagram(host, progress);
+    box.append(element("p", {
+      class: "m-impl-plan-legend",
+      "data-testid": "m-impl-plan-legend",
+      text: "✓ 完成 · ● 进行中 · ○ 等待 · ✕ 失败",
+    }));
+  }
+  const list = element("div", {
+    class: showPlanDiagram
+      ? "m-impl-batch-list m-impl-batch-fallback"
+      : "m-impl-batch-list",
+  });
+  for (const group of progress.batches_detail) {
+    const batchValue = group && group.batch !== null && group.batch !== undefined
+      ? group.batch
+      : "-";
+    const row = element("div", {
+      class: "m-impl-batch",
+      "data-testid": `m-impl-batch-${batchValue}`,
+    });
+    row.append(element("p", {
+      class: "m-impl-batch-title",
+      text: `批次 ${batchValue}`,
+    }));
+    const tasks = element("ul", { class: "m-impl-batch-tasks" });
+    for (const task of (group && Array.isArray(group.tasks) ? group.tasks : [])) {
+      const state = task.state || "pending";
+      tasks.append(element("li", {
+        class: `m-impl-task task-${state}`,
+        "data-testid": `m-impl-task-${task.task_id || "unknown"}`,
+        text: taskProgressLine(task),
+      }));
+    }
+    row.append(tasks);
+    list.append(row);
+  }
+  box.append(list);
+  return box;
+}
+
 /** One node's detail from real projection data (§1l.2): timing, state,
  * owning party, evidence, errors, transition reason, back-edge legality.
  * Missing data degrades readably — never fabricated. */
@@ -2371,7 +2586,11 @@ function nodeDetail(stage, detail, events) {
         text: `start/end: ${fmtTs(window[0].ts)} → ${endText}`,
       })
     );
-    const failure = lastFailure(window);
+    if (stage === "M-IMPL" && detail && detail.task_progress) {
+      const progress = mImplBatchProgress(detail.task_progress);
+      if (progress) box.append(progress);
+    }
+    const failure = currentFailure(window);
     // The gate stage's decision summary already lives in the current-card;
     // do not repeat it here (the detail pane stays stage-scoped).
     const isGateStage = !!(detail && detail.awaiting_gate && detail.stage === stage);

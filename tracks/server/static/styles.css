@@ -2330,6 +2330,75 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+/* M-IMPL batch/task progress: orthogonal work-unit axis beside the phase
+   workflow diagram (batches never enter the mermaid state diagram). */
+.m-impl-batch-progress {
+  margin: var(--s-2) 0;
+  font-size: var(--fs-caption);
+}
+
+.m-impl-plan-caption {
+  margin: 0 0 var(--s-1);
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.m-impl-plan-diagram {
+  margin: var(--s-1) 0 var(--s-2);
+}
+
+.m-impl-plan-legend {
+  margin: 0 0 var(--s-2);
+  color: var(--fg-muted);
+}
+
+.m-impl-batch-summary {
+  margin: 0 0 var(--s-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-impl-batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.m-impl-batch-fallback {
+  margin-top: var(--s-1);
+}
+
+.m-impl-batch-title {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.m-impl-batch-tasks {
+  margin: 0;
+  padding-left: var(--s-4);
+  list-style: none;
+}
+
+.m-impl-task {
+  line-height: var(--lh);
+}
+
+.m-impl-task.task-done {
+  color: var(--success);
+}
+
+.m-impl-task.task-running {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.m-impl-task.task-pending {
+  color: var(--fg-muted);
+}
+
+.m-impl-task.task-failed {
+  color: var(--danger);
+}
+
 .gate-details,
 .detail-error-details {
   margin: var(--s-1) 0;
