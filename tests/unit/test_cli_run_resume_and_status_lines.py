@@ -20,12 +20,12 @@ import pytest
 def test_run_resume_is_a_parsed_noop() -> None:
     from tracks.cli.main import _parse_run_args
 
-    assert _parse_run_args(()) == (None, None)
-    assert _parse_run_args(("--resume",)) == (None, None)
-    assert _parse_run_args(("--resume", "--max-dispatches", "3")) == (None, 3)
+    assert _parse_run_args(()) == (None, None, True)
+    assert _parse_run_args(("--resume",)) == (None, None, True)
+    assert _parse_run_args(("--resume", "--max-dispatches", "3")) == (None, 3, False)
     assert _parse_run_args(
         ("--assignment-overlay", "o.json", "--resume")
-    ) == ("o.json", None)
+    ) == ("o.json", None, True)
     with pytest.raises(ValueError):
         _parse_run_args(("--resume", "--bogus"))
 

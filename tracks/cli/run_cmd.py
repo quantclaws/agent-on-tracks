@@ -11,6 +11,7 @@ import ast
 import json
 import os
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -215,18 +216,35 @@ def _parse_action_actor(args: tuple[str, ...], usage: str) -> tuple[str, str | N
 
 _RUN_USAGE = (
     "usage: trac run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
+    " [--watch|--no-watch]"
 )
 
 
-def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None]:
+def _parse_run_toggle(flag: str, watch_flag: str | None) -> str | None:
+    if flag == "--resume":
+        return watch_flag
+    if watch_flag == flag:
+        raise ValueError(f"{flag} may be specified only once")
+    if watch_flag is not None:
+        raise ValueError("--watch and --no-watch are mutually exclusive")
+    return flag
+
+
+def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None, bool]:
     """Parse `trac run` flags. ``--resume`` is the explicit resume alias
     (AC-FR0283-02 wording / interfaces §2b): a no-op token because an active
-    run already reconciles/replays on the next drive (D-13)."""
+    run already reconciles/replays on the next drive (D-13).
+
+    Watch defaults ON for a continuous drive; an explicit one-shot
+    ``--max-dispatches`` budget defaults it OFF. The explicit flags override
+    either default (``--watch`` / ``--no-watch``)."""
     values = {}
+    watch_flag: str | None = None
     index = 0
     while index < len(args):
         flag = args[index]
-        if flag == "--resume":
+        if flag in ("--resume", "--watch", "--no-watch"):
+            watch_flag = _parse_run_toggle(flag, watch_flag)
             index += 1
             continue
         if flag not in ("--assignment-overlay", "--max-dispatches"):
@@ -237,9 +255,9 @@ def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None]:
             raise ValueError(_RUN_USAGE)
         values[flag] = args[index + 1]
         index += 2
-    return values.get("--assignment-overlay"), _positive_dispatch_limit(
-        values.get("--max-dispatches")
-    )
+    max_dispatches = _positive_dispatch_limit(values.get("--max-dispatches"))
+    watch = watch_flag != "--no-watch" if watch_flag else max_dispatches is None
+    return values.get("--assignment-overlay"), max_dispatches, watch
 
 
 def _positive_dispatch_limit(raw: str | None) -> int | None:
@@ -347,6 +365,25 @@ def _startup_smoke_error(repo: Path) -> tuple[str, list[str]] | None:
     return summary, broken
 
 
+def _park_broken_tree(repo: Path, store: Store, run_id: str) -> bool:
+    smoke = _startup_smoke_error(repo)
+    if smoke is None:
+        return False
+    # #87：坏树立即停车，进 loop 前落 loop.aborted 审计事件
+    # （screen 无重定向时 stdout 证据会丢，同 B85/#85 的 append 模式，
+    # writer_lock 内执行）。version 沿用 executor 的解析方式。
+    summary, broken_files = smoke
+    version = _resolve_run_version(store.state(run_id))
+    store.append(
+        run_id,
+        version,
+        "loop.aborted",
+        {"reason": "startup_smoke", "detail": summary, "files": broken_files},
+    )
+    print(summary, file=sys.stderr, flush=True)
+    return True
+
+
 def _terminal_run_outcome(store: Store) -> int | None:
     """cmd_run for the latest completed run with no active run: report a
     well-known terminal, or explicitly reject a cancelled one (SM-01.22)."""
@@ -364,9 +401,73 @@ def _terminal_run_outcome(store: Store) -> int | None:
     return 0
 
 
+def _watch_env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _watch_restart_plan(
+    count: int, watch: bool, max_restarts: int
+) -> tuple[bool, int, str]:
+    """Pure restart decision: (restart?, delay_seconds, reason)."""
+    if not watch:
+        return False, 0, "watch_off"
+    if count >= max_restarts:
+        return False, 0, "limit_reached"
+    return True, min(2 ** max(count, 0), 30), "code_drift"
+
+
+def _watch_restart(store: Store, run_id: str) -> int:
+    """Re-exec `trac run` after drift, outside the writer lock.
+
+    The lock context has already exited (so the PID-file is gone); exec keeps
+    the same PID and would otherwise see its own stale lock on acquisition."""
+    count = _watch_env_int("TRAC_RUN_WATCH_COUNT", 0)
+    max_restarts = _watch_env_int("TRAC_RUN_WATCH_MAX", 5)
+    restart, delay, reason = _watch_restart_plan(count, True, max_restarts)
+    if not restart:
+        print(
+            f"watch restart limit reached ({count}/{max_restarts})",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+    print(
+        f"watch: restart {count + 1}/{max_restarts} in {delay}s",
+        file=sys.stderr,
+        flush=True,
+    )
+    state = store.state(run_id)
+    if state.pending is None:
+        # The audit append itself resolves the WAL record, so only write it
+        # when no dispatch is in flight; a pending run still restarts.
+        store.append(
+            run_id,
+            _resolve_run_version(state),
+            "run.watch_restart",
+            {
+                "count": count + 1,
+                "max": max_restarts,
+                "delay_seconds": delay,
+                "reason": reason,
+            },
+        )
+    time.sleep(delay)
+    env = dict(os.environ)
+    env["TRAC_RUN_WATCH_COUNT"] = str(count + 1)
+    os.execvpe(sys.argv[0], sys.argv, env)
+    return 0
+
+
 def cmd_run(repo: Path, *args: str) -> int:
     try:
-        overlay_path, max_dispatches = _parse_run_args(args)
+        overlay_path, max_dispatches, watch = _parse_run_args(args)
         assignment_overlay = (
             _read_assignment_overlay(overlay_path) if overlay_path is not None else None
         )
@@ -380,21 +481,9 @@ def cmd_run(repo: Path, *args: str) -> int:
         if terminal is not None:
             return terminal
         return _err("no active run; `trac start <version>` first")
+    watch_restart: bool | None = None
     with writer_lock(home):
-        smoke = _startup_smoke_error(repo)
-        if smoke is not None:
-            # #87：坏树立即停车，进 loop 前落 loop.aborted 审计事件
-            # （screen 无重定向时 stdout 证据会丢，同 B85/#85 的 append 模式，
-            # writer_lock 内执行）。version 沿用 executor 的解析方式。
-            summary, broken_files = smoke
-            version = _resolve_run_version(store.state(run_id))
-            store.append(
-                run_id,
-                version,
-                "loop.aborted",
-                {"reason": "startup_smoke", "detail": summary, "files": broken_files},
-            )
-            print(summary, file=sys.stderr, flush=True)
+        if _park_broken_tree(repo, store, run_id):
             return 1
         try:
             state = Executor(
@@ -408,19 +497,21 @@ def cmd_run(repo: Path, *args: str) -> int:
             # M7 (convergence plan 2026-09-05): drift at a dispatch
             # boundary is a HANDOVER, not an abort -- the in-flight
             # dispatch concluded, code.drift is on the audit stream, and
-            # the run state stays active. Exit 0 so the restart watcher
-            # treats this as a normal dead-loop takeover (executor has
-            # already printed the handover banner).
+            # the run state stays active. The bounded watch restart (if
+            # enabled) runs AFTER this lock block: exec keeps the PID, so
+            # it must not inherit our own live PID-file lock.
             print(
                 "run handover: tracks/** code drift (see message above)",
                 file=sys.stderr,
             )
-            return 0
+            watch_restart = watch
         except CommandStallError:
             # B86/B88（#77）：executor 已落 loop.aborted 并打印处置指引
             # banner，这里只以非零退出码终止（同 B43 drift abort 处理链）。
             print("run aborted: command stall (see message above)", file=sys.stderr)
             return 1
+    if watch_restart is not None:
+        return _watch_restart(store, run_id) if watch_restart else 0
     print(f"run {run_id}: {_format_state(state)}")
     return 0
 

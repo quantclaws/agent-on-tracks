@@ -133,6 +133,8 @@ EVENT_TYPES = (
     # state machine does not project it -- the run stays active and the
     # restart watcher takes over).
     "code.drift",
+    # OOB 2026-10-21: bounded `trac run` self-restart audit trail (audit-only, no reducer).
+    "run.watch_restart",
     # v0.7 Phase 0（interfaces §1c/§1d，architecture §1.0.2/§1.1，T-015 组装）：
     # M-DESIGN EXIT 到 M-TEST 入口的 Runtime 前置门 append-only 事件序列，
     # 最终 sealed 或 blocked；投影可从事件流完整重建（AC-NFR0140-01）。

@@ -11,12 +11,14 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from tests.unit.helpers import git, git_repo
+from tracks import paths
 from tracks.cli import run_cmd
 from tracks.cli.run_cmd import (
     _do_human_pipeline,
@@ -35,6 +37,8 @@ from tracks.cli.run_cmd import (
     _triage_artifacts,
     _triage_checkpoint,
     _unmerged_branches,
+    _watch_env_int,
+    _watch_restart_plan,
     cmd_review,
     cmd_run,
     cmd_start,
@@ -159,10 +163,10 @@ def test_parse_action_actor():
 
 
 def test_parse_run_args_and_dispatch_limit():
-    assert _parse_run_args(()) == (None, None)
-    assert _parse_run_args(("--resume",)) == (None, None)
-    assert _parse_run_args(("--resume", "--max-dispatches", "3")) == (None, 3)
-    assert _parse_run_args(("--max-dispatches", "3")) == (None, 3)
+    assert _parse_run_args(()) == (None, None, True)
+    assert _parse_run_args(("--resume",)) == (None, None, True)
+    assert _parse_run_args(("--resume", "--max-dispatches", "3")) == (None, 3, False)
+    assert _parse_run_args(("--max-dispatches", "3")) == (None, 3, False)
     with pytest.raises(ValueError, match="only once"):
         _parse_run_args(("--max-dispatches", "1", "--max-dispatches", "2"))
     with pytest.raises(ValueError, match="usage"):
@@ -172,6 +176,47 @@ def test_parse_run_args_and_dispatch_limit():
         _positive_dispatch_limit("abc")
     with pytest.raises(ValueError, match="positive integer"):
         _positive_dispatch_limit("0")
+
+
+def test_parse_run_args_watch_defaults_and_overrides():
+    assert _parse_run_args(("--watch",)) == (None, None, True)
+    assert _parse_run_args(("--no-watch",)) == (None, None, False)
+    assert _parse_run_args(("--watch", "--max-dispatches", "3")) == (None, 3, True)
+    assert _parse_run_args(("--no-watch", "--max-dispatches", "3")) == (None, 3, False)
+    assert _parse_run_args(("--watch", "--resume")) == (None, None, True)
+    with pytest.raises(ValueError, match="only once"):
+        _parse_run_args(("--watch", "--watch"))
+    with pytest.raises(ValueError, match="only once"):
+        _parse_run_args(("--no-watch", "--no-watch"))
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _parse_run_args(("--watch", "--no-watch"))
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _parse_run_args(("--no-watch", "--watch"))
+
+
+def test_watch_restart_plan_bounds():
+    assert _watch_restart_plan(0, False, 5) == (False, 0, "watch_off")
+    assert _watch_restart_plan(0, True, 5) == (True, 1, "code_drift")
+    assert _watch_restart_plan(1, True, 5) == (True, 2, "code_drift")
+    assert _watch_restart_plan(4, True, 5) == (True, 16, "code_drift")
+    assert _watch_restart_plan(5, True, 5) == (False, 0, "limit_reached")
+    assert _watch_restart_plan(9, True, 5) == (False, 0, "limit_reached")
+    assert _watch_restart_plan(5, True, 10) == (True, 30, "code_drift")
+    assert _watch_restart_plan(-1, True, 5) == (True, 1, "code_drift")
+    assert _watch_restart_plan(0, True, 0) == (False, 0, "limit_reached")
+
+
+def test_watch_env_int_defaults(monkeypatch):
+    monkeypatch.delenv("TRAC_TEST_WATCH", raising=False)
+    assert _watch_env_int("TRAC_TEST_WATCH", 5) == 5
+    monkeypatch.setenv("TRAC_TEST_WATCH", "abc")
+    assert _watch_env_int("TRAC_TEST_WATCH", 5) == 5
+    monkeypatch.setenv("TRAC_TEST_WATCH", "-2")
+    assert _watch_env_int("TRAC_TEST_WATCH", 5) == 5
+    monkeypatch.setenv("TRAC_TEST_WATCH", "0")
+    assert _watch_env_int("TRAC_TEST_WATCH", 5) == 0
+    monkeypatch.setenv("TRAC_TEST_WATCH", "7")
+    assert _watch_env_int("TRAC_TEST_WATCH", 5) == 7
 
 
 def test_read_assignment_overlay_errors(tmp_path):
@@ -331,9 +376,128 @@ def test_cmd_run_handover_on_code_drift(tmp_path, capsys, monkeypatch):
             raise RuntimeCodeDriftError("drift")
 
     monkeypatch.setattr(run_cmd, "Executor", _Drifting)
-    assert cmd_run(repo) == 0
+    assert cmd_run(repo, "--no-watch") == 0
     assert "run handover: tracks/** code drift" in capsys.readouterr().err
     store.close()
+
+
+def test_cmd_run_code_drift_watch_restarts_after_lock_release(
+    tmp_path, capsys, monkeypatch
+):
+    repo = tmp_path / "host"
+    repo.mkdir()
+    store = Store(repo / ".tracks")
+    _seed(store, "RUN")
+
+    class _Drifting:
+        def __init__(self, *a, **k):
+            pass
+
+        def run_loop(self):
+            raise RuntimeCodeDriftError("drift")
+
+    monkeypatch.setattr(run_cmd, "Executor", _Drifting)
+    monkeypatch.setenv("TRAC_RUN_WATCH_MAX", "5")
+    monkeypatch.delenv("TRAC_RUN_WATCH_COUNT", raising=False)
+    sleeps = []
+    monkeypatch.setattr(run_cmd.time, "sleep", lambda seconds: sleeps.append(seconds))
+    captured = {}
+    lock = paths.lock_path(paths.tracks_home(repo))
+
+    def _exec(file, args, env):
+        captured.update(
+            file=file, args=list(args), env=dict(env), lock_exists=lock.exists()
+        )
+
+    monkeypatch.setattr(run_cmd.os, "execvpe", _exec)
+    assert cmd_run(repo, "--resume") == 0
+
+    assert sleeps == [1]
+    assert captured["file"] == sys.argv[0]
+    assert captured["args"] == sys.argv
+    assert captured["env"]["TRAC_RUN_WATCH_COUNT"] == "1"
+    assert captured["lock_exists"] is False
+    assert not lock.exists()
+    events = [e for e in store.events("RUN") if e.type == "run.watch_restart"]
+    store.close()
+    assert len(events) == 1
+    assert events[0].payload == {
+        "count": 1,
+        "max": 5,
+        "delay_seconds": 1,
+        "reason": "code_drift",
+    }
+    err = capsys.readouterr().err
+    assert "run handover: tracks/** code drift" in err
+    assert "watch: restart 1/5 in 1s" in err
+
+
+def test_cmd_run_code_drift_watch_limit_stops(tmp_path, capsys, monkeypatch):
+    repo = tmp_path / "host"
+    repo.mkdir()
+    store = Store(repo / ".tracks")
+    _seed(store, "RUN")
+
+    class _Drifting:
+        def __init__(self, *a, **k):
+            pass
+
+        def run_loop(self):
+            raise RuntimeCodeDriftError("drift")
+
+    monkeypatch.setattr(run_cmd, "Executor", _Drifting)
+    monkeypatch.setenv("TRAC_RUN_WATCH_MAX", "1")
+    monkeypatch.setenv("TRAC_RUN_WATCH_COUNT", "1")
+    slept = []
+    monkeypatch.setattr(run_cmd.time, "sleep", lambda seconds: slept.append(seconds))
+    executed = []
+    monkeypatch.setattr(run_cmd.os, "execvpe", lambda *a: executed.append(a))
+    assert cmd_run(repo) == 1
+
+    assert slept == []
+    assert executed == []
+    assert "watch restart limit reached (1/1)" in capsys.readouterr().err
+    events = [e for e in store.events("RUN") if e.type == "run.watch_restart"]
+    store.close()
+    assert events == []
+
+
+def test_cmd_run_code_drift_watch_pending_skips_event_but_restarts(
+    tmp_path, capsys, monkeypatch
+):
+    repo = tmp_path / "host"
+    repo.mkdir()
+    store = Store(repo / ".tracks")
+    _seed(store, "RUN")
+    store.append(
+        "RUN", "v0.1", "command.issued", {"command": {"kind": "dispatch_agent"}}
+    )
+    assert store.state("RUN").pending is not None
+
+    class _Drifting:
+        def __init__(self, *a, **k):
+            pass
+
+        def run_loop(self):
+            raise RuntimeCodeDriftError("drift")
+
+    monkeypatch.setattr(run_cmd, "Executor", _Drifting)
+    monkeypatch.setenv("TRAC_RUN_WATCH_MAX", "5")
+    monkeypatch.delenv("TRAC_RUN_WATCH_COUNT", raising=False)
+    monkeypatch.setattr(run_cmd.time, "sleep", lambda seconds: None)
+    captured = {}
+    monkeypatch.setattr(
+        run_cmd.os,
+        "execvpe",
+        lambda file, args, env: captured.update(args=list(args), env=dict(env)),
+    )
+    assert cmd_run(repo) == 0
+
+    assert captured["env"]["TRAC_RUN_WATCH_COUNT"] == "1"
+    events = [e for e in store.events("RUN") if e.type == "run.watch_restart"]
+    store.close()
+    assert events == []
+    assert "watch: restart 1/5 in 1s" in capsys.readouterr().err
 
 
 def test_cmd_run_aborts_on_command_stall(tmp_path, capsys, monkeypatch):
