@@ -159,3 +159,48 @@ def test_return_writes_thread_then_review_event(review_serve):
         f"an idempotent replay must not repeat the domain event: {human_events!r}"
     )
     assert len(_threads(vdir)) == 1, "an idempotent replay must not repeat the thread"
+
+
+# AC-FR0359-01@v0.12 TRACKS-TRACE thread write failure fails the command
+def test_thread_write_failure_fails_the_command_without_the_event(review_serve):
+    """AC-FR0359-01: when the document thread cannot be written, the review
+    command fails, no ``human.review`` event is recorded and no thread lands —
+    a dropped decision must not advance the gate silently (§1h.3, §10 #22).
+
+    The failure is injected black-box: the version's document directory and
+    its documents are made read-only, so neither an in-place write nor a
+    write-temp-then-rename can land (§6.2: no installer/reviewer internals
+    are mocked).
+    """
+    base, cookie, csrf, repo, vdir = review_serve
+    before_events = len(events(repo, _RUN_ID))
+    documents = sorted(vdir.glob("*.md"))
+    dir_mode = vdir.stat().st_mode
+    file_modes = {path: path.stat().st_mode for path in documents}
+    vdir.chmod(0o555)
+    for path in documents:
+        path.chmod(0o444)
+    try:
+        status, body = _post_review(
+            base,
+            cookie,
+            csrf,
+            {"action": "comment", "comments": _COMMENTS},
+            "review-thread-write-failed-1",
+        )
+        assert status in (200, 202), (
+            f"the decision is accepted and fails in the worker: {body[:200]}"
+        )
+        command_id = json.loads(body)["command_id"]
+        settled = _wait_command(base, cookie, command_id)
+        assert settled["status"] == "failed", (
+            f"a failed thread write must fail the command: {settled!r}"
+        )
+    finally:
+        for path, mode in file_modes.items():
+            path.chmod(mode)
+        vdir.chmod(dir_mode)
+    assert len(events(repo, _RUN_ID)) == before_events, (
+        "a failed thread write must not record human.review"
+    )
+    assert len(_threads(vdir)) == 0, "a failed thread write must not leave a thread"

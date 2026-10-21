@@ -1,0 +1,13 @@
+diff --git a/tracks/cli/run_cmd.py b/tracks/cli/run_cmd.py
+index 15a28be..7989fcc 100644
+--- a/tracks/cli/run_cmd.py
++++ b/tracks/cli/run_cmd.py
+@@ -538,7 +538,7 @@ def _review_checkpoint(
+         event_type="human.review",
+         payload=payload,
+         verdict=params["verdict"],
+-        artifacts=[doc] if doc else [],
++        artifacts=[],  # counterexample: the review decision never touches the document
+         checks=params["checks"],
+         requires_diff=params["requires_diff"],
+         commit_label=params["commit_label"],

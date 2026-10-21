@@ -178,7 +178,12 @@ def test_background_survives_shell_and_reports_locked_version(
     )
     assert status.returncode == 0, status.stderr
     assert "running" in status.stdout
+    assert f"pid={parsed['pid']}" in status.stdout, status.stdout
     assert f"version={locked}" in status.stdout
+    assert "url=" in status.stdout, status.stdout
+    assert parsed["url"].rsplit(":", 1)[1] in status.stdout, (
+        f"the status line must report the running service's url: {status.stdout!r}"
+    )
     stop = v012_global.run(
         "serve", "--repo", str(project), "--stop", cwd=tmp_path, timeout=30
     )
