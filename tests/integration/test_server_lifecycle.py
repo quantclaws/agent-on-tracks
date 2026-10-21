@@ -95,17 +95,56 @@ def _write_pidfile(project: Path, pid: int) -> Path:
 
 
 def _windows_driver() -> str:
-    """A CLI driver with the platform injected as Windows (§1e.5, §6.3)."""
+    """A CLI driver with the platform injected as Windows (§1e.5, §6.3).
+
+    The injection must not break the CLI itself (PRISM-MTEST-013):
+    ``pathlib`` decides ``Path()``'s flavour from ``os.name`` at call time, so
+    a driver that patched ``os.name`` made every ``Path()`` in the CLI's
+    runtime path raise ``UnsupportedOperation``, and ``shutil``/
+    ``tempfile`` branch on ``sys.platform``/``os.name`` at import time, so a
+    driver that patched those first died with an import-time traceback. Both
+    made the node fail for a reason unrelated to the contract. The driver
+    therefore pre-imports the platform-sensitive standard library, imports
+    the CLI with the real platform semantics and only then applies the
+    Windows decision the test-plan names as the injection seam
+    (``sys.platform`` / the platform decision function) plus the
+    ``platform.system`` override.
+    """
     return (
-        "import os, platform, sys\n"
+        # The platform-sensitive standard library is imported first, so the
+        # injection below cannot change its POSIX semantics.
+        "import os, pathlib, platform, shutil, signal, socket, subprocess, sys, tempfile\n"
         "platform.system = lambda: 'Windows'\n"
-        "sys.platform = 'win32'\n"
-        "os.name = 'nt'\n"
-        # import after the platform injection so a module-level platform
-        # constant in the serve entry also sees Windows (§6.3).
+        # The CLI imports with the real platform semantics ...
         "from tracks.cli.main import main\n"
+        # ... and only then the Windows decision is applied. os.name is
+        # deliberately left alone: pathlib would then build WindowsPath for
+        # every path the CLI touches.
+        "sys.platform = 'win32'\n"
         "raise SystemExit(main(sys.argv[1:]))\n"
     )
+
+
+def _assert_cli_starts_under_windows_injection(v012_global, tmp_path) -> None:
+    """The injected driver must start the CLI normally (PRISM-MTEST-013).
+
+    Without this probe a node that fails under the injection cannot tell a
+    missing contract behaviour from a driver that crashes the CLI at import
+    time, so its Red would not be attributable to the contract.
+    """
+    probe = subprocess.run(
+        [sys.executable, "-c", _windows_driver(), "--help"],
+        cwd=str(tmp_path),
+        env=v012_global.env(),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert probe.returncode == 0, (
+        f"the injected CLI must start normally: {probe.stderr[-400:]!r}"
+    )
+    assert "usage: trac" in probe.stdout
 
 
 # AC-FR0349-02@v0.12 TRACKS-TRACE serve outside a project is refused
@@ -221,6 +260,7 @@ def test_windows_foreground_branch(v012_global, tmp_path):
     lifetime is the service lifetime (no pidfile, unreachable once it ends)."""
     project = git_init(tmp_path / "project", {"README.md": "p\n"})
     _install_project(v012_global, project, tmp_path)
+    _assert_cli_starts_under_windows_injection(v012_global, tmp_path)
     driver = _windows_driver()
     refused = subprocess.run(
         [sys.executable, "-c", driver, "serve", "--repo", str(project), "--background"],
@@ -424,6 +464,7 @@ def test_windows_stop_refused(v012_global, tmp_path):
     ``unsupported_platform`` and leaves the pidfile alone (§1e.5)."""
     project = git_init(tmp_path / "project", {"README.md": "p\n"})
     _install_project(v012_global, project, tmp_path)
+    _assert_cli_starts_under_windows_injection(v012_global, tmp_path)
     pidfile = _write_pidfile(project, 4242)
     refused = subprocess.run(
         [sys.executable, "-c", _windows_driver(), "serve", "--repo", str(project), "--stop"],
