@@ -21,9 +21,17 @@ from tracks.executor.release_authorization import (
     assess_release,
     validate_authorization,
 )
+from tracks.kernel.attention import RECOVERY_EVENTS, unresolved_attentions
+from tracks.kernel.attention import (
+    attention_resolved as _shared_attention_resolved,
+)
 from tracks.store import Store
 
 from .common import _canonical_stage_order, _err, _err2, writer_lock
+
+# Kept as the release face's re-exported name (tracks.cli.main imports it);
+# the single truth lives in tracks.kernel.attention.
+_ATTENTION_RECOVERY_EVENTS = RECOVERY_EVENTS
 
 
 def _publish_plan_index(store: Store, run_id: str) -> dict:
@@ -192,23 +200,69 @@ def _release_preview_stale_reason(events: list, preview) -> str | None:
     return None
 
 
+def _verify_events_window(events: list) -> list:
+    """Events of the CURRENT M-VERIFY window.
+
+    A repair commit freezes a new candidate; the previous window's gate
+    failures/attentions are history and must never pin ``blocked`` on the
+    fresh candidate. With no M-VERIFY entry in the stream (unit fixtures),
+    the whole stream is the window (legacy shape preserved).
+    """
+    start = -1
+    for index, event in enumerate(events):
+        payload = event.payload or {}
+        entered = event.type == "stage.entered" and str(
+            payload.get("stage") or ""
+        ) == "M-VERIFY"
+        frozen = event.type == "candidate.frozen" and bool(
+            payload.get("candidate_sha")
+        )
+        if entered or frozen:
+            start = index
+    return events[start + 1 :] if start >= 0 else list(events)
+
+
+def _latest_gate_results(events: list) -> dict[str, object]:
+    """Latest local_gate result per declared gate identity."""
+    latest: dict[str, object] = {}
+    for event in events:
+        if event.type not in ("local_gate.passed", "local_gate.failed"):
+            continue
+        payload = event.payload or {}
+        key = str(
+            payload.get("gate_identity")
+            or payload.get("kind")
+            or "local_gate"
+        )
+        latest[key] = event
+    return latest
+
+
 def _release_gate_blocked(events: list) -> bool:
     """Fail-closed M-VERIFY/M-SECURITY authorization check (FR-0274-2): the
     release action requires every observed gate green AND evidence that the
-    gates ran at all (missing gate evidence never authorizes a release)."""
-    security = [e for e in events if e.type == "security.assessed"]
-    if security and security[-1].payload.get("status") != "passed":
+    gates ran at all (missing gate evidence never authorizes a release).
+    Only the current verify window counts -- a repaired candidate re-walk
+    clears its predecessor's failures."""
+    window = _verify_events_window(events)
+    security = [e for e in window if e.type == "security.assessed"]
+    if security and (security[-1].payload or {}).get("status") != "passed":
         return True
     final = [
-        e for e in events
-        if e.type == "prism.verdict" and e.payload.get("scope") == "verify_final"
+        e for e in window
+        if e.type == "prism.verdict"
+        and (e.payload or {}).get("scope") == "verify_final"
     ]
-    if final and final[-1].payload.get("verdict") != "pass":
+    if final and (final[-1].payload or {}).get("verdict") != "pass":
         return True
-    gate_evidence = bool(security) or bool(final) or any(
-        e.type == "local_gate.passed" for e in events
+    gates = _latest_gate_results(window)
+    failed = any(e.type == "local_gate.failed" for e in gates.values())
+    gate_evidence = (
+        bool(security)
+        or bool(final)
+        or any(e.type == "local_gate.passed" for e in gates.values())
     )
-    return not gate_evidence or any(e.type == "local_gate.failed" for e in events)
+    return not gate_evidence or failed
 
 
 def _latest_ci_run(events: list) -> object | None:
@@ -218,25 +272,34 @@ def _latest_ci_run(events: list) -> object | None:
 def _release_block_reason(events: list) -> str:
     """Fail-closed block reason for a started-but-unverified evidence chain
     (interfaces §1d: a non-passing exit renders ``blocked: <reason>``).
+
+    Scoped to the current M-VERIFY window: stale failures/attentions of a
+    superseded candidate never block the repair candidate's re-drive.
     Priority: security verdict > local gate failure > contract refusal >
     parked M-VERIFY attention > missing gate evidence."""
-    security = [e for e in events if e.type == "security.assessed"]
+    window = _verify_events_window(events)
+    security = [e for e in window if e.type == "security.assessed"]
     if security and (security[-1].payload or {}).get("status") != "passed":
         return "security_" + str(
             (security[-1].payload or {}).get("status", "unknown")
         )
-    if any(e.type == "local_gate.failed" for e in events):
+    gates = _latest_gate_results(window)
+    if any(e.type == "local_gate.failed" for e in gates.values()):
         return "local_gate_failed"
-    if any(e.type == "host_contract.invalid" for e in events):
-        return "contract_invalid"
-    attention = [
-        (e.payload or {}).get("reason", "unknown")
-        for e in events
-        if e.type == "attention.required"
-        and (e.payload or {}).get("stage") == "M-VERIFY"
+    contract = [
+        e
+        for e in window
+        if e.type in ("host_contract.invalid", "host_contract.materialized")
     ]
-    if attention:
-        return str(attention[-1])
+    if contract and contract[-1].type == "host_contract.invalid":
+        return "contract_invalid"
+    pending = [
+        event
+        for event in unresolved_attentions(events)
+        if str((event.payload or {}).get("stage") or "") == "M-VERIFY"
+    ]
+    if pending:
+        return str((pending[-1].payload or {}).get("reason", "unknown"))
     return "gate_evidence_missing"
 
 
@@ -455,22 +518,11 @@ def _release_ci_attention_lines(events: list) -> list[str]:
         if e.type == "attention.required"
         and (e.payload or {}).get("area") == "ci_readback"
     ]
-    unresolved_attention = []
-    ci_successes = [e for e in events if e.type == "ci.run_observed"]
-    for attention in ci_attention:
-        attention_payload = attention.payload or {}
-        attention_candidate = attention_payload.get("candidate_sha")
-        resolved = any(
-            getattr(success, "seq", 0) > getattr(attention, "seq", 0)
-            and (success.payload or {}).get("candidate_sha") == attention_candidate
-            and (success.payload or {}).get("head_sha") == attention_candidate
-            and (success.payload or {}).get("status") == "passed"
-            and (success.payload or {}).get("api_verified") is True
-            for success in ci_successes
-        )
-        if not resolved:
-            unresolved_attention.append(attention)
-    ci_attention = unresolved_attention
+    ci_attention = [
+        attention
+        for attention in ci_attention
+        if not _shared_attention_resolved(events, attention)
+    ]
     if not ci_attention:
         return []
     attention = max(ci_attention, key=lambda event: getattr(event, "seq", 0))
@@ -485,27 +537,10 @@ def _release_ci_attention_lines(events: list) -> list[str]:
     ]
 
 
-_ATTENTION_RECOVERY_EVENTS = {
-    "freeze": ("candidate.frozen",),
-    "issue_creation": ("issue.created", "issue.mapped"),
-    "issue_close": ("issue.closed",),
-    "project_close": ("project.closed",),
-    "milestone_seal": ("milestone.sealed",),
-    "milestone_refs": ("refs.cleaned",),
-    "publish": ("milestone.trace_closed",),
-}
-
-
 def _attention_area_resolved(events: list, attention, area: str) -> bool:
-    """True when a later recovery event proves the area's attention cleared."""
-    recovery = _ATTENTION_RECOVERY_EVENTS.get(area)
-    if not recovery:
-        return False
-    attention_seq = getattr(attention, "seq", 0)
-    return any(
-        event.type in recovery and getattr(event, "seq", 0) > attention_seq
-        for event in events
-    )
+    """True when the shared lifecycle rule proves the attention cleared."""
+    del area  # the attention payload carries the area
+    return _shared_attention_resolved(events, attention)
 
 
 def _release_attention_lines(events: list) -> list[str]:

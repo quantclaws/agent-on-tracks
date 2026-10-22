@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -82,31 +83,93 @@ def active_run_context(repo: Path):
         yield home, store, run_id
 
 
-@contextmanager
-def writer_lock(home: Path):
-    lock = paths.lock_path(home)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    fd = None
-    for retry in (True, False):
+class WriterLock:
+    """The run-plane single-writer lock with an explicit suspend seam.
+
+    ``suspended()`` releases the PID-file lock for a bounded wait (CI
+    registration, infra backoff) so the operator's retry/status commands can
+    acquire it, then re-acquires before the driver touches state again. A
+    mutation that lands while suspended is visible to ``Executor`` through
+    the event tail, which aborts the stale wait instead of driving over it.
+    """
+
+    def __init__(self, home: Path):
+        self.home = home
+        self.path = paths.lock_path(home)
+        self._held = False
+
+    def _try_open(self) -> bool:
+        """One acquisition attempt; True when this process now holds it."""
         try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            try:
-                holder = lock.read_text(encoding="utf-8").strip() or "unknown"
-            except FileNotFoundError:
-                continue  # holder just released; retry acquisition
-            # Crash recovery (AC-29b): a dead holder's lock is stale.
-            if retry and holder.isdigit() and not _pid_alive(int(holder)):
-                lock.unlink(missing_ok=True)
-                continue
-            raise LockHeld(holder) from None
-    try:
+            holder = self._holder()
+            if holder is not None:
+                self._reclaim(holder)
+            return False
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)
-        yield
-    finally:
-        lock.unlink(missing_ok=True)
+        self._held = True
+        return True
+
+    def _wait_error(self, wait: bool, deadline: float | None) -> LockHeld | None:
+        holder = self._holder()
+        if holder is None:
+            return None  # holder just released; retry acquisition
+        if not wait or (deadline is not None and time.monotonic() >= deadline):
+            return LockHeld(holder)
+        return None
+
+    def acquire(
+        self, *, wait: bool = False, timeout_s: float | None = None
+    ) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = None if timeout_s is None else time.monotonic() + timeout_s
+        while not self._try_open():
+            error = self._wait_error(wait, deadline)
+            if error is not None:
+                raise error from None
+            time.sleep(0.05)
+
+    def _holder(self) -> str | None:
+        try:
+            return self.path.read_text(encoding="utf-8").strip() or "unknown"
+        except FileNotFoundError:
+            return None
+
+    def _reclaim(self, holder: str) -> bool:
+        """Unlink a dead holder's lock (AC-29b); True when reclaimed."""
+        if holder.isdigit() and not _pid_alive(int(holder)):
+            self.path.unlink(missing_ok=True)
+            return True
+        return False
+
+    def release(self) -> None:
+        if self._held:
+            self.path.unlink(missing_ok=True)
+            self._held = False
+
+    def __enter__(self) -> WriterLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.release()
+
+    @contextmanager
+    def suspended(self):
+        """Release the lock for a bounded wait, then re-acquire it."""
+        self.release()
+        try:
+            yield
+        finally:
+            self.acquire(wait=True, timeout_s=600)
+
+
+@contextmanager
+def writer_lock(home: Path):
+    with WriterLock(home) as lock:
+        yield lock
 
 
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"

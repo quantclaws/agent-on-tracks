@@ -24,6 +24,20 @@ _CI_POLL_TIMEOUT_SECONDS = 30 * 60.0
 _FAILED_CHECK_REASONS = frozenset({"failed_conclusion", "check_failed"})
 
 
+def _sleep_host(host, seconds: float) -> bool:
+    """Bounded sleep that yields the CLI writer lock when the host supports it.
+
+    Returns True when an operator wrote while the driver was suspended, in
+    which case the stale CI wait is abandoned (the operator's command owns
+    the next drive).
+    """
+    sleeper = getattr(host, "_sleep_wait", None)
+    if callable(sleeper):
+        return bool(sleeper(seconds))
+    time.sleep(seconds)
+    return False
+
+
 def _ci_target(ci: dict) -> tuple[str, str]:
     repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
     workflow = str(ci.get("workflow", ""))
@@ -134,7 +148,8 @@ def _wait_for_ci_run(host, cmd, candidate_sha: str, repo_id: str, workflow: str)
                 command_id=cmd.command_id,
             )
             return None
-        time.sleep(min(_CI_POLL_INTERVAL_SECONDS, remaining))
+        if _sleep_host(host, min(_CI_POLL_INTERVAL_SECONDS, remaining)):
+            return None
 
 
 def _readback_ci_transport(host, cmd, candidate_sha: str, repo_id: str, workflow: str):

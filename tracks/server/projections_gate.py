@@ -14,6 +14,12 @@ from typing import Any
 from tracks import paths
 from tracks.discuss.gate import adjudication_owner, is_human_owner
 from tracks.discuss.parser import parse_threads
+from tracks.kernel.attention import (
+    NON_RETRYABLE_ATTENTION_REASONS,
+)
+from tracks.kernel.attention import (
+    attention_resolved as _shared_attention_resolved,
+)
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import State
 from tracks.kernel.stage_registry import _STAGES
@@ -260,141 +266,16 @@ _FAILURE_SUPERSEDING_TYPES = frozenset(
     }
 )
 
-# attention.required area -> events that prove the blocked condition cleared.
-# A later same-stage exit or a successful same-command outcome also resolves
-# generically (see _attention_resolved).
-_ATTENTION_RECOVERY_EVENTS = {
-    "freeze": ("candidate.frozen",),
-    "issue_creation": ("issue.created", "issues.created", "issue.mapped"),
-    "issue_close": ("issue.closed",),
-    "project_close": ("project.closed",),
-    "milestone_seal": ("milestone.sealed",),
-    "milestone_refs": ("refs.cleaned",),
-    "publish": ("milestone.trace_closed", "publish.executed"),
-    "sync_product": ("sync_product.verified",),
-    "artifact": ("release.previewed",),
-    "release_evidence": ("release.previewed",),
-    "release_facts": ("release.previewed",),
-    "version_gate": ("local_gate.passed",),
-    "host_contract": ("local_gate.passed", "host_contract.materialized"),
-    "gate_worktree": ("local_gate.passed",),
-    "pipeline": ("red.validated", "prism.verdict"),
-    "run_breaker": ("human.retry",),
-}
-
-# Reasons whose next move belongs to the operator (configure a token, clean
-# the tree, create the milestone, ...). Retry stays available afterwards;
-# these only stop the UI presenting retry as the immediate primary action.
-_NON_RETRYABLE_ATTENTION_REASONS = frozenset(
-    {
-        "missing_token",
-        "missing_credentials",
-        "dirty_tree",
-        "milestone_not_found",
-        "remote_unavailable",
-        "tag_already_exists",
-        "version_mismatch",
-        "evidence_incomplete_for_candidate",
-        "revise_without_findings",
-        "refs_remaining",
-        "candidate_missing",
-        "gate_failed",
-        "malformed_result",
-    }
-)
-
-
-def _is_success_outcome(payload: dict) -> bool:
-    return str(payload.get("status") or "") in ("done", "completed", "passed", "success")
-
-
-def _ci_success_bound(payload: dict, candidate: object) -> bool:
-    if payload.get("status") != "passed" or payload.get("api_verified") is not True:
-        return False
-    if not candidate:
-        return True
-    return (
-        payload.get("candidate_sha") == candidate
-        and payload.get("head_sha") == candidate
-    )
-
-
-def _ci_attention_resolved(events: list[EventEnvelope], attention_seq: int,
-                           attention_payload: dict) -> bool:
-    candidate = attention_payload.get("candidate_sha")
-    return any(
-        event.type == "ci.run_observed"
-        and getattr(event, "seq", 0) > attention_seq
-        and _ci_success_bound(event.payload or {}, candidate)
-        for event in events
-    )
-
-
-def _same_stage_exit(event: EventEnvelope, stage: str) -> bool:
-    if event.type != "stage.exited":
-        return False
-    return not stage or str((event.payload or {}).get("stage") or "") == stage
-
-
-def _same_command_success(event: EventEnvelope, attention: EventEnvelope) -> bool:
-    if not event.command_id or event.command_id != attention.command_id:
-        return False
-    payload = event.payload or {}
-    if event.type == "outcome.received":
-        return _is_success_outcome(payload)
-    if event.type == "command.completed":
-        return str(payload.get("status") or "completed") in (
-            "completed", "done", "succeeded",
-        )
-    return False
-
-
-def _recovery_matches(
-    event: EventEnvelope, recovery: tuple, attention_payload: dict
-) -> bool:
-    if event.type not in recovery:
-        return False
-    if (
-        str(attention_payload.get("area") or "") == "version_gate"
-        and str((event.payload or {}).get("kind") or "") != "version"
-    ):
-        return False
-    attention_candidate = attention_payload.get("candidate_sha")
-    event_candidate = (event.payload or {}).get("candidate_sha")
-    return not (
-        attention_candidate
-        and event_candidate
-        and attention_candidate != event_candidate
-    )
-
-
 def _attention_resolved(
     events: list[EventEnvelope], attention: EventEnvelope
 ) -> bool:
-    """True when a later success resolves this attention.required event.
+    """True when the shared lifecycle rule says the attention cleared.
 
-    Resolution sources: an area-specific recovery event, a successful
-    same-command outcome, a successful same-candidate CI readback, or any
-    later exit of the attention's stage. A failing gate/CI event never
-    resolves anything.
+    The single truth lives in :mod:`tracks.kernel.attention`, including the
+    repair-commit re-evaluation: a newer candidate freeze supersedes every
+    older candidate-scoped attention instead of pinning ``blocked`` forever.
     """
-    payload = attention.payload or {}
-    attention_seq = getattr(attention, "seq", 0)
-    stage = str(payload.get("stage") or "")
-    area = str(payload.get("area") or "")
-    if area == "ci_readback" and _ci_attention_resolved(events, attention_seq, payload):
-        return True
-    recovery = _ATTENTION_RECOVERY_EVENTS.get(area, ())
-    for event in events:
-        if getattr(event, "seq", 0) <= attention_seq:
-            continue
-        if _same_stage_exit(event, stage):
-            return True
-        if _same_command_success(event, attention):
-            return True
-        if _recovery_matches(event, recovery, payload):
-            return True
-    return False
+    return _shared_attention_resolved(events, attention)
 
 
 def _failure_superseded(event: EventEnvelope, payload: dict) -> bool:
@@ -438,7 +319,7 @@ def _blocked(events: list[EventEnvelope], state: State) -> dict | None:
         "reason": reason,
         "detail": str(payload.get("detail") or ""),
         "next": str(payload.get("next") or ""),
-        "retryable": reason not in _NON_RETRYABLE_ATTENTION_REASONS,
+        "retryable": reason not in NON_RETRYABLE_ATTENTION_REASONS,
         "seq": int(getattr(latest, "seq", 0) or 0),
         "stage": str(payload.get("stage") or state.stage or ""),
     }

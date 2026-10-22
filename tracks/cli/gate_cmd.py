@@ -14,6 +14,10 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
+from tracks.kernel.attention import (
+    RETRYABLE_ATTENTION_AREAS,
+    latest_unresolved_attention,
+)
 from tracks.store import Store
 
 from .common import (
@@ -32,7 +36,22 @@ from .release_cmd import (
 )
 
 
-def _retry_gate_error(state, clear_evidence: bool) -> str | None:
+def _retryable_attention(attention) -> bool:
+    """True when an unresolved attention names an operator reset as its exit.
+
+    The run plane can sit active with an ``attention.required`` block that
+    never became a formal escalation (freeze/gate/CI/breaker). Retry is that
+    block's documented recovery verb, so it must be accepted -- otherwise the
+    only operator command that can clear it is rejected as "not awaiting
+    escalation"."""
+    if attention is None:
+        return False
+    payload = getattr(attention, "payload", {}) or {}
+    area = str(payload.get("area") or "")
+    return area in RETRYABLE_ATTENTION_AREAS
+
+
+def _retry_gate_error(state, clear_evidence: bool, attention=None) -> str | None:
     if clear_evidence:
         if state.awaiting != "escalation" and not (
             state.status == "active" and state.awaiting is None
@@ -42,10 +61,18 @@ def _retry_gate_error(state, clear_evidence: bool) -> str | None:
                 f"active state (status={state.status} "
                 f"awaiting={state.awaiting or 'nothing'})"
             )
-    elif state.awaiting != "escalation" and not (
-        state.stage == "M-IMPL"
-        and state.awaiting == "rollback"
-        and (state.last_failure or {}).get("check") == "lineage"
+    elif (
+        state.awaiting != "escalation"
+        and not (
+            state.awaiting is None
+            and state.status == "active"
+            and _retryable_attention(attention)
+        )
+        and not (
+            state.stage == "M-IMPL"
+            and state.awaiting == "rollback"
+            and (state.last_failure or {}).get("check") == "lineage"
+        )
     ):
         return f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
     return None
@@ -71,7 +98,8 @@ def cmd_retry(repo: Path, *args: str) -> int:
             return _err("no active run")
         home, store, run_id = opened
         state = store.state(run_id)
-        gate_err = _retry_gate_error(state, clear_evidence)
+        attention = latest_unresolved_attention(store.events(run_id))
+        gate_err = _retry_gate_error(state, clear_evidence, attention)
         if gate_err is not None:
             return _err(gate_err)
         store.append(

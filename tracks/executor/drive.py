@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
+from tracks.kernel.attention import latest_unresolved_attention
 from tracks.store import Store
 from tracks.supervisor.waiting import WaitSpec  # noqa: F401 (shared definition, was duplicated)
 
@@ -125,6 +126,22 @@ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
     )
 
 
+def _attention_result(run_id: str, state, attention) -> DriveResult:
+    payload = attention.payload or {}
+    return DriveResult(
+        kind="await_human",
+        run_id=run_id,
+        stage=state.stage,
+        wait=None,
+        failure=None,
+        detail=(
+            f"run {run_id} awaiting operator attention "
+            f"{payload.get('area', '?')}:{payload.get('reason', '?')} "
+            f"at {_detail_suffix(state)}"
+        ),
+    )
+
+
 def _failure_from_exception(exc: Exception) -> dict:
     """Map an escaping drive error onto the closed failure_class vocabulary.
 
@@ -190,6 +207,12 @@ def drive_once(repo: Path, run_id: str, *, config: DriveConfig) -> DriveResult:
         except Exception as exc:  # noqa: BLE001 - structured failure boundary
             return _error_result(run_id, state.stage, exc)
         state = store.state(run_id)
+        attention = latest_unresolved_attention(store.events(run_id))
+        if attention is not None:
+            # An operator-resolvable block is a human boundary, never a
+            # "halted without progress" defect: the supervisor hands it to
+            # the gate channel while the driver holds no runtime lock.
+            return _attention_result(run_id, state, attention)
         # SM-01.3: a drive that ends BLOCKED parses as a human gate, not as
         # "no boundary reached". The resume preflight fires once per
         # run_loop; without this check the supervisor loop keeps re-entering

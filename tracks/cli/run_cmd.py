@@ -482,17 +482,21 @@ def cmd_run(repo: Path, *args: str) -> int:
             return terminal
         return _err("no active run; `trac start <version>` first")
     watch_restart: bool | None = None
-    with writer_lock(home):
+    with writer_lock(home) as lock:
         if _park_broken_tree(repo, store, run_id):
             return 1
         try:
-            state = Executor(
+            executor = Executor(
                 store,
                 repo,
                 run_id,
                 assignment_overlay=assignment_overlay,
                 max_dispatches=max_dispatches,
-            ).run_loop()
+            )
+            # Set after construction so third-party/fake Executor doubles with
+            # the pre-wait_yield signature stay compatible.
+            executor._wait_yield = getattr(lock, "suspended", None)
+            state = executor.run_loop()
         except RuntimeCodeDriftError:
             # M7 (convergence plan 2026-09-05): drift at a dispatch
             # boundary is a HANDOVER, not an abort -- the in-flight

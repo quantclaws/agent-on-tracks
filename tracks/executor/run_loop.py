@@ -24,6 +24,10 @@ from tracks.executor.helpers import git
 from tracks.executor.host_contract import load_host_contract
 from tracks.executor.stall import STALL_COMMAND_LIMIT, CommandStallError, CommandStallTracker
 from tracks.executor.validate import parse_test_tasks, resolve_inherited_baseline_docs
+from tracks.kernel.attention import (
+    AUTO_RETRY_ATTENTION_AREAS,
+    unresolved_attentions,
+)
 from tracks.kernel.contracts import result_file_contract
 from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
@@ -226,6 +230,64 @@ the host Executor keeps construction and the command handlers."""
         print(f"  [{state.stage}] {trip['report']}", file=sys.stderr, flush=True)
         return self.store.state(self.run_id)
 
+    def _repo_head_sha(self) -> str:
+        proc = git(self.repo, "rev-parse", "HEAD", check=False)
+        return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    def _pending_operator_attention(self, state: State):
+        """An unresolved M-VERIFY block that a plain re-drive cannot clear.
+
+        A repair commit (HEAD moved past the frozen candidate) or a fresh
+        repair round is operator evidence that the old block may be stale --
+        the chain re-walk owns the re-evaluation. Otherwise returning here
+        releases the writer lock for the operator's retry/return instead of
+        re-running unchanged evidence under it.
+        """
+        if state.stage != "M-VERIFY":
+            return None
+        pending = [
+            attention
+            for attention in unresolved_attentions(self.store.events(self.run_id))
+            if str((attention.payload or {}).get("stage") or "") == "M-VERIFY"
+        ]
+        if not pending:
+            return None
+        if any(
+            str((attention.payload or {}).get("area") or "")
+            in AUTO_RETRY_ATTENTION_AREAS
+            for attention in pending
+        ):
+            return None
+        head = self._repo_head_sha()
+        if state.candidate_sha and head and head != state.candidate_sha:
+            return None  # repair commit: re-walk is legitimate
+        latest_seq = max(
+            int(getattr(attention, "seq", 0) or 0) for attention in pending
+        )
+        if any(
+            event.type == "repair.round_started"
+            and int(getattr(event, "seq", 0) or 0) > latest_seq
+            for event in self.store.events(self.run_id)
+        ):
+            return None
+        return pending[-1]
+
+    def _sleep_wait(self, seconds: float) -> bool:
+        """Sleep for a bounded wait; return True when an operator wrote.
+
+        With a CLI-supplied wait_yield the run-plane writer lock is released
+        for the sleep, so ``trac retry``/``trac return`` can land. Any event
+        appended while suspended means the operator acted: the caller must
+        abandon the stale wait rather than continue over the new state.
+        """
+        before = self._next_event_seq()
+        if self._wait_yield is None:
+            time.sleep(seconds)
+            return False
+        with self._wait_yield():
+            time.sleep(seconds)
+        return self._next_event_seq() != before
+
     def run_loop(self) -> State:
         # IF-FAILURE-001 replay face: the failure-review store is process-
         # local; under the M7 handover regime the loop is replaced at every
@@ -254,6 +316,18 @@ the host Executor keeps construction and the command handlers."""
         # its own dedup), so ONE re-drive here resumes exactly the missing
         # links; a still-blocked chain parks and the operator resolves.
         state_after_recover = self.store.state(self.run_id)
+        blocked_attention = self._pending_operator_attention(state_after_recover)
+        if blocked_attention is not None:
+            payload = blocked_attention.payload or {}
+            print(
+                f"run {self.run_id}: operator attention "
+                f"{payload.get('area', '?')}:{payload.get('reason', '?')} "
+                "is unresolved; releasing the writer lock for the operator "
+                "(trac retry/return or a repair commit re-walks)",
+                file=sys.stderr,
+                flush=True,
+            )
+            return state_after_recover
         if (
             state_after_recover.stage == "M-VERIFY"
             and state_after_recover.substate == "VERIFYING"
@@ -759,7 +833,7 @@ the host Executor keeps construction and the command handlers."""
                 file=sys.stderr,
                 flush=True,
             )
-            time.sleep(delay)
+            self._sleep_wait(delay)
         cid = command_id or new_ulid()
         params = dict(cmd.params)
         _is_doc_gap = bool(params.get("doc_gap"))

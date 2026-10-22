@@ -222,6 +222,7 @@ class Executor(
         run_id: str,
         assignment_overlay: dict | None = None,
         max_dispatches: int | None = None,
+        wait_yield=None,
     ):
         if assignment_overlay is not None and not isinstance(assignment_overlay, dict):
             raise TypeError("assignment_overlay must be a dict or None")
@@ -240,6 +241,11 @@ class Executor(
         self.backend = select_backend(repo, self.version, run_id=run_id)
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
+        # Optional context-manager factory the CLI uses to release the
+        # run-plane writer lock for a bounded wait (CI registration/infra
+        # backoff) so operator commands can acquire it meanwhile. Supervisor
+        # workers drive without the CLI lock and keep the default.
+        self._wait_yield = wait_yield
         self._issue_backend = None  # lazy: created on first create_issues
         # D-36 浅版（#43）：OOB 观察点。初始化为当前 HEAD——run 停止期间
         # （静默期）的操作者提交按既有语义由下一次 baseline 冻结吸收，
