@@ -149,6 +149,7 @@ class MImplRefactorMixin:
             self.repo,
             f"M-IMPL: refactor\n\ncommand_id: {cmd.command_id}",
             paths=sorted(changed),
+            hooks=True,
         )
         if proc is None:
             self._emit(

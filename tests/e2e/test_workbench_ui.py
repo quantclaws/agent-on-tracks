@@ -222,6 +222,10 @@ def test_unknown_values_degrade_visibly(ui_serve, page):
     """AC-FR0319-01: an unknown/missing value (an unknown run deep link) shows
     a readable degradation marker in place — no crash, no 5xx, no blank tab —
     and the user can keep navigating."""
+    # the Releases window resolves a run through its registered project
+    # (v0.12 main-area contract); register one so the run deep link reaches
+    # the timeline's unknown-run degradation instead of the no-project face.
+    ui_serve.seed_project("proj-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
     responses: list[int] = []
     page.on("response", lambda response: responses.append(response.status))
@@ -230,6 +234,7 @@ def test_unknown_values_degrade_visibly(ui_serve, page):
     )
     page.get_by_test_id("main-area").wait_for()
     marker = page.locator("[data-testid='degrade-NotFound']")
+    marker.wait_for()
     assert marker.count() >= 1, (
         "an unknown run must render a readable NotFound degradation marker"
     )
@@ -315,16 +320,16 @@ def test_first_login_name_collection(ui_serve, page):
 def test_real_data_rendered(ui_serve, page):
     """AC-NFR0153-01: the audited data face renders the event-sourced
     projection values — the seeded project and run appear with their real
-    identity in the Releases window registry (the v0.11 projects/overview
-    fold), and no fabricated extra rows are shown."""
+    identity in the Releases sidebar registry (v0.12 main-area contract),
+    and no fabricated extra rows are shown."""
     ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
     page.locator("[data-testid='view-releases']").wait_for()
-    registry_row = page.get_by_test_id("registry-run-run-ui-1")
+    registry_row = page.get_by_test_id("sidebar-run-run-ui-1")
     registry_row.wait_for()
     assert "v1.0" in registry_row.inner_text()
-    assert page.locator("[data-testid='registry-run-run-ui-1']").count() == 1, (
+    assert page.locator("[data-testid='sidebar-run-run-ui-1']").count() == 1, (
         "the seeded run renders exactly once in the registry group"
     )
 
@@ -360,7 +365,6 @@ def test_sse_reconnect_backfill_monotonic(ui_serve, page):
     ui_serve.seed_project("proj-ui-1", "v1.0")
     ui_serve.seed_run("run-ui-1", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
-    page.get_by_test_id("registry-run-run-ui-1").click()
 
     frames = [
         "id: 1\nevent: stage.entered\ndata: {\"stage\": \"M-START\"}\n\n",
@@ -368,8 +372,8 @@ def test_sse_reconnect_backfill_monotonic(ui_serve, page):
     ]
     reconnect_frames = [
         "id: 2\nevent: stage.entered\ndata: {\"stage\": \"M-IMPL\"}\n\n",  # duplicate
-        "id: 1\nevent: stage.entered\ndata: {\"stage\": \"M-START\"}\n\n",  # older
         "id: 3\nevent: taskgraph.committed\ndata: {\"task_count\": 2}\n\n",  # new
+        "id: 1\nevent: stage.entered\ndata: {\"stage\": \"M-START\"}\n\n",  # older after new
     ]
     served = {"count": 0}
 
@@ -382,13 +386,28 @@ def test_sse_reconnect_backfill_monotonic(ui_serve, page):
             body=body,
         )
 
+    # Install the route before selecting the run: the timeline opens its
+    # catch-up stream on first render, so a later route never sees it.
     page.route("**/api/runs/*/events*", handle)
+    page.get_by_test_id("sidebar-run-run-ui-1").click()
+    # The click re-renders the landing face in place; wait for the
+    # run-scoped URL (set just before the body swap) so the stream under
+    # test belongs to the selected run's final render.
+    page.wait_for_url("**/runs/run-ui-1")
     page.locator("[data-testid='timeline']").wait_for()
-    # the projection must not regress below the newest delivered event
+    # the projection must not regress below the newest delivered event;
+    # the OOB face localizes known event types, but taskgraph.committed has
+    # no label and stays verbatim.
     last = page.locator("[data-testid='timeline-last-event']")
     assert last.count() >= 1, "the timeline must render the event projection"
+    expect(last).to_contain_text("taskgraph.committed", timeout=10_000)
+    # The first served body carries no id 3, so reaching the newest event
+    # proves the reconnect/backfill face ran at least once. Its final
+    # frame is an OLDER cursor: the monotonic guard must keep id 3 on top.
+    assert served["count"] >= 2, "the reconnect backfill must be exercised"
+    page.wait_for_timeout(2_000)
     assert "taskgraph.committed" in (last.inner_text() or ""), (
-        "the reconnect backfill must advance to the newest event without regression"
+        "an out-of-order older frame must never regress the projection"
     )
 
 
@@ -414,7 +433,7 @@ def test_first_demo_milestone_journey(ui_serve, page):
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()
     page.get_by_test_id("tabbar-item-releases").wait_for()
-    page.locator("[data-testid='registry-run-run-ui-1']").wait_for()
+    page.locator("[data-testid='sidebar-run-run-ui-1']").wait_for()
     _mark_document(page)
 
     page.get_by_test_id("tabbar-item-docs").click()
@@ -453,24 +472,24 @@ def test_many_runs_do_not_starve_view_rendering(ui_serve, page):
         ui_serve.seed_run(f"run-ui-multi-{index}", "v1.0")
     _login_via_ui(page, ui_serve.base_url)
 
-    # v0.11 five-tab world: the landing Releases window shows the registry
-    # (compact faces) — the timeline face renders on selection. Open the
-    # newest run so the event projection (timeline-last-event) presents.
-    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for(timeout=10000)
-    page.get_by_test_id("registry-run-run-ui-multi-7").click()
+    # v0.12 five-tab world: the Releases sidebar owns the registry (compact
+    # faces) — the timeline face renders on selection. Open the newest run
+    # so the event projection (timeline-last-event) presents.
+    page.locator("[data-testid='sidebar-run-run-ui-multi-7']").wait_for(timeout=10000)
+    page.get_by_test_id("sidebar-run-run-ui-multi-7").click()
     # The landing runs view settles each row on the NEWEST drained event:
     # a JSON poll batch carries one cursor for the whole batch, so applying
     # only its head row would freeze the line at the OLDEST event.
     expect(page.locator("[data-testid='timeline-last-event']").first).to_contain_text(
-        "stage.entered", timeout=10000
+        "进入阶段", timeout=10000
     )
 
-    # The Runs area's subtree is the run registry, newest first, and the
-    # main face opens on the newest run's stage track (not a flat row list).
-    # v0.11: the focused timeline face keeps no sidebar registry (the
-    # Releases window does) — go back to the registry for the sidebar.
+    # The sidebar subtree is the run registry, newest first, and the main
+    # face opens on the newest run's stage track (not a flat row list).
+    # v0.12: the focused timeline face keeps the Releases sidebar registry
+    # — go back to the Releases window for the switcher.
     page.get_by_test_id("tabbar-item-releases").click()
-    page.locator("[data-testid='registry-run-run-ui-multi-7']").wait_for(timeout=10000)
+    page.locator("[data-testid='sidebar-run-run-ui-multi-7']").wait_for(timeout=10000)
     sidebar_runs = page.locator("[data-testid^='sidebar-run-run-ui-multi-']")
     expect(sidebar_runs.first).to_be_visible(timeout=10000)
     assert sidebar_runs.count() == 8, "the sidebar lists the whole registry"
@@ -522,7 +541,7 @@ def test_runs_registry_human_titles(ui_serve, page):
     )
 
     page.get_by_test_id("tabbar-item-releases").click()
-    registry = page.get_by_test_id("registry-run-run-ui-title-1")
+    registry = page.get_by_test_id("sidebar-run-run-ui-title-1")
     assert (registry.inner_text() or "") == "v1.0 · Web 工作台完善（UI）…", (
         "the Releases registry row truncates the same way"
     )
@@ -571,7 +590,7 @@ def test_v010_rulings_regression(ui_serve, page):
     ui_serve.seed_run("run-ui-rulings-1", "v1.0")
     page.reload(wait_until="domcontentloaded")
     page.locator("[data-testid='view-releases']").wait_for()
-    row = page.get_by_test_id("registry-run-run-ui-rulings-1")
+    row = page.get_by_test_id("sidebar-run-run-ui-rulings-1")
     row.wait_for()
     label = (row.inner_text() or "").strip()
     assert "…" in label and len(label.replace("v1.0 · ", "")) <= 21, (

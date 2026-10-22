@@ -935,6 +935,40 @@ def test_timeline_return_pointer_gated_by_return_options():
     )
 
 
+# AC-FR0355-01@v0.12 TRACKS-TRACE operational block banner + retry surface
+def test_timeline_blocked_banner_shows_reason_detail_next_and_retry():
+    timeline = _module("timeline.js")
+    assert "detail.blocked" in timeline, (
+        "the stage node and card consume the run detail's blocked field group"
+    )
+    assert '"blocked": "■"' in timeline and 'return "blocked"' in timeline, (
+        "blocked is a distinct node state with its own icon (separate from"
+        " active/attention)"
+    )
+    for testid in (
+        "blocked-banner",
+        "blocked-reason",
+        "blocked-detail",
+        "blocked-next",
+        "blocked-retry",
+        "blocked-return",
+        "verify-progress",
+    ):
+        assert testid in timeline, (
+            f"the blocked/verify UI binds data-testid {testid!r}"
+        )
+    assert "blocked.reason" in timeline and "blocked.detail" in timeline, (
+        "the banner renders the attention reason and its detail"
+    )
+    assert "blocked.next" in timeline, "the banner renders the operator instruction"
+    assert "/retry" in timeline and "clear_evidence" in timeline, (
+        "retry reuses POST /api/runs/{id}/retry (same surface as the CLI)"
+    )
+    assert "verify_progress" in timeline, (
+        "M-VERIFY sub-step progress comes from the run detail projection"
+    )
+
+
 # -- static view layer: views.js window registry (IF-RELEASES-001) -----------
 
 

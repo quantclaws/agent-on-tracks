@@ -245,7 +245,7 @@ v0.12 逐字继承现行测试执行合同（不修改文件）：
 
 以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data）——六条 pyproject-backed `config_digest` 重锚为 `sha256:41faecd6…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:e534d31d…`（原 `e1735466…`）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
 
-> **v0.12 M-VERIFY operator OOB（2026-10-21）— 质量基线锚定**：声明的严格包络（CCR001 15 / C0302 1200 / R0914 15 / R0915 50 / coverage 89）在 v0.11 遗留代码上从未达成（35 条 known-red 基线红即含 `test_t010_size_migration_red` 等质量债断言），原样执行会让 release gate 拦在既有债务而非 v0.12 变更面。故 registry 命令以 CLI 覆盖锚定到 v0.12 实测基线：CCR001 30、C0302 1900、R0914 25 / R0915 55、coverage 见下方 guard；八类、fail_closed、`config_digest`（pyproject/.flake8 bytes 未变）语义不变。本次同时把 `_task_progress`（55→10）与 FULL 选择/分阶段 argv 重复块重构掉以削债；严格包络的 burn-down 列入 v0.13 backlog。
+> **质量基线（2026-10-22 更新）— 严格包络恢复**：v0.12 M-VERIFY 初期曾因 v0.11 遗留债以 CLI 覆盖锚定实测基线；该债务已 burn-down（`_task_progress` 与 FULL 选择/分阶段 argv 等重复块重构、新增模块拆分），严格包络已在当前树实测通过。故 registry 命令/阈值恢复严格：CCR001 15、C0302 1200、R0914 15 / R0915 50、coverage 89；八类、fail_closed、`config_digest`（pyproject/.flake8 bytes 未变）语义不变。
 
 ```toml
 [quality_registry]
@@ -289,12 +289,12 @@ id = "cognitive-complexity"
 category = "cognitive_complexity"
 tool = "flake8+flake8-cognitive-complexity"
 tool_version = "7.3.0+0.1.0"
-command = ".venv/bin/flake8 --max-cognitive-complexity=30 tracks"
+command = ".venv/bin/flake8 tracks"
 config_paths = [".flake8"]
 config_sections = ["flake8"]
 config_digest = "sha256:f899995c15557184f3a2d082469fcd7f15ae8f22928823249e6479a611c46382"
 scope = ["tracks"]
-threshold = "CCR001 max-cognitive-complexity=30 (v0.12 measured baseline; burn-down to 15 in v0.13); tests exempt"
+threshold = "CCR001 max-cognitive-complexity=15; tests exempt"
 timeout_seconds = 300
 failure_policy = "fail_closed"
 execution_points = ["runtime", "pre_commit", "ci"]
@@ -305,12 +305,12 @@ id = "file-length"
 category = "file_length"
 tool = "pylint"
 tool_version = "4.0.6"
-command = ".venv/bin/pylint --disable=all --enable=C0302 --max-module-lines=1900 tracks tests"
+command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
 config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
 scope = ["tracks", "tests"]
-threshold = "C0302 max-module-lines=1900 (v0.12 measured baseline; burn-down to 1200 in v0.13)"
+threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
 failure_policy = "fail_closed"
 execution_points = ["runtime", "pre_commit", "ci"]
@@ -321,12 +321,12 @@ id = "method-length-locals"
 category = "method_length_locals"
 tool = "pylint"
 tool_version = "4.0.6"
-command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 --max-locals=25 --max-statements=55 tracks"
+command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
 config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
 scope = ["tracks"]
-threshold = "R0915 max-statements=55; R0914 max-locals=25 (v0.12 measured baseline; burn-down to 50/15 in v0.13); tests exempt"
+threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
 failure_policy = "fail_closed"
 execution_points = ["runtime", "pre_commit", "ci"]
@@ -384,7 +384,7 @@ required_check = "lint,coverage,test,deliverables,trace,reach,ui-e2e"
 ### 4.3 CI / pre-commit / release
 
 - Required checks 七名不变（lint/coverage/test/deliverables/trace/reach/ui-e2e）；`release-evidence` milestone 硬门禁不变。v0.12 零 workflow 变更；安装 e2e（非 UI）落 `test` job 的 `tests/e2e`，OOB UI 落 `ui-e2e`。
-- pre-commit hook 不变；新增 Python 模块（install/project_runtime/install_cmd、serve/review 修订）自动纳入 ruff/flake8/pylint 与 coverage scope。JS 层守卫空缺显式继承（无 JS linter，UI e2e 与评审承载）。
+- pre-commit hook 为 path-scoped、lint-only（不跑测试，RGR RED 兼容）：无参数时只检查 staged ACMR 的 `.py`，带参数时只检查显式路径；`TRACKS_HOOK_ROOT`/`TRACKS_HOOK_BIN` 允许 Runtime 在 gate worktree 复用主仓配置与工具链。Runtime 的 checkpoint/refactor 提交与 commit-tree 形成的 G 均显式过宿主 hook（宿主提供自身 hook/工具链，Runtime 视为不透明、绝不写 `core.hooksPath`）。新增 Python 模块（install/project_runtime/install_cmd、serve/review 修订）自动纳入 ruff/flake8/pylint 与 coverage scope。JS 层守卫空缺显式继承（无 JS linter，UI e2e 与评审承载）。
 - 安装命令（副作用归 Runtime）不变：`python -m venv .venv`、`.venv/bin/pip install -e '.[dev]'`、`git config core.hooksPath .githooks`。
 - version gate：bindings 声明不变（`pyproject.toml:project.version` 与 `tracks/__init__.py:__version__` 绑定 `{release_version}`）；版本已设计期 bump 至 `0.12.0`（§2），M-VERIFY 前必须等于目标发布版本。
 - build/smoke：`[host-contract.build]` 与 smoke 不变；wheel 内容合同（§1.0.2）由测试断言，smoke 继续验证 `trac --help` 零仓库可用。

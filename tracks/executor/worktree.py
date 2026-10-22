@@ -187,13 +187,21 @@ def create_gate_worktree(
     if devon_diff.strip():
         _apply_and_commit(path, devon_diff, "Devon candidate diff", no_verify=True)
     if frozen_bundle_sha.strip():
-        # Bypass the repo-global hooksPath for the cherry-pick the same way:
-        # point hooksPath at an empty dir local to the worktree.
-        _git(
-            path, "config", "core.hooksPath", str(Path(path) / ".tracks" / ".no-hooks"),
-        )
+        # Bypass the repo-global hooksPath for the cherry-pick WITHOUT
+        # writing it: worktrees share .git/config unless
+        # extensions.worktreeConfig is enabled, so the old ``git config``
+        # here leaked a stale worktree-local .no-hooks path into the main
+        # repo and silently disabled every quality hook (operator commits
+        # included). ``git -c`` scopes the override to this one command.
         _ensure_empty_hooks_dir(path)
-        _git(path, "cherry-pick", "--allow-empty", frozen_bundle_sha)
+        _git(
+            path,
+            "-c",
+            f"core.hooksPath={Path(path) / '.tracks' / '.no-hooks'}",
+            "cherry-pick",
+            "--allow-empty",
+            frozen_bundle_sha,
+        )
     # Runtime assets are linked AFTER all git commits so _apply_and_commit's
     # `git add -A` cannot swallow the symlink into a commit; the entry stays
     # untracked (and ignored under the canonical .gitignore).

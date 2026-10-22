@@ -119,13 +119,23 @@ def host_repo(tmp_path):
     venv_target = Path(sys.prefix).resolve()
     (repo / ".venv").symlink_to(venv_target, target_is_directory=True)
     (repo / ".gitignore").write_text(".venv\n", encoding="utf-8")
-    g("add", "README.md", ".gitignore")
+    # Host-declared hook: the runtime invokes it for product checkpoints and
+    # for commit-tree G, so fixtures model a real host that installs one.
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    hook = hooks / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+    g("config", "core.hooksPath", ".githooks")
+    g("add", "README.md", ".gitignore", ".githooks/pre-commit")
     g("commit", "-m", "initial")
     return repo
 
 
 @pytest.fixture
-def trac(host_repo, steps):
+def trac(host_repo, steps, tmp_path):
+    coverage_file = _REPO_ROOT / f".coverage.subprocess.{os.getpid()}.{tmp_path.name}"
+
     def run(*args, stdin=None, simulate=None):
         env = {
             k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
@@ -135,7 +145,7 @@ def trac(host_repo, steps):
             env["TRAC_FAKE_SIMULATE"] = simulate
         if _UNDER_COVERAGE:
             env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
-            env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
+            env["COVERAGE_FILE"] = str(coverage_file)
             env["PYTHONPATH"] = _SUBCOV_DIR + os.pathsep + env.get("PYTHONPATH", "")
         # M7 (convergence plan 2026-09-05): the runtime loop executes the
         # installed wheel, but the TESTS exercise the tree under

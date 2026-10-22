@@ -211,7 +211,7 @@ def test_commit_refactor_changes_paths(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "tracks.executor.executor._scoped_commit_if_staged",
-        lambda repo, message, paths: None,
+        lambda repo, message, paths, **kwargs: None,
     )
     assert (
         MImplRefactorMixin._commit_refactor_changes(
@@ -225,7 +225,7 @@ def test_commit_refactor_changes_paths(tmp_path, monkeypatch):
     proc = SimpleNamespace(returncode=1, stderr="hook", stdout="")
     monkeypatch.setattr(
         "tracks.executor.executor._scoped_commit_if_staged",
-        lambda repo, message, paths: proc,
+        lambda repo, message, paths, **kwargs: proc,
     )
     host._emit_commit_failure = lambda proc, state, cid: host.emitted.append(
         ("commit_failure", proc)
@@ -242,7 +242,7 @@ def test_commit_refactor_changes_paths(tmp_path, monkeypatch):
     proc = SimpleNamespace(returncode=0, stderr="", stdout="")
     monkeypatch.setattr(
         "tracks.executor.executor._scoped_commit_if_staged",
-        lambda repo, message, paths: proc,
+        lambda repo, message, paths, **kwargs: proc,
     )
     assert (
         MImplRefactorMixin._commit_refactor_changes(

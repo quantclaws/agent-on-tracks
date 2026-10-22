@@ -399,6 +399,33 @@ class OpencodeReviewMixin:
         return payload
 
     @staticmethod
+    def _apply_review_verdict(
+        result: dict, doc_paths: list[Path], substate: str, text: str
+    ) -> None:
+        ready, _ = check_ready(text)
+        if ready:
+            result["verdict"] = "pass"
+        elif substate == "LEX_REVIEW":
+            # FR-0332 §1s.1 + IF-REVIEW-002 §1p.2 (v0.11): see
+            # ``_lex_review_verdict`` for the three-branch exit —
+            # the park payload rides along only on the park branch.
+            result["verdict"], pending = _lex_review_verdict(doc_paths)
+            if pending:
+                result["pending_threads"] = pending
+        elif substate == "SAGE_REVIEW":
+            # FR-0347 narrowing is isomorphic for M-STORY's Sage review
+            # face: only Sage's own pending findings threads constitute
+            # a revise ground; non-own (incl. Human-initiated) pending
+            # threads do not block — pass into HUMAN_REVIEW, where the
+            # initiator handles them (§4.1 has no park on this face).
+            if _reviewer_own_pending_threads(doc_paths, _SAGE_SPEAKER):
+                result["verdict"] = "revise"
+            else:
+                result["verdict"] = "pass"
+        else:
+            result["verdict"] = "revise"
+
+    @staticmethod
     def _enrich_discussion(
         result: dict,
         doc_paths: list[Path],
@@ -410,28 +437,9 @@ class OpencodeReviewMixin:
             result["discussion_evidence"] = _discussion_snapshot(text)
             if reviewer_assignment:
                 result.pop("pending_threads", None)
-                ready, _ = check_ready(text)
-                if ready:
-                    result["verdict"] = "pass"
-                elif substate == "LEX_REVIEW":
-                    # FR-0332 §1s.1 + IF-REVIEW-002 §1p.2 (v0.11): see
-                    # ``_lex_review_verdict`` for the three-branch exit —
-                    # the park payload rides along only on the park branch.
-                    result["verdict"], pending = _lex_review_verdict(doc_paths)
-                    if pending:
-                        result["pending_threads"] = pending
-                elif substate == "SAGE_REVIEW":
-                    # FR-0347 narrowing is isomorphic for M-STORY's Sage review
-                    # face: only Sage's own pending findings threads constitute
-                    # a revise ground; non-own (incl. Human-initiated) pending
-                    # threads do not block — pass into HUMAN_REVIEW, where the
-                    # initiator handles them (§4.1 has no park on this face).
-                    if _reviewer_own_pending_threads(doc_paths, _SAGE_SPEAKER):
-                        result["verdict"] = "revise"
-                    else:
-                        result["verdict"] = "pass"
-                else:
-                    result["verdict"] = "revise"
+                OpencodeReviewMixin._apply_review_verdict(
+                    result, doc_paths, substate, text
+                )
         return result
 
     @staticmethod

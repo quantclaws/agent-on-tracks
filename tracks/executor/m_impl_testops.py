@@ -44,6 +44,13 @@ from tracks.executor.worktree import WorktreeHandle, create_gate_worktree, ensur
 from tracks.kernel.machine import State
 from tracks.project import ContractError, layout_paths, load_contract
 
+# CLI entry/delegation markers describe HOW the runtime was entered, not the
+# test execution environment. Hashing them into the evidence env identity made
+# evidence recorded by a CLI call (e.g. ``trac run``) appear drifted whenever
+# the same identity was recomputed in-process (test harness, service worker),
+# rejecting reuse of unchanged GREEN/FULL evidence.
+_ENV_IDENTITY_EXCLUDED = frozenset({"TRAC_CLI_ENTRY", "TRAC_PROJECT_ACTIVE"})
+
 
 def _contract_unit_run(repo) -> str:
     """``[unit].run`` template from the host project contract (T-015).
@@ -967,7 +974,11 @@ class MImplTestOpsMixin:
 
     @staticmethod
     def _gate_environment_identity() -> str:
-        trac_env = {key: value for key, value in os.environ.items() if key.startswith("TRAC_")}
+        trac_env = {
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith("TRAC_") and key not in _ENV_IDENTITY_EXCLUDED
+        }
         material = json.dumps(
             {
                 "python": sys.version,

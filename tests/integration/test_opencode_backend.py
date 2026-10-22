@@ -872,15 +872,18 @@ def test_reviewer_revise_without_findings_fails(fake_opencode, design_vdir, host
 def test_single_doc_reviewer_revise_without_findings_fails(
     fake_opencode, target_doc, host_repo, monkeypatch
 ):
-    """The audit is doc-set-agnostic: a single-doc reviewer revise whose only
-    blocking thread was initiated by the author fails the same way."""
+    """v0.12 FR-0347 narrowing reaches SAGE_REVIEW: a thread initiated by the
+    author (not the reviewer) is not a revise ground. The single-doc Sage
+    dispatch therefore completes with pass instead of the old bare-revise
+    failure; a Sage-owned pending finding still revises (see
+    test_reviewer_dispatch_leaving_open_thread_unaffected)."""
     seed_thread(target_doc, "Scribe")
     commit_doc(host_repo, "story.md")
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
     out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
-    assert out.get("verdict") is None  # the failed outcome emits no verdict
-    assert out["status"] == "failed"
-    assert out["failure_class"] == "revise_without_findings"
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert out["verdict"] == "pass"
 
 
 def test_author_dispatch_unaffected_by_revise_finding_audit(

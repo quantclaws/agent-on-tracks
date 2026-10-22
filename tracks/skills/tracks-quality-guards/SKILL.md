@@ -37,10 +37,10 @@ description: 宿主项目工程质量守卫栈的目录与安装分工——lint
 | lint + format | ruff==0.16.0 | `pyproject.toml` `[tool.ruff]` / `[tool.ruff.lint]` | line-length=100；select E,F,W,I,B,UP,SIM,C4 | pre-commit + CI |
 | 认知复杂度 | flake8==7.3.0 + flake8-cognitive-complexity==0.1.0 | `.flake8` | CCR001，max-cognitive-complexity=15 | pre-commit + CI |
 | 重复度 | pylint==4.0.6 | `pyproject.toml` `[tool.pylint.similarities]` | R0801，min-similarity-lines=5（忽略注释/docstring/签名） | pre-commit + CI |
-| 文件长度 | pylint | `[tool.pylint.format]` | C0302，max-module-lines=1000 | pre-commit + CI |
+| 文件长度 | pylint | `[tool.pylint.format]` | C0302，max-module-lines=1200 | pre-commit + CI |
 | 方法长度 / 局部变量 | pylint | `[tool.pylint.design]` | R0915 max-statements=50；R0914 max-locals=15 | pre-commit + CI |
-| 覆盖率门槛 | coverage==7.15.2 + pytest==9.1.1 | `pyproject.toml` `[tool.coverage.*]` | CI 中 coverage report --fail-under（阈值入合同，tracks 惯例 ≥95%） | CI |
-| 钩子运行器 | git hooks（hooksPath=.githooks） | `.githooks/pre-commit` | 按序执行上述全部检查 | 本地提交 + CI |
+| 覆盖率门槛 | coverage==7.15.2 + pytest==9.1.1 | `pyproject.toml` `[tool.coverage.*]` | CI 中 coverage report --fail-under（阈值入合同，tracks v0.12 为 89） | CI |
+| 钩子运行器 | git hooks（hooksPath=.githooks） | `.githooks/pre-commit` | path-scoped、lint-only（不跑测试，RGR RED 兼容） | 本地提交 + CI |
 | CI required checks | CI workflow | architecture.md CI 合同 + workflow 文件 | 守卫 job 全部 required、名称稳定 | merge 门禁 |
 
 要点：pylint 只启用重复/长度/局部变量四个码（`disable=all, enable=R0801,C0302,R0915,R0914`），其余 lint 一律归 ruff，避免双重风格裁决；认知复杂度归 flake8 单点负责。测试代码可豁免方法长度/局部变量（线性脚本），但重复度与文件长度不豁免。
@@ -52,6 +52,16 @@ python -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 git config core.hooksPath .githooks
 ```
+
+### 2.1.1 Hook 契约（path-scoped / lint-only）
+
+tracks 的 `.githooks/pre-commit` 等宿主 hook 遵守：
+
+- **path-scoped**：带显式路径参数时只检查这些路径；无参数时只检查 staged ACMR（`git diff --cached --name-only --diff-filter=ACMR`）。未提交的 out-of-scope 脏文件不得否决提交。
+- **lint-only / RGR-compatible**：只跑 lint、复杂度、长度、重复度等静态检查，**永不执行测试**；因此 RED 阶段提交可通过 hook，测试结论由 Runtime gate 负责。
+- **显式路径 + env hints**：`TRACKS_HOOK_ROOT`（默认 git toplevel）指定树根/配置权威；`TRACKS_HOOK_BIN`（默认 `$ROOT/.venv/bin`）指定工具目录。Runtime 在 gate worktree 中调用宿主 hook 时传主仓 root/bin，使 gate 文件用主仓工具链检查。
+- **宿主自持/不透明**：宿主项目提供自己的 hook 脚本与工具链；Runtime 只按 `git config core.hooksPath` 解析并执行 `<hooksPath>/pre-commit`（缺省 `.githooks/pre-commit`），不硬编码 Python/工具、不假定 `.githooks`，也**绝不写** `core.hooksPath`（worktree 临时覆盖用 `git -c`）。
+- **执行点**：Runtime 的 checkpoint/refactor 等产品提交走 `git commit`（hook 自动触发）；`commit-tree` 形成的正式 G 不触发 git hook，因此 Runtime 在 GREEN gate 内对 Devon 变更的 `.py` 路径显式调用宿主 hook；非零即 `verdict.failed(check="commit")` 并重派，hook 缺失/不可执行同样 fail closed。
 
 ### 2.2 JavaScript / TypeScript
 

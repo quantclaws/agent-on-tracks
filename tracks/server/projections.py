@@ -10,1807 +10,187 @@ Agent session content (FR-0303). The project-domain docs read models (§1n)
 serve the version tree / docs and the discussion threads; the timeline
 carries the 13-stage display order (§1q).
 
+The implementation is split into cohesive sibling modules:
+``projections_core`` (read-only infrastructure, discovery, evidence chain),
+``projections_docs`` (version/docs/discussion read models),
+``projections_gate`` (awaiting gate, diagnosis, return options),
+``projections_run`` (task/run/overview projections), and
+``projections_timeline`` (timeline assembly and slim mode). This module
+re-exports the complete original import surface; names and payloads are
+unchanged.
+
 Contract token: IF-QUERY-001.
 """
 
 from __future__ import annotations
 
-import base64
-import contextlib
-import json
-import re
-import sqlite3
-import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from tracks import paths
-from tracks.baseline import revision_digest
-from tracks.discuss.gate import adjudication_owner, is_human_owner
-from tracks.discuss.model import iter_comments
-from tracks.discuss.parser import parse_threads
-from tracks.executor.validation_shared import _acc_scan
-from tracks.kernel.events import EventEnvelope, event_envelope_from_row
-from tracks.kernel.machine import State
-from tracks.kernel.machine import project as project_state
-from tracks.kernel.stage_registry import _STAGES, canonical_stage_order
-
-_PAUSE_REQUESTED = "run.pause_requested"
-_PAUSED = "run.paused"
-_TERMINAL_STATUSES = frozenset({"completed", "backlog"})
-_GATE_TYPES = {"local_gate.passed": "passed", "local_gate.failed": "failed"}
-_TEST_RESULT_TYPES = frozenset(
-    {"local_gate.passed", "local_gate.failed", "full.executed", "red.validated", "test.collected"})
-_LATEST_AC_TYPES = ("verdict.passed", "verdict.failed", "red.validated", "test.written")
+from .projections_core import (
+    _CACHE_CAP,
+    _CACHE_LOCK,
+    _EVENTS_CACHE,
+    _LATEST_AC_TYPES,
+    _PAUSE_REQUESTED,
+    _PAUSED,
+    _STATE_CACHE,
+    _TERMINAL_STATUSES,
+    _ac_closed,
+    _ac_evidence,
+    _blobs_home,
+    _cache_get,
+    _cache_put,
+    _chain_rows,
+    _control_state,
+    _event_references,
+    _is_queued,
+    _is_terminal,
+    _json,
+    _latest_result,
+    _layer_of,
+    _lease,
+    _load_payload,
+    _material_revision,
+    _pause_state,
+    _plan_tests,
+    _project_by_id,
+    _project_for_run,
+    _project_from_home,
+    _project_runs,
+    _projects,
+    _registry_acs,
+    _ro,
+    _ROConn,
+    _rows,
+    _rows_retry,
+    _run_events,
+    _run_exists,
+    _run_watermark,
+    _service_db,
+    _state_of,
+    _todo_for,
+    _tracks_db,
+    _wait_spec,
+    project_state,
+)
+from .projections_docs import (
+    _DOC_ORDER,
+    _HOTFIX_VERSION_RE,
+    _STORY_TITLE_RE,
+    _VERSION_RE,
+    DOC_FILES,
+    _editable_run_id,
+    _mtime_iso,
+    _project_versions,
+    _projects_root,
+    _revision_or_none,
+    _thread_awaiting,
+    _thread_json,
+    _version_path,
+    _version_sort_key,
+    _version_story_title,
+    docs_tree_for_project,
+    project_doc_discussions,
+    project_docs_tree,
+    resolve_doc_in_project,
+    resolve_project_doc,
+)
+from .projections_gate import (
+    _AWAIT_RELEASE,
+    _AWAITING_PRIMARY_ACTIONS,
+    _AWAITING_REASON_LABELS,
+    _DIAGNOSIS_ATTEMPTS_MAX,
+    _DIAGNOSIS_CAUSE_BY_CHECK,
+    _DIAGNOSIS_CAUSE_LABELS,
+    _DIAGNOSIS_DIGITS,
+    _DIAGNOSIS_HEX,
+    _DIAGNOSIS_PATH,
+    _DIAGNOSIS_RETURN_CANDIDATES,
+    _DIAGNOSIS_SUGGESTED_ACTIONS,
+    _awaiting_gate,
+    _awaiting_type,
+    _blocked,
+    _current_failure,
+    _diagnosis_agent_advice,
+    _diagnosis_cause,
+    _doc_pending_human_threads,
+    _failure_signature,
+    _gate_diagnosis,
+    _latest_agent_report,
+    _latest_failure_reason,
+    _latest_prism_summary,
+    _new_information_between,
+    _owner_is_human,
+    _pending_human_thread,
+    _prism_guidance_after,
+    _retry_worthiness,
+    _return_options,
+    _run_branch,
+    _RunStoreView,
+    _stage_failure_window,
+    _stage_pending_human_threads,
+)
+from .projections_run import (
+    _GATE_TYPES,
+    _TASK_PROGRESS_EVENTS,
+    _TEST_RESULT_TYPES,
+    _backlog_group,
+    _batch_sort_key,
+    _batch_value,
+    _executions,
+    _extract_passed,
+    _gates,
+    _latest_tests_passed,
+    _overview_run_row,
+    _run_control_state,
+    _task_batches,
+    _task_completed,
+    _task_display,
+    _task_event_state,
+    _task_events,
+    _task_failed,
+    _task_log_ref,
+    _task_progress,
+    _task_role,
+    _task_row,
+    project_ac_chain,
+    project_executions,
+    project_overview,
+    project_run_detail,
+    project_todos,
+)
+from .projections_timeline import (
+    _SLIM_COMMAND_PARAM_KEYS,
+    _SLIM_EXCLUDED_SERVICE_TYPES,
+    _SLIM_KEYS,
+    _SLIM_MAX_ROWS,
+    _SLIM_REF_TYPES,
+    _after_cursor,
+    _cursor_of,
+    _event_ac_refs,
+    _filter_timeline,
+    _full_track_rows,
+    _keep_keys,
+    _service_timeline_rows,
+    _slim_command,
+    _slim_inline_row,
+    _slim_payload,
+    _slim_ref_row,
+    _slim_row,
+    _slim_track_row,
+    _slim_track_rows,
+    _stage_order,
+    _timeline_rows,
+    _timeline_sort_key,
+    _track_timeline_rows,
+    project_timeline,
+)
 
 _CONFIG_DEFAULTS: dict[str, Any] = {
     "wait_initial_s": 60, "wait_cap_s": 900, "poll_interval_s": 5, "poll_idle_cap_s": 60,
     "lease_ttl_s": 30, "version": "v0.9",
 }
-
-# Project-domain doc read model (§1n.4): the six-piece closed set with
-# `design` kept as the architecture alias; shared with the write face.
-DOC_FILES = {"story": "story.md", "spec": "spec.md", "acceptance": "acceptance.md",
-    "architecture": "architecture.md", "interfaces": "interfaces.md", "test-plan": "test-plan.md",
-    "design": "architecture.md",}
-_DOC_ORDER = ("story", "spec", "acceptance", "architecture", "interfaces", "test-plan")
-_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)$")
-_HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-(\d+)$")
-
-
-# -- read-only connection helpers -------------------------------------------
-
-
-class _ROConn(sqlite3.Connection):
-    """Read-only connection remembering its database path (race retry)."""
-
-    trac_path: str
-
-
-def _ro(path: Path) -> sqlite3.Connection | None:
-    if not path.exists():
-        return None
-    # A quiescent WAL database (neither -wal nor -shm beside it — clean
-    # close, no live writer) opens immutable: the main file already holds
-    # every committed frame, so the snapshot is exact and the read leaves
-    # zero filesystem artifacts under the repo (a plain mode=ro connection
-    # to a WAL database materializes -shm/-wal sidecars it can never clean
-    # up). Live databases — the serve with its writer connected — always
-    # carry the sidecars and keep the ordinary read-only open.
-    wal = path.parent / (path.name + "-wal")
-    shm = path.parent / (path.name + "-shm")
-    conn: _ROConn
-    if not wal.exists() and not shm.exists():
-        try:
-            conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True,factory=_ROConn)
-        except sqlite3.Error:
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, factory=_ROConn)
-    else:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, factory=_ROConn)
-    conn.trac_path = str(path)
-    return conn
-
-
-def _service_db(home: Path) -> sqlite3.Connection | None:
-    return _ro(Path(home) / "service.db")
-
-
-def _tracks_db(repo_path: str) -> sqlite3.Connection | None:
-    return _ro(Path(repo_path) / ".tracks" / "runtime" / "tracks.db")
-
-
-def _blobs_home(repo_path: str) -> Path:
-    return Path(repo_path) / ".tracks" / "runtime" / "blobs"
-
-
-def _rows(conn: sqlite3.Connection | None, sql: str, args: tuple = ()) -> list[tuple]:
-    if conn is None:
-        return []
-    try:
-        return conn.execute(sql, args).fetchall()
-    except sqlite3.Error as exc:
-        return _rows_retry(conn, exc, sql, args)
-
-
-def _rows_retry(
-    conn: sqlite3.Connection, exc: sqlite3.Error, sql: str, args: tuple
-) -> list[tuple]:
-    """T-008 read-hardening: a quiescent ``immutable=1`` snapshot can race a
-    live writer (torn read), and a run plane read inside its creation window
-    (file created, schema commit in flight) answers ``no such table`` even
-    over the plain open. Retry once over a fresh plain connection (which
-    sees the live WAL); a still-missing table is the no-rows case — the same
-    semantic a not-yet-existing database file already has. Else re-raise."""
-    if not isinstance(exc, sqlite3.OperationalError) or "no such table" not in str(exc):
-        path = getattr(conn, "trac_path", None)
-        if not path:
-            raise
-        with contextlib.closing(
-            sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        ) as fresh:
-            try:
-                return fresh.execute(sql, args).fetchall()
-            except sqlite3.OperationalError as retry_exc:
-                if "no such table" not in str(retry_exc):
-                    raise
-    return []
-
-
-def _json(raw: object) -> Any:
-    if raw is None:
-        return {}
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-
-
-def _load_payload(raw: object, repo_path: str) -> dict:
-    payload = _json(raw)
-    if isinstance(payload, dict) and set(payload) == {"$ref"}:
-        blob = _blobs_home(repo_path) / str(payload["$ref"])
-        try:
-            return json.loads(blob.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-# -- per-run event/state caches (#225) ----------------------------------------
-#
-# Events are append-only with a monotonic per-run ``seq``, so ``MAX(seq)`` is
-# a sound watermark: unchanged watermark means an already-built envelope list
-# / folded State is still current. One cheap indexed scalar query per run per
-# request replaces the multi-hundred-ms full replay (blob reads + json.loads)
-# the overview/todo/detail projections used to pay on every request. The
-# capacity cap bounds memory; entries beyond it age out oldest-first.
-
-_CACHE_CAP = 64
-_CACHE_LOCK = threading.Lock()
-_EVENTS_CACHE: dict[tuple[str, str], tuple[Any, list[EventEnvelope]]] = {}
-_STATE_CACHE: dict[tuple[str, str], tuple[Any, State]] = {}
-
-
-def _cache_put(cache: dict, key: tuple[str, str], value: tuple) -> None:
-    with _CACHE_LOCK:
-        if key in cache:
-            del cache[key]
-        cache[key] = value
-        while len(cache) > _CACHE_CAP:
-            del cache[next(iter(cache))]
-
-
-def _cache_get(cache: dict, key: tuple[str, str]) -> tuple | None:
-    with _CACHE_LOCK:
-        return cache.get(key)
-
-
-def _run_watermark(repo_path: str, run_id: str) -> Any:
-    """The run's current event watermark (``MAX(seq)``); None = no events."""
-    conn = _tracks_db(repo_path)
-    try:
-        rows = _rows(conn, "SELECT MAX(seq) FROM events WHERE run_id = ?", (run_id,))
-    finally:
-        if conn is not None:
-            conn.close()
-    return rows[0][0] if rows else None
-
-
-def _run_events(repo_path: str, run_id: str) -> list[EventEnvelope]:
-    cached = _cache_get(_EVENTS_CACHE, (repo_path, run_id))
-    watermark = _run_watermark(repo_path, run_id)
-    if cached is not None and watermark is not None and cached[0] == watermark:
-        return cached[1]
-    conn = _tracks_db(repo_path)
-    try:
-        rows = _rows(conn,
-            "SELECT run_id, seq, ts, version, type, schema_version, command_id, task_id, payload "
-                "FROM events WHERE run_id = ? ORDER BY seq",
-            (run_id,))
-    finally:
-        if conn is not None:
-            conn.close()
-    events = [event_envelope_from_row(row, _load_payload(row[8], repo_path)) for row in rows]
-    _cache_put(_EVENTS_CACHE, (repo_path, run_id), (rows[-1][1] if rows else 0, events))
-    return events
-
-
-def _state_of(repo_path: str, run_id: str) -> State:
-    cached = _cache_get(_STATE_CACHE, (repo_path, run_id))
-    watermark = _run_watermark(repo_path, run_id)
-    if cached is not None and watermark is not None and cached[0] == watermark:
-        return cached[1]
-    state = project_state(_run_events(repo_path, run_id))
-    _cache_put(_STATE_CACHE, (repo_path, run_id), (watermark or 0, state))
-    return state
-
-
-# -- project / run discovery ------------------------------------------------
-
-
-def _projects(conn: sqlite3.Connection | None) -> list[dict]:
-    return [
-        {
-            "project_id": row[0], "repo_path": row[1], "version": row[2]
-        } for row in _rows(conn, "SELECT project_id, repo_path, version FROM projects")]
-
-
-def _project_by_id(conn: sqlite3.Connection | None, project_id: str | None) -> dict | None:
-    if project_id is None:
-        return None
-    for project in _projects(conn):
-        if project["project_id"] == project_id:
-            return project
-    return None
-
-
-def _project_from_home(home: Path, project_id: str) -> dict | None:
-    """Registered project by id over a short-lived read-only connection."""
-    conn = _service_db(home)
-    try:
-        return _project_by_id(conn, project_id)
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _project_for_run(conn: sqlite3.Connection | None, run_id: str) -> dict | None:
-    rows = _rows(conn, "SELECT project_id FROM commands WHERE run_id = ? LIMIT 1", (run_id,))
-    if rows:
-        found = _project_by_id(conn, rows[0][0])
-        if found is not None:
-            return found
-    rows = _rows(conn, "SELECT project_id FROM service_events WHERE run_id = ? LIMIT 1", (run_id,))
-    if rows:
-        found = _project_by_id(conn, rows[0][0])
-        if found is not None:
-            return found
-    for project in _projects(conn):
-        if _run_exists(project["repo_path"], run_id):
-            return project
-    return None
-
-
-def _run_exists(repo_path: str, run_id: str) -> bool:
-    conn = _tracks_db(repo_path)
-    try:
-        return bool(_rows(conn, "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1", (run_id,)))
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _project_runs(repo_path: str) -> list[dict]:
-    conn = _tracks_db(repo_path)
-    try:
-        rows = _rows(conn,
-            "SELECT run_id, version, status, stage, substate, awaiting, updated_ts FROM runs "
-                "ORDER BY updated_ts")
-    finally:
-        if conn is not None:
-            conn.close()
-    return [
-        {
-            "run_id": row[0], "version": row[1], "status": row[2], "stage": row[3],
-            "substate": row[4], "awaiting": row[5], "updated_ts": row[6],
-        } for row in rows]
-
-
-# -- registry / plan documents ---------------------------------------------
-
-
-def _registry_acs(repo_path: str, version: str | None) -> list[str]:
-    if not version:
-        return []
-    target = Path(repo_path) / ".tracks" / "projects" / version / "acceptance.md"
-    if not target.exists():
-        return []
-    try:
-        _, acs = _acc_scan(target.read_text(encoding="utf-8"))
-    except OSError:
-        return []
-    return [ac_id for ac_id, *_ in acs]
-
-
-def _plan_tests(repo_path: str, version: str | None) -> dict[str, list[str]]:
-    if not version:
-        return {}
-    target = Path(repo_path) / ".tracks" / "projects" / version / "tasks.json"
-    if not target.exists():
-        return {}
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    mapping: dict[str, list[str]] = {}
-    for task in data.get("tasks", []) if isinstance(data, dict) else []:
-        for entry in task.get("test_tasks", []) if isinstance(task, dict) else []:
-            ac_id = entry.get("ac_id")
-            if not isinstance(ac_id, str):
-                continue
-            anchors = [ref for ref in entry.get("anchors", []) if isinstance(ref, str)]
-            mapping.setdefault(ac_id, []).extend(anchors)
-    return mapping
-
-
-def _layer_of(nodes: list[str]) -> str:
-    for node in nodes:
-        for layer in ("integration", "e2e", "unit"):
-            if node.startswith(f"tests/{layer}/"):
-                return layer
-    return ""
-
-
-# -- evidence chain ---------------------------------------------------------
-
-
-def _ac_evidence(events: list[EventEnvelope], nodes: list[str]) -> list[dict]:
-    evidence = []
-    for node in nodes:
-        status = "missing"
-        for event in events:
-            if not _event_references(event, node):
-                continue
-            if event.type == "verdict.failed":
-                status = "stale"
-            elif event.type == "verdict.passed":
-                status = "ok"
-            elif event.type == "prism.verdict":
-                status = "unreviewed"
-        evidence.append({"ref": node, "status": status})
-    return evidence
-
-
-def _event_references(event: EventEnvelope, node: str) -> bool:
-    payload = event.payload or {}
-    for key in ("node", "test_id", "ref"):
-        if payload.get(key) == node:
-            return True
-    for key in ("nodes", "test_nodes", "failed_nodes"):
-        values = payload.get(key)
-        if isinstance(values, list) and node in values:
-            return True
-    return False
-
-
-def _latest_result(evidence: list[dict]) -> str | None:
-    statuses = {item["status"] for item in evidence}
-    if "ok" in statuses:
-        return "passed"
-    if statuses & {"stale", "unreviewed"}:
-        return "failed"
-    return None
-
-
-def _chain_rows(repo_path: str, version: str | None, run_id: str) -> list[dict]:
-    events = _run_events(repo_path, run_id)
-    state = project_state(events)
-    tests = _plan_tests(repo_path, version)
-    chain = []
-    for ac_id in _registry_acs(repo_path, version):
-        nodes = list(tests.get(ac_id, []))
-        evidence = _ac_evidence(events, nodes)
-        chain.append(
-            {
-                "ac_id": ac_id, "layer": _layer_of(nodes), "test_nodes": nodes,
-                "latest_result": _latest_result(evidence), "candidate_sha": state.candidate_sha,
-                "evidence": evidence,
-            })
-    return chain
-
-
-def _ac_closed(chain: list[dict]) -> int:
-    return sum(1 for row in chain if any(item["status"] == "ok" for item in row["evidence"]))
-
-
-# -- progress / execution helpers ------------------------------------------
-
-
-def _extract_passed(payload: dict) -> int | None:
-    value = payload.get("passed")
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    summary = (payload.get("normalized_result") or {}).get("summary")
-    if isinstance(summary, dict):
-        inner = summary.get("passed")
-        if isinstance(inner, int) and not isinstance(inner, bool):
-            return inner
-    return None
-
-
-def _latest_tests_passed(events: list[EventEnvelope]) -> int | None:
-    for event in reversed(events):
-        if event.type not in _TEST_RESULT_TYPES:
-            continue
-        found = _extract_passed(event.payload or {})
-        if found is not None:
-            return found
-    return None
-
-
-_TASK_PROGRESS_EVENTS = frozenset(
-    {"taskgraph.committed", "task.started", "task.completed", "verdict.failed"}
-)
-
-
-def _batch_value(raw: Any) -> int | str | None:
-    """Normalize a tasks.json batch to its sortable display value."""
-    if isinstance(raw, bool) or raw is None:
-        return None
-    if isinstance(raw, int):
-        return raw
-    if isinstance(raw, float) and raw.is_integer():
-        return int(raw)
-    text = str(raw).strip()
-    if not text:
-        return None
-    try:
-        return int(text)
-    except ValueError:
-        return text
-
-
-def _batch_sort_key(batch: int | str | None) -> tuple[int, int, str]:
-    if isinstance(batch, int):
-        return (0, batch, "")
-    return (1, 0, "" if batch is None else str(batch))
-
-
-def _task_display(raw: dict) -> tuple[str, bool]:
-    """Display title + verification-only marker from a raw tasks.json task."""
-    title = raw.get("title")
-    description = raw.get("description")
-    source = title if isinstance(title, str) and title.strip() else description
-    verification_only = bool(raw.get("verification_only"))
-    for value in (title, description):
-        if isinstance(value, str) and re.match(
-            r"^\s*(?:【)?verification-only\b", value
-        ):
-            verification_only = True
-    if not isinstance(source, str):
-        return "", verification_only
-    first_line = source.splitlines()[0] if source.splitlines() else ""
-    text = " ".join(first_line.split())
-    text = re.sub(r"^verification-only\s+", "", text)
-    text = re.sub(r"^【verification-only[^】]*】\s*", "", text)
-    return text[:60], verification_only
-
-
-def _task_completed(events: list[EventEnvelope]) -> tuple[int, set[str]]:
-    graph_event = next(
-        (event for event in reversed(events) if event.type == "taskgraph.committed"),
-        None,
-    )
-    graph_seq = graph_event.seq if graph_event is not None else 0
-    completed = {
-        event.payload.get("task_id") or event.task_id
-        for event in events
-        if event.type == "task.completed" and event.seq > graph_seq
-    }
-    completed = {task_id for task_id in completed if isinstance(task_id, str) and task_id}
-    if graph_event is not None:
-        retained = (graph_event.payload or {}).get("retained_completed_task_ids")
-        if isinstance(retained, list):
-            completed.update(
-                task_id for task_id in retained
-                if isinstance(task_id, str) and task_id
-            )
-    return graph_seq, completed
-
-
-def _task_event_state(events: list[EventEnvelope]) -> dict[str, Any]:
-    """Derive the current generation's completions, starts, failures, running."""
-    graph_seq, completed = _task_completed(events)
-    starts: dict[str, int] = {}
-    failures: dict[str, int] = {}
-    for event in events:
-        if event.seq <= graph_seq:
-            continue
-        task_id = (event.payload or {}).get("task_id") or event.task_id
-        if not isinstance(task_id, str) or not task_id:
-            continue
-        if event.type == "task.started":
-            starts[task_id] = event.seq
-        elif event.type == "verdict.failed":
-            failures[task_id] = event.seq
-
-    running = None
-    for task_id, _seq in sorted(starts.items(), key=lambda item: item[1], reverse=True):
-        if task_id not in completed:
-            running = task_id
-            break
-
-    return {
-        "completed": completed,
-        "starts": starts,
-        "failures": failures,
-        "running": running,
-    }
-
-
-def _task_row(raw: dict, event_state: dict[str, Any], state: State) -> dict:
-    task_id = raw["task_id"]
-    if task_id in event_state["completed"]:
-        task_state = "done"
-    elif event_state["failures"].get(task_id, 0) > event_state["starts"].get(task_id, 0):
-        task_state = "failed"
-    elif task_id == event_state["running"]:
-        task_state = "running"
-    else:
-        task_state = "pending"
-    phase = (
-        state.substate
-        if task_state == "running" and state.stage == "M-IMPL"
-        else None
-    )
-    title, verification_only = _task_display(raw)
-    raw_depends = raw.get("depends_on")
-    depends_on = (
-        [dep for dep in raw_depends if isinstance(dep, str)]
-        if isinstance(raw_depends, list)
-        else []
-    )
-    row = {
-        "task_id": task_id, "title": title, "state": task_state,
-        "phase": phase, "depends_on": depends_on,
-    }
-    if verification_only:
-        row["verification_only"] = True
-    return row
-
-
-def _task_batches(
-    tasks: list[dict], event_state: dict[str, Any], state: State
-) -> dict[str, Any]:
-    groups: dict[int | str | None, list[dict]] = {}
-    task_batches: dict[str, int | str | None] = {}
-    order: list[int | str | None] = []
-    for raw in tasks:
-        task_id = raw["task_id"]
-        batch = _batch_value(raw.get("batch"))
-        task_batches[task_id] = batch
-        if batch not in groups:
-            groups[batch] = []
-            order.append(batch)
-        groups[batch].append(_task_row(raw, event_state, state))
-
-    batches_detail = [
-        {"batch": batch, "tasks": groups[batch]}
-        for batch in sorted(order, key=_batch_sort_key)
-    ]
-    running = event_state["running"]
-    current_batch = task_batches.get(running) if running else None
-    if running is None:
-        upcoming = next(
-            (row["task_id"] for group in batches_detail for row in group["tasks"]
-             if row["state"] != "done"),
-            None,
-        )
-        current_batch = task_batches.get(upcoming) if upcoming else (
-            order[-1] if order else None
-        )
-    return {
-        "groups": groups,
-        "batches_detail": batches_detail,
-        "current_batch": current_batch,
-    }
-
-
-def _task_progress(
-    repo_path: str, version: str | None, state: State, events: list[EventEnvelope]
-) -> dict | None:
-    """Orthogonal work-unit progress for the M-IMPL stage card.
-
-    The phase pipeline stays the state diagram; this block reports the
-    batches/tasks axis read from ``tasks.json`` plus the current generation's
-    completion/start/failure events. Missing or malformed inputs degrade to
-    ``None`` rather than inventing a task graph.
-    """
-    if not version:
-        return None
-    target = Path(repo_path) / ".tracks" / "projects" / version / "tasks.json"
-    if not target.exists():
-        return None
-    has_task_events = any(event.type in _TASK_PROGRESS_EVENTS for event in events)
-    if state.stage != "M-IMPL" and not has_task_events:
-        return None
-    try:
-        data = json.loads(target.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    raw_tasks = data.get("tasks") if isinstance(data, dict) else None
-    if not isinstance(raw_tasks, list):
-        return None
-    tasks = [
-        task for task in raw_tasks
-        if isinstance(task, dict) and isinstance(task.get("task_id"), str) and task["task_id"]
-    ]
-    if not tasks:
-        return None
-
-    event_state = _task_event_state(events)
-    batches = _task_batches(tasks, event_state, state)
-    return {
-        "done": sum(
-            1 for task in tasks if task["task_id"] in event_state["completed"]
-        ),
-        "total": len(tasks),
-        "batch": batches["current_batch"],
-        "batches": len(batches["groups"]),
-        "current_task_id": event_state["running"],
-        "current_phase": state.substate if state.stage == "M-IMPL" else None,
-        "batches_detail": batches["batches_detail"],
-    }
-
-
-def _gates(events: list[EventEnvelope]) -> list[dict]:
-    gates = []
-    for event in events:
-        status = _GATE_TYPES.get(event.type)
-        if status is None:
-            continue
-        payload = event.payload or {}
-        name = payload.get("gate") or payload.get("gate_id") or event.type
-        gates.append({"name": str(name), "status": status})
-    return gates
-
-
-def _executions(events: list[EventEnvelope]) -> list[dict]:
-    started: list[str] = []
-    for event in events:
-        if event.type == "task.started":
-            task_id = event.payload.get("task_id") or event.task_id
-            if isinstance(task_id, str) and task_id and task_id not in started:
-                started.append(task_id)
-    completed = {event.payload.get("task_id") for event in events if event.type == "task.completed"}
-    executions = []
-    for task_id in started:
-        if task_id in completed:
-            continue
-        executions.append(
-            {
-                "role": _task_role(events, task_id), "task_id": task_id,
-                "state": "failed" if _task_failed(events, task_id) else "executing",
-                "log_ref": _task_log_ref(events, task_id),
-            })
-    return executions
-
-
-def _task_events(events: list[EventEnvelope], task_id: str) -> list[EventEnvelope]:
-    return [
-        event for event in events if (
-            event.payload or {}
-        ).get("task_id") == task_id or event.task_id == task_id]
-
-
-def _task_role(events: list[EventEnvelope], task_id: str) -> str:
-    for event in reversed(_task_events(events, task_id)):
-        role = (event.payload or {}).get("role")
-        if event.type == "outcome.received" and isinstance(role, str):
-            return role
-    return ""
-
-
-def _task_failed(events: list[EventEnvelope], task_id: str) -> bool:
-    return any(event.type == "verdict.failed" for event in _task_events(events, task_id))
-
-
-def _task_log_ref(events: list[EventEnvelope], task_id: str) -> str:
-    for event in reversed(_task_events(events, task_id)):
-        log_ref = (event.payload or {}).get("log_ref")
-        if isinstance(log_ref, str) and log_ref:
-            return log_ref
-    return ""
-
-
-# -- service-plane state ----------------------------------------------------
-
-
-def _pause_state(
-    conn: sqlite3.Connection | None, run_id: str
-) -> tuple[dict, str | None]:
-    rows = _rows(conn,
-        "SELECT type FROM service_events WHERE run_id = ? AND type IN (?, ?) "
-            "ORDER BY seq DESC LIMIT 1",
-        (run_id, _PAUSE_REQUESTED, _PAUSED))
-    if not rows:
-        return {"requested": False, "effective": False}, None
-    if rows[0][0] == _PAUSED:
-        return {"requested": False, "effective": True}, "已暂停"
-    return {"requested": True, "effective": False}, "暂停请求已接收"
-
-
-def _wait_spec(conn: sqlite3.Connection | None, run_id: str) -> dict | None:
-    rows = _rows(conn,
-        "SELECT wait_class, reason, retry_at, known_reset, backoff_json FROM waits "
-            "WHERE run_id = ?",
-        (run_id,))
-    if not rows:
-        return None
-    wait_class, reason, retry_at, known_reset, backoff_json = rows[0]
-    return {"wait_class": wait_class, "reason": reason, "retry_at": retry_at,
-        "known_reset": bool(known_reset), "backoff": _json(backoff_json) if backoff_json else None,}
-
-
-def _lease(conn: sqlite3.Connection | None, run_id: str) -> dict:
-    rows = _rows(conn, "SELECT generation, worker_id FROM leases WHERE run_id = ?", (run_id,))
-    if not rows:
-        return {"generation": 0, "worker_id": ""}
-    return {"generation": int(rows[0][0] or 0), "worker_id": rows[0][1] or ""}
-
-
-def _is_queued(conn: sqlite3.Connection | None, run_id: str) -> bool:
-    rows = _rows(conn, "SELECT active_run, queue_json FROM schedule WHERE id = 1")
-    if not rows:
-        return False
-    active_run, queue_json = rows[0]
-    if active_run == run_id:
-        return False
-    queue = _json(queue_json) if queue_json else []
-    return isinstance(queue, list) and run_id in queue
-
-
-def _is_terminal(state: State, events: list[EventEnvelope]) -> bool:
-    if state.status in _TERMINAL_STATUSES:
-        return True
-    return any(event.type in ("run.completed", "run.interrupted") for event in events)
-
-
-def _control_state(
-    state: State, events: list[EventEnvelope], pause_label: str | None, wait: dict | None,
-    queued: bool,
-) -> str:
-    if pause_label is not None:
-        return pause_label
-    if wait is not None:
-        return "等待外部"
-    if state.awaiting or state.substate == "AWAITING_RELEASE":
-        return "等待人工"
-    if queued:
-        return "排队中"
-    if _is_terminal(state, events):
-        return "终态"
-    return "推进中"
-
-
-# -- v0.11 awaiting gate + return options (§1k/§1m) ---------------------------
-
-# §1k.2 type -> primary_action closed mapping (映射外无入口). The
-# AWAIT_RELEASE member is the M-RELEASE substate-shaped gate.
-_AWAIT_RELEASE = "AWAIT_RELEASE"
-_AWAITING_PRIMARY_ACTIONS = {"triage": "triage", "review": "review",
-    "review_pending_threads": "review", "approval": "approve", "escalation": "retry",
-    "rollback": "return", "hotfix_triage": "guidance",}
-_AWAITING_REASON_LABELS = {_AWAIT_RELEASE: "发布三择一决策（release / delay / return）",
-    "triage": "story triage 裁决（go / no-go / park）",
-    "review": "文档阶段评审（comment / no-comment）",
-    "review_pending_threads": "挂起线程恢复重评（comment / no-comment）",
-    "approval": "批准基线（approve / revise）",
-    "escalation": "失败升级处置（retry / return）",
-    "rollback": "回滚目标确认（approve 选定目标）",
-    "hotfix_triage": "hotfix 锚定人工处置（owning surface 指引）",}
-
-
-def _awaiting_type(state: State) -> str | None:
-    """The §1k.1 gate type: the M-RELEASE gate substate maps onto the
-    AWAIT_RELEASE type, else a closed awaiting member; None when the run
-    awaits nothing."""
-    if state.substate == "AWAITING_RELEASE":
-        return _AWAIT_RELEASE
-    return state.awaiting if state.awaiting in _AWAITING_PRIMARY_ACTIONS else None
-
-
-def _run_branch(state: State) -> str | None:
-    """The run's git branch identity (hotfix runs live on ``fix/{issue}``,
-    IF-HOTFIX-006): projected run-plane state, no new data source. None for
-    non-hotfix runs (the Releases registry owns their release-branch face)."""
-    if state.hotfix_issue is not None:
-        return f"fix/{state.hotfix_issue}"
-    return None
-
-
-# -- OOB gate diagnosis (decision brief) -------------------------------------
-
-_DIAGNOSIS_ATTEMPTS_MAX = 3
-_DIAGNOSIS_CAUSE_BY_CHECK = {
-    "island": "plan", "plan_defect": "plan", "test_tasks": "plan",
-    "taskgraph": "plan", "scope": "plan",
-    "test_defect": "test", "full_suite": "test", "red_defect": "test",
-    "red_invalid": "test", "collection": "test", "anchor_static": "test",
-    "impl_defect": "implementation",
-    "stub_gap": "design", "baseline_defect": "design",
-    "public_interface": "design",
-    "ac_gap": "acceptance",
-    "spec_gap": "spec",
-    "contract_error": "runtime", "collect_defect": "runtime",
-    "test_freeze_contamination": "runtime",
-    "reply_format_error": "runtime", "manifest_malformed": "runtime",
-    "evidence_malformed": "runtime", "worktree": "runtime",
-    "publish_error": "runtime", "diagnose_contract_violation": "runtime",
-    "lineage": "process", "trace": "process", "commit": "process",
-}
-_DIAGNOSIS_CAUSE_LABELS = {
-    "plan": "实现计划未通过校验",
-    "test": "测试资产或测试执行未通过",
-    "implementation": "实现未满足已定义的测试",
-    "design": "设计缺失或设计不可行",
-    "acceptance": "验收标准需要修改",
-    "spec": "规格需要修改",
-    "runtime": "运行环境或采集流程的问题",
-    "process": "阶段流程校验未通过",
-    "unknown": "本阶段校验未通过",
-}
-_DIAGNOSIS_SUGGESTED_ACTIONS = {
-    "plan": "replan", "test": "return_m_test", "implementation": "retry",
-    "design": "redesign", "acceptance": "return_m_test", "spec": "return_m_test",
-    "runtime": "retry", "process": "retry", "unknown": "unknown",
-}
-_DIAGNOSIS_RETURN_CANDIDATES = {
-    "plan": ["M-DESIGN"], "test": ["M-TEST"], "implementation": ["M-DESIGN"],
-    "design": ["M-DESIGN"], "acceptance": ["M-ACC"], "spec": ["M-SPEC"],
-    "runtime": [], "process": ["M-DESIGN"], "unknown": [],
-}
-_DIAGNOSIS_DIGITS = re.compile(r"\d+")
-_DIAGNOSIS_HEX = re.compile(r"\b[0-9a-fA-F]{7,40}\b")
-_DIAGNOSIS_PATH = re.compile(r"(?:/[\w.\-]+)+")
-
-
-def _diagnosis_cause(check: object) -> str:
-    """Map a verdict check onto the closed coarse-cause set."""
-    return _DIAGNOSIS_CAUSE_BY_CHECK.get(str(check or ""), "unknown")
-
-
-def _failure_signature(payload: dict) -> str:
-    """check + reason with digits/ids/paths normalized away."""
-    payload = payload if isinstance(payload, dict) else {}
-    reason = str(payload.get("reason") or "")
-    reason = _DIAGNOSIS_PATH.sub("<path>", reason)
-    reason = _DIAGNOSIS_HEX.sub("<sha>", reason)
-    reason = _DIAGNOSIS_DIGITS.sub("#", reason)
-    return f"{payload.get('check') or ''}\n{reason}"
-
-
-def _stage_failure_window(
-    events: list[EventEnvelope], stage: str | None,
-) -> list[tuple[int, EventEnvelope]]:
-    """Failures after the last ``stage.entered`` for the current stage."""
-    start = -1
-    for index, event in enumerate(events):
-        payload = event.payload or {}
-        if event.type == "stage.entered" and str(payload.get("stage") or "") == str(stage or ""):
-            start = index
-    window = events[start + 1:] if start >= 0 else events
-    offset = start + 1 if start >= 0 else 0
-    return [
-        (index + offset, event) for index, event in enumerate(window)
-        if event.type == "verdict.failed"
-    ]
-
-
-def _new_information_between(
-    events: list[EventEnvelope], earlier_index: int, earlier: dict, later_index: int,
-) -> str | None:
-    """What genuinely NEW information arrived between two same-check failures.
-
-    Only two sources count as new information:
-
-    - a reviewer verdict that carries findings (``prism.verdict`` with
-      ``findings``/``review_summary``) -- e.g. Prism spotted a small bug, so
-      the next attempt has something to fix;
-    - a failure whose SIGNATURE differs from the previous one -- the failure
-      itself changed shape.
-
-    The agent's own per-round commits (``result.checkpointed`` /
-    ``test.written``) do NOT count: a fresh sha is what "try again" PRODUCES,
-    so treating it as new information would make every repeated attempt look
-    like progress and would always recommend retrying a non-converging loop.
-    """
-    previous_signature = _failure_signature(earlier)
-    for event in events[earlier_index + 1:later_index]:
-        payload = event.payload or {}
-        if event.type == "prism.verdict":
-            if payload.get("findings") or payload.get("review_summary"):
-                return "prism"
-        elif (
-            event.type == "verdict.failed"
-            and _failure_signature(payload) != previous_signature
-        ):
-            return "verdict"
-    return None
-
-
-def _prism_guidance_after(events: list[EventEnvelope], index: int) -> bool:
-    """A reviewer verdict with findings/summary arrived after ``index``."""
-    for event in events[index + 1:]:
-        if event.type != "prism.verdict":
-            continue
-        payload = event.payload or {}
-        if payload.get("findings") or payload.get("review_summary"):
-            return True
-    return False
-
-
-def _retry_worthiness(
-    failures: list[tuple[int, EventEnvelope]], events: list[EventEnvelope],
-) -> tuple[bool, str]:
-    """Convergence judgement over same-check failures in the current stage."""
-    if not failures:
-        return False, "本轮尚无失败记录，无法判断重试是否会有不同"
-    latest_index, _latest_event = failures[-1]
-    if _prism_guidance_after(events, latest_index):
-        return True, "上一轮评审发现了新问题，重试有可能不同"
-    if len(failures) == 1:
-        return True, "首次失败，重试可能得到不同结果"
-    later_index, later_event = failures[-1]
-    earlier_index, earlier_event = failures[-2]
-    later_signature = _failure_signature(later_event.payload or {})
-    earlier_signature = _failure_signature(earlier_event.payload or {})
-    if later_signature != earlier_signature:
-        return True, "失败原因已变化，重试有可能不同"
-    new_information = _new_information_between(
-        events, earlier_index, earlier_event.payload or {}, later_index)
-    if new_information is not None:
-        if new_information == "prism":
-            return True, "上一轮评审发现了新问题，重试有可能不同"
-        return True, "两轮失败之间出现了新信息，重试有可能不同"
-    consecutive = 1
-    for _index, event in reversed(failures[:-1]):
-        if _failure_signature(event.payload or {}) != later_signature:
-            break
-        consecutive += 1
-    return False, f"连续 {consecutive} 次同一失败签名且无新信息，重试不会不同"
-
-
-def _diagnosis_agent_advice(events: list[EventEnvelope], repo_path: str | None) -> str:
-    """Reviewer guidance, else the latest failure reason, else the agent report."""
-    for event in reversed(events):
-        if event.type != "prism.verdict":
-            continue
-        summary = (event.payload or {}).get("review_summary")
-        if isinstance(summary, str) and summary.strip():
-            return summary.strip()
-    for event in reversed(events):
-        if event.type != "verdict.failed":
-            continue
-        reason = (event.payload or {}).get("reason")
-        if isinstance(reason, str) and reason.strip():
-            return reason.strip()
-    for event in reversed(events):
-        if event.type != "outcome.received":
-            continue
-        report = (event.payload or {}).get("self_report")
-        if isinstance(report, str) and report.strip():
-            return report.strip()
-    return ""
-
-
-def _gate_diagnosis(
-    events: list[EventEnvelope], state: State, repo_path: str | None,
-) -> dict:
-    """The additive ``awaiting_gate.diagnosis`` decision brief."""
-    latest_failure = None
-    for event in reversed(events):
-        if event.type == "verdict.failed":
-            latest_failure = event.payload or {}
-            break
-    check = (latest_failure or {}).get("check")
-    cause = _diagnosis_cause(check)
-    same_check = [
-        (index, event) for index, event in _stage_failure_window(events, state.stage)
-        if str((event.payload or {}).get("check") or "") == str(check or "")
-    ]
-    retry_worthy, retry_reason = _retry_worthiness(same_check, events)
-    attempts = max(int(state.current_attempt or 0), len(same_check))
-    return {
-        "cause": cause,
-        "cause_label": _DIAGNOSIS_CAUSE_LABELS[cause],
-        "attempts": attempts,
-        "attempts_max": _DIAGNOSIS_ATTEMPTS_MAX,
-        "retry_worthy": retry_worthy,
-        "retry_reason": retry_reason,
-        "agent_advice": _diagnosis_agent_advice(events, repo_path),
-        "suggested_action": _DIAGNOSIS_SUGGESTED_ACTIONS[cause],
-        "return_candidates": list(_DIAGNOSIS_RETURN_CANDIDATES[cause]),
-    }
-
-
-def _owner_is_human(owner: str, repo_path: str | None) -> bool:
-    """根评论 adjudication owner 是否为人类（单一来源）.
-
-    直接调用共享 ``tracks.discuss.gate.is_human_owner``（内部解析
-    auth display_name → git user.name → "Human"，带缓存）。
-    """
-    return bool(is_human_owner(owner, repo_path))
-
-
-def _pending_human_thread(text: str, thread: Any, repo_path: str | None) -> dict | None:
-    """一个线程归 Human 待答时返回 ``{thread_id, snippet}``，否则 None（只读）.
-
-    unresolved 判定 + ``adjudication_owner``（根评论唯一 @mention）判定；
-    解析失败不抛出，返回 None。
-    """
-    try:
-        if thread.status == "resolved":
-            return None
-        owner = adjudication_owner(text, thread.thread_id)
-    except Exception:
-        return None
-    if owner is None or not _owner_is_human(owner, repo_path):
-        return None
-    snippet = thread.snippet or (thread.root_text or "").strip()
-    return {"thread_id": thread.thread_id, "snippet": snippet}
-
-
-def _doc_pending_human_threads(doc_file: Path, repo_path: str | None) -> list[dict]:
-    """一个文档中归 Human 的 unresolved 线程（只读；缺失/解析失败 → []）."""
-    try:
-        text = doc_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-    try:
-        threads = parse_threads(text)
-    except Exception:
-        return []
-    pending = []
-    for thread in threads:
-        item = _pending_human_thread(text, thread, repo_path)
-        if item is not None:
-            pending.append(item)
-    return pending
-
-
-def _stage_pending_human_threads(
-    repo_path: str | None, version: str | None, stage: str | None,
-) -> list[dict]:
-    """当前 stage 文档中归 Human 的 unresolved 线程（只读；无 doc → []）.
-
-    数据源：stage registry 的 doc 名 → 仓库内 ``.tracks/projects/<version>/<doc>``
-    （多文档 stage 取全部 docs）。解析失败的兜底不抛出，返回 []。
-    """
-    defn = _STAGES.get(stage or "")
-    if defn is None:
-        return []
-    docs = [defn.doc] if defn.doc else list(defn.docs or ())
-    if not docs or not repo_path or not version:
-        return []
-    try:
-        vdir = paths.version_dir(paths.tracks_home(Path(str(repo_path))), str(version))
-    except Exception:
-        return []
-    pending: list[dict] = []
-    for doc in docs:
-        pending.extend(_doc_pending_human_threads(vdir / doc, repo_path))
-    return pending
-
-
-def _awaiting_gate(
-    state: State, repo_path: str | None = None, version: str | None = None,
-    events: list[EventEnvelope] | None = None,
-) -> dict | None:
-    """The run-detail ``awaiting_gate`` field group (§1k.1) or None.
-
-    ``pending_human_threads`` 恒为 ``[{thread_id, snippet}]``（可能为空）：
-    当前 stage 文档中归 Human 的 unresolved 线程（只读；无 doc/解析失败 → []）。
-    """
-    gate_type = _awaiting_type(state)
-    if gate_type is None:
-        return None
-    stage = state.stage or "run"
-    reason = f"{stage} 到达人工门：{_AWAITING_REASON_LABELS[gate_type]}"
-    failure = state.last_failure if isinstance(state.last_failure, dict) else {}
-    if failure.get("reason"):
-        reason = f"{reason}（{failure['reason']}）"
-    primary = (
-        "release-decision" if gate_type == _AWAIT_RELEASE else _AWAITING_PRIMARY_ACTIONS[gate_type])
-    return {"type": gate_type, "reason": reason,
-        "impact": "在你做出决定前，run 不会继续推进。",
-        "primary_action": primary,
-        "pending_human_threads": _stage_pending_human_threads(
-            repo_path, version, state.stage),
-        "diagnosis": _gate_diagnosis(events or [], state, repo_path),}
-
-
-class _RunStoreView:
-    """Store-shaped read-only view (§1m.1 与 CLI 同一合法性规则共享计算):
-    the shared ``trac return`` gate rules and already-executed scan run over
-    the same code the CLI face uses — no writer lock, no second copy."""
-
-    def __init__(self, repo_path: str) -> None:
-        self._repo_path = repo_path
-
-    def state(self, run_id: str) -> State:
-        return _state_of(self._repo_path, run_id)
-
-    def events(self, run_id: str) -> list[EventEnvelope]:
-        return _run_events(self._repo_path, run_id)
-
-
-def _return_options(repo_path: str, run_id: str) -> dict:
-    """The run-detail ``return_options`` field group (§1m.1): the CLI's legal
-    targets with each target's already-executed irreversible operations."""
-    from tracks.cli.gate_cmd import _return_gate
-    from tracks.cli.release_cmd import _already_executed_ops
-
-    view = _RunStoreView(repo_path)
-    _state, allowed, _error = _return_gate(view, run_id)
-    if not allowed:
-        return {"allowed": False, "targets": []}
-    executed = _already_executed_ops(view, run_id)
-    return {"allowed": True,
-        "targets": [ {"stage": stage, "already_executed": executed} for stage in allowed ],}
-
-
-# -- todos ------------------------------------------------------------------
-
-
-def _material_revision(project: dict) -> str | None:
-    """Current material revision of the project's version dir.
-
-    The trio digest is the same content addressing ``record_stage_approval``
-    binds, so a pending stage-approval item shows the revision the reviewer
-    actually signs. None when the version docs are not readable.
-    """
-    version = project.get("version")
-    repo_path = project.get("repo_path")
-    if not version or not repo_path:
-        return None
-    vdir = paths.version_dir(paths.tracks_home(Path(str(repo_path))), str(version))
-    try:
-        return revision_digest(vdir)
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
-    if state.awaiting == "approval":
-        return {"run_id": run_id, "kind": "stage_approval", "object": state.stage or "approval",
-            "revision": _material_revision(project) or state.preview_digest,
-            "context": f"{state.stage or 'stage'} awaiting Human approval",
-            "action_ref": f"/runs/{run_id}/review",}
-    if state.awaiting == "triage":
-        return {"run_id": run_id, "kind": "triage", "object": state.stage or "triage",
-            "revision": None, "context": "triage decision required",
-            "action_ref": f"/runs/{run_id}/review",}
-    if state.substate == "AWAITING_RELEASE":
-        return {"run_id": run_id, "kind": "release_decision", "object": state.stage or "release",
-            "revision": state.preview_digest, "context": "release candidate awaiting decision",
-            "action_ref": f"/runs/{run_id}/release",}
-    return None
-
-
-# -- project-domain docs read models (§1n, §1p) ------------------------------
-
-
-def _version_sort_key(name: str) -> tuple[int, int, int, int, str] | None:
-    """Numeric-descending order for version directories (§1n.1).
-
-    ``v<M>.<m>`` sorts by numeric components (never lexicographically); a
-    ``v<M>.<m>-hotfix-<n>`` directory ranks right after its baseline version,
-    newer hotfix numbers after older ones. None for non-version names.
-    """
-    match = _HOTFIX_VERSION_RE.match(name)
-    if match is not None:
-        return (-int(match.group(1)), -int(match.group(2)), 1, -int(match.group(3)), name)
-    match = _VERSION_RE.match(name)
-    if match is None:
-        return None
-    return (-int(match.group(1)), -int(match.group(2)), 0, 0, name)
-
-
-def _projects_root(project: dict) -> Path:
-    return Path(project["repo_path"]) / ".tracks" / "projects"
-
-
-def _project_versions(project: dict) -> list[str]:
-    root = _projects_root(project)
-    if not root.is_dir():
-        return []
-    keyed = []
-    for child in root.iterdir():
-        if not child.is_dir():
-            continue
-        key = _version_sort_key(child.name)
-        if key is not None:
-            keyed.append((key, child.name))
-    keyed.sort()
-    return [name for _key, name in keyed]
-
-
-def _version_path(project: dict, version: str) -> Path:
-    return _projects_root(project) / version
-
-
-_STORY_TITLE_RE = re.compile(r"^title:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
-
-
-def _version_story_title(project: dict, version: str) -> str | None:
-    """The story.md frontmatter ``title:`` of one version (human label, #224).
-
-    Searched in the file head only — the frontmatter block leads the document
-    by construction; a missing/unreadable story or a missing field degrades to
-    ``None`` and callers fall back to the run id.
-    """
-    story = _version_path(project, version) / DOC_FILES["story"]
-    try:
-        head = story.read_text(encoding="utf-8")[:2048]
-    except (OSError, UnicodeDecodeError):
-        return None
-    match = _STORY_TITLE_RE.search(head)
-    return match.group(1) if match else None
-
-
-def _revision_or_none(vdir: Path) -> str | None:
-    """The version directory's revision token for the docs read faces.
-
-    The inherited (v0.10) construction is the trio digest
-    (``baseline.revision_digest``) — the token the run-domain edit face #17
-    binds, and the value the docs tree/read has always presented for dirs
-    whose trio is derivable. §1n.1 globalizes ``docs_revision`` (six-piece,
-    missing-aware) so that the docs-centre edit face #35 stays bindable in
-    ANY review round: when the trio digest is structurally unavailable
-    (spec/acceptance not yet written — the M-STORY window), the read faces
-    fall back to the docs_revision instead of answering a null revision that
-    no edit face could bind. Complete dirs keep the v0.10 value byte for
-    byte (pure extension, §1n.1)."""
-    try:
-        return revision_digest(vdir)
-    except (OSError, UnicodeDecodeError):
-        pass
-    try:
-        from tracks.supervisor.service import docs_revision  # cycle-safe
-
-        return docs_revision(vdir)
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def _mtime_iso(path: Path) -> str:
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
-
-
-def _editable_run_id(runs: list[dict], version: str) -> str | None:
-    """The newest non-terminal run of ``version``, or None (§1n.1)."""
-    active = [
-        run for run in runs if run[
-            "version"
-        ] == version and run["status"] not in _TERMINAL_STATUSES]
-    if not active:
-        return None
-    return max(active, key=lambda run: run["updated_ts"] or "")["run_id"]
-
-
-def project_docs_tree(home: Path, project_id: str) -> dict | None:
-    """Project docs tree: version-descending dirs + six-piece docs (§1n.1)."""
-    project = _project_from_home(home, project_id)
-    if project is None:
-        return None
-    return docs_tree_for_project(project)
-
-
-def docs_tree_for_project(project: dict) -> dict:
-    """Docs tree read model for one resolved project row (§1n.1).
-
-    Split out of ``project_docs_tree`` so the single-user host fallback
-    (api_query) can compute the same tree for the serve's own repo without a
-    registered projects row.
-    """
-    runs = _project_runs(project["repo_path"])
-    versions = []
-    for version in _project_versions(project):
-        vdir = _version_path(project, version)
-        revision = _revision_or_none(vdir)
-        docs = []
-        for doc in _DOC_ORDER:
-            path = vdir / DOC_FILES[doc]
-            if path.is_file():
-                docs.append({"doc": doc, "revision": revision, "updated_at": _mtime_iso(path)})
-        versions.append(
-            {
-                "version": version, "title": _version_story_title(project, version), "docs": docs,
-                "editable_run_id": _editable_run_id(runs, version),
-            })
-    return {"versions": versions}
-
-
-def resolve_project_doc(
-    home: Path, project_id: str, version: str, doc: str
-) -> tuple[dict, Path, Path, str | None] | None:
-    """(project, version dir, doc file, revision) for a project-domain doc.
-
-    None when the project, the version directory name, or the doc member is
-    unknown; handlers fail closed on that state (§2b #32-34).
-    """
-    project = _project_from_home(home, project_id)
-    if project is None:
-        return None
-    return resolve_doc_in_project(project, version, doc)
-
-
-def resolve_doc_in_project(
-    project: dict, version: str, doc: str
-) -> tuple[dict, Path, Path, str | None] | None:
-    """``resolve_project_doc`` over an already-resolved project row (§2b #32)."""
-    name = DOC_FILES.get(doc)
-    if name is None or _version_sort_key(version) is None:
-        return None
-    vdir = _version_path(project, version)
-    doc_file = vdir / name
-    if not doc_file.is_file():
-        return None
-    return project, vdir, doc_file, _revision_or_none(vdir)
-
-
-def project_doc_discussions(
-    home: Path, project_id: str, version: str, doc: str
-) -> dict | None:
-    """Server-side tracks/discuss parse projected to the UI read model (§1p)."""
-    resolved = resolve_project_doc(home, project_id, version, doc)
-    if resolved is None:
-        return None
-    _project, _vdir, doc_file, _revision = resolved
-    threads = parse_threads(doc_file.read_text(encoding="utf-8"))
-    return {"threads": [_thread_json(thread) for thread in threads]}
-
-
-def _thread_json(thread: Any) -> dict:
-    return {"thread_id": thread.thread_id, "status": thread.status, "initiator": thread.initiator,
-        "anchor_line": thread.anchor_line, "summary": thread.snippet,
-        "entry_line": thread.root_line, "awaiting": _thread_awaiting(thread),}
-
-
-def _thread_awaiting(thread: Any) -> str | None:
-    """The party a thread currently awaits, or None (§1p.1).
-
-    A comment whose @mention requests an answer (the tracks/discuss
-    "@request someone to answer" semantic) and that still has no child reply
-    is an open request; the latest such comment names the awaited party when
-    it carries exactly one distinct mention.
-    """
-    pending = [
-        comment for comment in iter_comments(
-            thread.root
-        ) if not comment.children and comment.mentions]
-    if not pending:
-        return None
-    latest = max(pending, key=lambda comment: comment.line)
-    unique = list(dict.fromkeys(latest.mentions))
-    return unique[0] if len(unique) == 1 else None
-
-
-def _stage_order() -> list[str]:
-    """The 13-stage timeline display order (§1q.1).
-
-    M-START leads; M-REQ-APPROVAL is inserted between M-ACC and M-DESIGN on
-    top of the canonical kernel stage order (release stages included).
-    """
-    order = ["M-START"]
-    for stage in canonical_stage_order():
-        if stage == "M-DESIGN":
-            order.append("M-REQ-APPROVAL")
-        order.append(stage)
-    return order
-
-
-# -- public projections -----------------------------------------------------
-
-
-def _backlog_group(repo_path: str) -> dict:
-    """§1e.2/§1d.3 backlog: entries by ULID, dispositions folded in; count excludes."""
-    entries: dict[str, dict] = {}
-    dispositions: dict[str, dict] = {}
-    rows = _rows(
-        _tracks_db(repo_path),
-        "SELECT run_id, ts, version, type, payload FROM events"
-        " WHERE type IN ('backlog.recorded', 'backlog.dispositioned') ORDER BY seq",
-    )
-    for run_id, ts, version, event_type, raw in rows:
-        payload = _load_payload(raw, repo_path)
-        if event_type == "backlog.recorded":
-            entries[run_id] = {
-                "entry_id": run_id,
-                "version": version,
-                "source": payload.get("source"),
-                "content": payload.get("content"),
-                "recorded_ts": ts,
-                "disposition": None,
-                "to": None,
-            }
-        elif isinstance(payload.get("entry"), str):
-            dispositions[payload["entry"]] = {
-                "disposition": payload.get("disposition"),
-                "to": payload.get("to"),
-            }
-    for entry_id, marker in dispositions.items():
-        if entry_id in entries:
-            entries[entry_id].update(marker)
-    backlog_rows = sorted(entries.values(), key=lambda row: str(row["recorded_ts"] or ""))
-    return {
-        "count": sum(1 for row in backlog_rows if row["disposition"] is None),
-        "entries": backlog_rows,
-    }
-
-
-def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | None:
-    """One overview run row, or None when the row is not a run.
-
-    Skipped rows (DIAGNOSE seq 11461 item 3): run-less rows with an empty
-    version — the same criterion the §1e.2 registry (_registry_versions)
-    uses — and backlog/archive terminals, which are entries, never runs
-    (the nondevelop exits keep their no-run observability)."""
-    if not run["version"] or run["status"] in ("backlog", "archive"):
-        return None
-    state = _state_of(project["repo_path"], run["run_id"])
-    todo = _todo_for(run["run_id"], state, project)
-    if run["version"] not in titles:
-        titles[run["version"]] = _version_story_title(project, run["version"])
-    return {"run_id": run["run_id"], "title": titles[run["version"]] or run["run_id"],
-        "version": run["version"], "status": run["status"], "stage": run["stage"],
-        "updated_ts": run["updated_ts"],
-        "control_state": _run_control_state(conn, state, run["run_id"], []),
-        "human_todos": 1 if todo is not None else 0,}
-
-
-def project_overview(home: Path) -> dict:
-    """Projects + runs + per-run human-todo counts (§1e)."""
-    conn = _service_db(home)
-    try:
-        projects = _projects(conn)
-        runs = []
-        todo_count = 0
-        for project in projects:
-            titles: dict[str, str | None] = {}
-            for run in _project_runs(project["repo_path"]):
-                row = _overview_run_row(conn, project, run, titles)
-                if row is None:
-                    continue
-                todo_count += row["human_todos"]
-                runs.append(row)
-        return {
-            "projects": [
-                {
-                    "project_id": project["project_id"], "repo_path": project["repo_path"],
-                    "version": project["version"],
-                } for project in projects
-            ],
-            "runs": runs, "human_todo_count": todo_count,}
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _run_control_state(
-    conn: sqlite3.Connection | None, state: State, run_id: str, events: list[EventEnvelope]
-) -> str:
-    pause, pause_label = _pause_state(conn, run_id)
-    wait = _wait_spec(conn, run_id)
-    return _control_state(state, events, pause_label, wait, _is_queued(conn, run_id))
-
-
-def project_run_detail(home: Path, run_id: str) -> dict | None:
-    """Stage/substate/control state/wait/progress/executions snapshot (§1e)."""
-    conn = _service_db(home)
-    try:
-        project = _project_for_run(conn, run_id)
-        if project is None:
-            return None
-        repo_path, version = project["repo_path"], project["version"]
-        events = _run_events(repo_path, run_id)
-        state = project_state(events)
-        pause, pause_label = _pause_state(conn, run_id)
-        wait = _wait_spec(conn, run_id)
-        chain = _chain_rows(repo_path, version, run_id)
-        task_progress = _task_progress(
-            repo_path, state.version or version, state, events
-        )
-        return {"run_id": run_id, "version": state.version or version, "status": state.status,
-            "stage": state.stage, "substate": state.substate,
-            "branch": _run_branch(state),
-            "control_state": _control_state(
-                state, events, pause_label, wait, _is_queued(conn, run_id)
-            ),
-            "pause": pause, "wait": wait,
-            "awaiting_gate": _awaiting_gate(
-                state, repo_path, state.version or version, events),
-            "return_options": _return_options(repo_path, run_id),
-            "progress": {
-                "tasks_done": state.tasks_completed, "tasks_total": state.tasks_total,
-                "tests_passed": _latest_tests_passed(events), "ac_closed": _ac_closed(chain),
-                "ac_total": len(chain),
-            },
-            "task_progress": task_progress,
-            "quality": {"gates": _gates(events)}, "executions": _executions(events),
-            "lease": _lease(conn, run_id),}
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def project_timeline(
-    home: Path, run_id: str,
-    *,
-    command_id: str | None = None, task_id: str | None = None, ac_id: str | None = None,
-    after_seq: str | None = None, slim: bool = False, include_internal: bool = True,
-) -> dict:
-    """Merged tracks.db + service_events timeline with cursor + stage order (§1e)."""
-    conn = _service_db(home)
-    try:
-        project = _project_for_run(conn, run_id)
-        if project is None:
-            return {"events": [], "cursor": "", "stage_order": _stage_order()}
-        repo_path = project["repo_path"]
-        rows = _timeline_rows(conn, repo_path, run_id, slim=slim, include_internal=include_internal)
-        rows = _filter_timeline(rows, command_id, task_id, ac_id)
-        rows = _after_cursor(rows, after_seq)
-        if slim and len(rows) > _SLIM_MAX_ROWS:
-            rows = rows[-_SLIM_MAX_ROWS:]
-        return {"events": rows, "cursor": _cursor_of(rows), "stage_order": _stage_order()}
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def _timeline_rows(
-    conn: sqlite3.Connection | None, repo_path: str, run_id: str, *, slim: bool = False,
-    include_internal: bool = True,
-) -> list[dict]:
-    rows = []
-    if slim:
-        rows.extend(_slim_track_rows(repo_path, run_id))
-    else:
-        for event in _run_events(repo_path, run_id):
-            payload = dict(event.payload or {})
-            rows.append(
-                {
-                    "source": "tracks", "seq": event.seq, "ts": event.ts, "type": event.type,
-                    "run_id": event.run_id, "command_id": event.command_id,
-                    "task_id": event.task_id,
-                    "ac_refs": _event_ac_refs(payload), "summary": event.type,
-                    # §1l.1/§9.2 full timeline rendering: the client derives the
-                    # five-state labels / attempt grouping / rollback edges from
-                    # the event stream itself — the payload (stage, attempt, …)
-                    # is the derivation input, never a second source. The
-                    # response face redacts it (api_query._response), the SSE
-                    # face redacts it too (api_events._redacted).
-                    "payload": payload,
-                    "stage": payload.get("stage"),
-                    "attempt": payload.get("attempt"),
-                    "payload_ref": "",
-                })
-    if slim or not include_internal:
-        service = _rows(conn,
-            "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
-                "WHERE run_id = ? AND type NOT IN (?, ?) ORDER BY seq",
-            (run_id, *_SLIM_EXCLUDED_SERVICE_TYPES))
-    else:
-        service = _rows(conn,
-            "SELECT seq, ts, type, run_id, command_id, payload FROM service_events "
-                "WHERE run_id = ? ORDER BY seq",
-            (run_id,))
-    for seq, ts, type_, run, command, raw in service:
-        parsed = _json(raw)
-        parsed = parsed if isinstance(parsed, dict) else {}
-        if slim:
-            parsed = _slim_payload(type_, parsed)
-        rows.append(
-            {
-                "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
-                "command_id": command, "task_id": None, "ac_refs": _event_ac_refs(parsed),
-                "summary": type_, "payload": parsed,
-                "stage": parsed.get("stage"),
-                "attempt": parsed.get("attempt"),
-                "payload_ref": "",
-            })
-    rows.sort(key=lambda row: (row["ts"] or "", 0 if row["source"] == "tracks" else 1, row["seq"]))
-    return rows
-
-
-def _event_ac_refs(payload: dict) -> list[str]:
-    refs = payload.get("ac_refs")
-    return [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
-
-
-# Timeline slim mode: the client (timeline.js foldStageFacts + the stage
-# workflow diagram) needs only the stage-derivation keys plus the small
-# workflow scalars (round/verdict/decision/action/check/final/commit_sha)
-# and the dispatch identity (command.kind + a small params subset); the
-# 30KB–2.2MB evidence blobs never contribute them (737 $ref rows in the
-# reference run carry no stage, 8 carry attempt).
-_SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
-    # Rollback edges / visit boundaries: the client must see where a
-    # ``stage.rolled_back`` came FROM and whether it was an operator repair
-    # (a self-rollback or a repair must not void the current visit). Dropping
-    # these made the slim face lose the edge whenever ``current`` did not
-    # happen to be the source stage (recovery/truncation paths).
-    "from_stage", "from", "operator_repair",
-    # verdict.failed evidence rides the same bounded verdict blob; the UI
-    # folds it into 技术详情 (never the default headline).
-    "evidence",
-    "round", "verdict", "decision", "action", "check", "final", "commit_sha",
-    "area", "next"})
-
-# Slim-mode service-plane noise exclusion (read-face load shedding only; the
-# writer is untouched): ``command.accepted`` + ``lease.acquired`` are the
-# supervisor's internal command-lifecycle pairs emitted on every poll tick
-# (~one pair per 5s while idling — 129k of 129k rows in the reference run),
-# not user-timeline semantics. ``lease.released`` stays (rare, a meaningful
-# lease boundary), as do ``command.rejected`` and every other service type.
-_SLIM_EXCLUDED_SERVICE_TYPES = ("command.accepted", "lease.acquired")
-
-# Slim-mode backstop cap: even after the noise exclusion, the response keeps
-# only the newest N merged rows. The UI renders the stage path / current card
-# from recent workflow facts, so an unbounded tail is pure serialization cost;
-# the non-slim path (full-history audit face) is never capped.
-_SLIM_MAX_ROWS = 20000
-
-# command.issued params allowlist for slim mode: the dispatch identity the
-# stage workflow diagram renders (role/substate/attempt/review_round/…).
-# Only keys actually present are kept; everything else stays discarded.
-_SLIM_COMMAND_PARAM_KEYS = frozenset({"role", "substate", "attempt", "review_round",
-    "decision", "doc", "objective", "stage", "base", "branch_name"})
-
-# The ``$ref`` row types whose blobs ARE stage-workflow facts. Run bd0c68eb
-# carries 22 such refs — 8 command.issued (dispatch identity: kind +
-# params.substate, 134KB), 10 outcome.received (conclusion status, 256KB),
-# 2 red.validated, 2 verdict.failed (~438KB total); dropping them left the
-# stage graph empty and the summary at 0 dispatches. Every OTHER ref type
-# (the reference run's 737 rows) carries no stage facts, so its blob stays
-# unread — slim mode remains bounded to this small workflow set.
-_SLIM_REF_TYPES = frozenset({"command.issued", "outcome.received", "red.validated",
-    # Visit/edge facts can carry long reasons (recovery narratives) and are
-    # stored as blobs once over the inline threshold; both stay rare, so
-    # reading their blobs is bounded.
-    "stage.rolled_back", "stage.recovered"})
-
-
-def _slim_payload(type_: str, parsed: dict) -> dict:
-    """Whitelisted slim payload for one event (slim branch only).
-
-    Top-level scalars keep _SLIM_KEYS; a ``command.issued`` row additionally
-    keeps ``command.kind`` + the _SLIM_COMMAND_PARAM_KEYS subset of
-    ``command.params``. All other shapes (incl. service-plane command rows
-    with the same structure) fall through to the scalar whitelist.
-    """
-    slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
-    if type_ == "outcome.received":
-        # Outcome blobs name their conclusion via status/failure_class (this
-        # run's 10 refs carry no ``verdict`` key); keep the small scalars so
-        # the slim row is not empty and the role survives.
-        for key in ("role", "status", "failure_class"):
-            if key in parsed:
-                slim[key] = parsed[key]
-    elif type_ == "red.validated" and "status" in parsed:
-        slim["status"] = parsed["status"]
-    if type_ == "command.issued":
-        command = parsed.get("command")
-        if isinstance(command, dict):
-            kept: dict = {}
-            if "kind" in command:
-                kept["kind"] = command["kind"]
-            params = command.get("params")
-            if isinstance(params, dict):
-                small = {key: params[key] for key in _SLIM_COMMAND_PARAM_KEYS if key in params}
-                if small:
-                    kept["params"] = small
-            if kept:
-                slim["command"] = kept
-    return slim
-
-
-def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
-    """Track-side timeline rows; blobs are read only for workflow refs.
-
-    Reads raw payloads straight from the events table. A ``{"$ref": ...}``
-    row whose type is a stage-workflow fact (``_SLIM_REF_TYPES`` or
-    ``verdict.*``) reads that one blob and emits the same slim row an inline
-    payload would; a missing/unreadable/non-dict blob degrades to the old
-    ``payload={}`` + ``payload_ref``. Every other ref type keeps ``payload={}``
-    and its blob unread, bounding the read face to the small workflow set.
-    """
-    conn = _tracks_db(repo_path)
-    try:
-        rows = _rows(conn,
-            "SELECT run_id, seq, ts, type, command_id, task_id, payload "
-                "FROM events WHERE run_id = ? ORDER BY seq",
-            (run_id,))
-    finally:
-        if conn is not None:
-            conn.close()
-    slim_rows = []
-    for run, seq, ts, type_, command_id, task_id, raw in rows:
-        parsed = _json(raw)
-        parsed = parsed if isinstance(parsed, dict) else {}
-        if set(parsed) == {"$ref"}:
-            workflow = type_ in _SLIM_REF_TYPES or type_.startswith("verdict.")
-            blob = _load_payload(raw, repo_path) if workflow else {}
-            slim = _slim_payload(type_, blob) if blob else {}
-            slim_rows.append(
-                {
-                    "source": "tracks", "seq": seq, "ts": ts, "type": type_,
-                    "run_id": run, "command_id": command_id, "task_id": task_id,
-                    "ac_refs": _event_ac_refs(blob), "summary": type_, "payload": slim,
-                    "stage": slim.get("stage"), "attempt": slim.get("attempt"),
-                    "payload_ref": str(parsed["$ref"]),
-                })
-            continue
-        slim = _slim_payload(type_, parsed)
-        slim_rows.append(
-            {
-                "source": "tracks", "seq": seq, "ts": ts, "type": type_,
-                "run_id": run, "command_id": command_id, "task_id": task_id,
-                "ac_refs": _event_ac_refs(parsed), "summary": type_, "payload": slim,
-                "stage": slim.get("stage"), "attempt": slim.get("attempt"),
-                "payload_ref": "",
-            })
-    return slim_rows
-
-
-def _filter_timeline(
-    rows: list[dict], command_id: str | None, task_id: str | None, ac_id: str | None
-) -> list[dict]:
-    filtered = rows
-    if command_id is not None:
-        filtered = [row for row in filtered if row["command_id"] == command_id]
-    if task_id is not None:
-        filtered = [row for row in filtered if row["task_id"] == task_id]
-    if ac_id is not None:
-        filtered = [row for row in filtered if ac_id in row["ac_refs"]]
-    return filtered
-
-
-def _cursor_of(rows: list[dict]) -> str:
-    if not rows:
-        return ""
-    last = rows[-1]
-    raw = json.dumps({"ts": last["ts"], "source": last["source"], "seq": last["seq"]},
-        sort_keys=True)
-    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
-
-
-def _after_cursor(rows: list[dict], after_seq: str | None) -> list[dict]:
-    if not after_seq:
-        return rows
-    try:
-        decoded = json.loads(base64.urlsafe_b64decode(after_seq.encode("ascii")))
-        key = (decoded["ts"], 0 if decoded["source"] == "tracks" else 1, int(decoded["seq"]))
-    except (ValueError, KeyError, TypeError):
-        return rows
-    result = []
-    for row in rows:
-        row_key = (row["ts"], 0 if row["source"] == "tracks" else 1, row["seq"])
-        if row_key > key:
-            result.append(row)
-    return result
-
-
-def project_ac_chain(home: Path, run_id: str) -> list:
-    """AC -> test node -> result -> candidate -> evidence chain (§1e)."""
-    conn = _service_db(home)
-    try:
-        project = _project_for_run(conn, run_id)
-        if project is None:
-            return []
-        return _chain_rows(project["repo_path"], project["version"], run_id)
-    finally:
-        if conn is not None:
-            conn.close()
-
-
-def project_todos(home: Path) -> list:
-    """Legitimate human decisions only (§1e); waits/env issues excluded."""
-    conn = _service_db(home)
-    try:
-        todos = []
-        for project in _projects(conn):
-            for run in _project_runs(project["repo_path"]):
-                state = _state_of(project["repo_path"], run["run_id"])
-                todo = _todo_for(run["run_id"], state, project)
-                if todo is not None:
-                    todos.append(todo)
-        return todos
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def project_service_config(home: Path) -> dict:
@@ -1818,14 +198,156 @@ def project_service_config(home: Path) -> dict:
     return dict(_CONFIG_DEFAULTS)
 
 
-def project_executions(home: Path, run_id: str) -> list:
-    """Per-role/task execution state + log refs (FR-0303; no session content)."""
-    conn = _service_db(home)
-    try:
-        project = _project_for_run(conn, run_id)
-    finally:
-        if conn is not None:
-            conn.close()
-    if project is None:
-        return []
-    return _executions(_run_events(project["repo_path"], run_id))
+__all__ = [
+    "DOC_FILES",
+    "_AWAIT_RELEASE",
+    "_AWAITING_PRIMARY_ACTIONS",
+    "_AWAITING_REASON_LABELS",
+    "_CACHE_CAP",
+    "_CACHE_LOCK",
+    "_CONFIG_DEFAULTS",
+    "_DIAGNOSIS_ATTEMPTS_MAX",
+    "_DIAGNOSIS_CAUSE_BY_CHECK",
+    "_DIAGNOSIS_CAUSE_LABELS",
+    "_DIAGNOSIS_DIGITS",
+    "_DIAGNOSIS_HEX",
+    "_DIAGNOSIS_PATH",
+    "_DIAGNOSIS_RETURN_CANDIDATES",
+    "_DIAGNOSIS_SUGGESTED_ACTIONS",
+    "_DOC_ORDER",
+    "_EVENTS_CACHE",
+    "_GATE_TYPES",
+    "_HOTFIX_VERSION_RE",
+    "_LATEST_AC_TYPES",
+    "_PAUSE_REQUESTED",
+    "_PAUSED",
+    "_ROConn",
+    "_RunStoreView",
+    "_SLIM_COMMAND_PARAM_KEYS",
+    "_SLIM_EXCLUDED_SERVICE_TYPES",
+    "_SLIM_KEYS",
+    "_SLIM_MAX_ROWS",
+    "_SLIM_REF_TYPES",
+    "_STATE_CACHE",
+    "_STORY_TITLE_RE",
+    "_TASK_PROGRESS_EVENTS",
+    "_TERMINAL_STATUSES",
+    "_TEST_RESULT_TYPES",
+    "_VERSION_RE",
+    "_ac_closed",
+    "_ac_evidence",
+    "_after_cursor",
+    "_awaiting_gate",
+    "_awaiting_type",
+    "_blocked",
+    "_backlog_group",
+    "_batch_sort_key",
+    "_batch_value",
+    "_blobs_home",
+    "_cache_get",
+    "_cache_put",
+    "_chain_rows",
+    "_control_state",
+    "_current_failure",
+    "_cursor_of",
+    "_diagnosis_agent_advice",
+    "_diagnosis_cause",
+    "_doc_pending_human_threads",
+    "_editable_run_id",
+    "_event_ac_refs",
+    "_event_references",
+    "_executions",
+    "_extract_passed",
+    "_failure_signature",
+    "_filter_timeline",
+    "_full_track_rows",
+    "_gate_diagnosis",
+    "_gates",
+    "_is_queued",
+    "_is_terminal",
+    "_json",
+    "_keep_keys",
+    "_latest_agent_report",
+    "_latest_failure_reason",
+    "_latest_prism_summary",
+    "_latest_result",
+    "_latest_tests_passed",
+    "_layer_of",
+    "_lease",
+    "_load_payload",
+    "_material_revision",
+    "_mtime_iso",
+    "_new_information_between",
+    "_overview_run_row",
+    "_owner_is_human",
+    "_pause_state",
+    "_pending_human_thread",
+    "_plan_tests",
+    "_prism_guidance_after",
+    "_project_by_id",
+    "_project_for_run",
+    "_project_from_home",
+    "_project_runs",
+    "_project_versions",
+    "_projects",
+    "_projects_root",
+    "_registry_acs",
+    "_retry_worthiness",
+    "_return_options",
+    "_revision_or_none",
+    "_ro",
+    "_rows",
+    "_rows_retry",
+    "_run_branch",
+    "_run_control_state",
+    "_run_events",
+    "_run_exists",
+    "_run_watermark",
+    "_service_db",
+    "_service_timeline_rows",
+    "_slim_command",
+    "_slim_inline_row",
+    "_slim_payload",
+    "_slim_ref_row",
+    "_slim_row",
+    "_slim_track_row",
+    "_slim_track_rows",
+    "_stage_failure_window",
+    "_stage_order",
+    "_stage_pending_human_threads",
+    "_state_of",
+    "_task_batches",
+    "_task_completed",
+    "_task_display",
+    "_task_event_state",
+    "_task_events",
+    "_task_failed",
+    "_task_log_ref",
+    "_task_progress",
+    "_task_role",
+    "_task_row",
+    "_thread_awaiting",
+    "_thread_json",
+    "_timeline_rows",
+    "_timeline_sort_key",
+    "_todo_for",
+    "_track_timeline_rows",
+    "_tracks_db",
+    "_version_path",
+    "_version_sort_key",
+    "_version_story_title",
+    "_wait_spec",
+    "docs_tree_for_project",
+    "project_ac_chain",
+    "project_doc_discussions",
+    "project_docs_tree",
+    "project_executions",
+    "project_overview",
+    "project_run_detail",
+    "project_service_config",
+    "project_state",
+    "project_timeline",
+    "project_todos",
+    "resolve_doc_in_project",
+    "resolve_project_doc",
+]

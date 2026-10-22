@@ -25,12 +25,16 @@ import { requestJson } from "./api.js";
 import { degradedMessage, element } from "./dom.js";
 import { connectEventStream } from "./sse.js";
 
-// §1l.1 five-state closed set (icon shape + data-state dual channel).
+// §1l.1 closed state set (icon shape + data-state dual channel).
+// `blocked` is the operational attention.required face: the current step
+// cannot proceed without an operator action, so it is distinct from both
+// the machine `active` state and the human `attention` gate.
 const STATE_ICONS = {
   "done": "●",
   "active": "◆",
   "pending": "○",
   "attention": "▲",
+  "blocked": "■",
   "void": "✕",
 };
 
@@ -773,6 +777,10 @@ export function renderTimelineView(body, context = {}) {
       requestJson(`/api/runs/${encoded}`).catch(() => null),
       requestJson(`/api/runs/${encoded}/ac-chain`).catch(() => []),
     ]);
+    // A newer activation replaced this body while the fetches were in
+    // flight: never let the stale mount close the newer run's stream or
+    // append to a detached face (rapid run switching / landing focus).
+    if (!body.isConnected) return null;
     if (!timeline || !detail) {
       // unknown run (404): readable degradation in place — no crash, no
       // blank tab (§1l.5). The releases window keeps its heading so the
@@ -823,7 +831,7 @@ export function renderTimelineView(body, context = {}) {
       "data-testid": "timeline-panel",
     });
     upper.append(pageReturnEntry());
-    upper.append(currentCard(detail, events, state));
+    upper.append(currentCard(detail, events, state, stageOrder(timeline)));
     if (detail && detail.branch) {
       // the hotfix run's branch identity (IF-HOTFIX-006): the entry
       // lands fix/{issue} async, so the run face carries it explicitly.
@@ -871,11 +879,155 @@ function lastEventText(event) {
   return `最近事件：${type}${summary}${stage}`;
 }
 
+const VERIFY_STEP_ICONS = {
+  done: "✓",
+  failed: "✗",
+  active: "◆",
+  pending: "○",
+};
+
+/** M-VERIFY's handler chain exposes no per-step substate; the server folds
+ * the chain events into freeze / local gates / version / CI / Prism so the
+ * operator can read "local gates ✓ / CI ✗" at a glance. */
+function verifyProgressPanel(detail) {
+  const progress = detail && detail.verify_progress;
+  const steps = progress && Array.isArray(progress.steps) ? progress.steps : [];
+  if (!steps.length) return null;
+  const wrap = element("section", {
+    class: "verify-progress",
+    "data-testid": "verify-progress",
+    "aria-label": "M-VERIFY 子步骤进度",
+  });
+  wrap.append(
+    element("p", {
+      class: "verify-progress-title",
+      text: "M-VERIFY 子步骤",
+    })
+  );
+  const list = element("ol", { class: "verify-progress-steps" });
+  for (const step of steps) {
+    const state = ["done", "failed", "active", "pending"].includes(step.state)
+      ? step.state
+      : "pending";
+    const row = element("li", {
+      class: `verify-step verify-step-${state}`,
+      "data-testid": `verify-step-${step.key || "unknown"}`,
+      "data-state": state,
+    });
+    row.append(
+      element("span", {
+        class: "verify-step-icon",
+        "aria-hidden": "true",
+        text: VERIFY_STEP_ICONS[state],
+      }),
+      element("span", {
+        class: "verify-step-label",
+        text: step.label || step.key || "unknown",
+      })
+    );
+    list.append(row);
+  }
+  wrap.append(list);
+  return wrap;
+}
+
+/** One retry entry for an operational block. clear_evidence lets the
+ * existing retry gate accept an active (not escalation) run; the recorded
+ * human.retry event is the same surface the CLI writes. */
+function blockedRetryButton(detail, encoded, blocked) {
+  const retryable = blocked.retryable !== false;
+  const button = element("button", {
+    type: "button",
+    class: retryable
+      ? "gate-action-button gate-primary-button blocked-retry"
+      : "gate-action-button blocked-retry",
+    "data-testid": "blocked-retry",
+    "data-retryable": retryable ? "true" : "false",
+    title: retryable
+      ? "重新派发当前步骤"
+      : `请先按指引处理：${blocked.next || "排除阻塞原因"}，然后重试`,
+    text: "重试当前步骤",
+  });
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    requestJson(`/api/runs/${encoded}/retry`, {
+      method: "POST",
+      body: JSON.stringify({ clear_evidence: true }),
+    })
+      .then(() => scheduleGateRefresh(encoded, "blocked"))
+      .catch(() => {
+        button.disabled = false;
+      });
+  });
+  return button;
+}
+
+/** The operational block banner: reason + detail + next instruction, with
+ * retry as the primary action and the existing return modal as the
+ * secondary escape. Rendered only while detail.blocked is present — the
+ * server omits it once a later successful gate/stage exit resolves it. */
+function blockedBanner(detail, events, stages) {
+  const blocked = detail && detail.blocked;
+  if (!blocked) return null;
+  const encoded = encodeURIComponent((detail && detail.run_id) || "");
+  const banner = element("section", {
+    class: blocked.retryable === false
+      ? "blocked-banner blocked-needs-action"
+      : "blocked-banner",
+    "data-testid": "blocked-banner",
+    "data-area": blocked.area || "",
+    "data-retryable": blocked.retryable === false ? "false" : "true",
+  });
+  banner.append(
+    element("p", {
+      class: "blocked-title",
+      "data-testid": "blocked-reason",
+      text: `当前步骤阻塞：${blocked.area || "run"} · ${blocked.reason || "attention_required"}`,
+    }),
+    element("p", {
+      class: "blocked-detail",
+      "data-testid": "blocked-detail",
+      text: blocked.detail || "（无附加详情）",
+    }),
+    element("p", {
+      class: "blocked-next",
+      "data-testid": "blocked-next",
+      text: `下一步：${blocked.next || "按运行日志排查后重试"}`,
+    })
+  );
+  if (blocked.retryable === false) {
+    banner.append(
+      element("p", {
+        class: "blocked-retry-hint",
+        "data-testid": "blocked-retry-hint",
+        text: "完成上述操作后，可点击重试继续当前步骤。",
+      })
+    );
+  }
+  const actions = element("div", { class: "blocked-actions" });
+  actions.append(blockedRetryButton(detail, encoded, blocked));
+  if (detail.return_options && detail.return_options.allowed) {
+    const back = element("button", {
+      type: "button",
+      class: "gate-action-button",
+      "data-testid": "blocked-return",
+      title: "选择回退到更早阶段",
+      text: "回退…",
+    });
+    back.addEventListener("click", () => {
+      openReturnModal(detail, events, encoded, stages);
+    });
+    actions.append(back);
+  }
+  banner.append(actions);
+  return banner;
+}
+
 /** The rolling summary card above the track AND the single run-level
  * operation zone (gate actions, run-level return, owning-surface jump).
  * The card always describes the CURRENT stage (detail.stage); selecting a
  * historical node only changes the read-only detail pane below. */
-function currentCard(detail, events, state) {
+function currentCard(detail, events, state, stages = []) {
   const firstTs = events.length ? events[0].ts : null;
   const ownerRaw = ownerRawOf(detail);
   const ownerDisplay = ownerOf(detail);
@@ -917,6 +1069,10 @@ function currentCard(detail, events, state) {
     );
   }
   card.append(element("div", { class: "card-metrics" }, metrics));
+  const blockedPanel = blockedBanner(detail, events, stages);
+  if (blockedPanel) card.append(blockedPanel);
+  const progressPanel = verifyProgressPanel(detail);
+  if (progressPanel) card.append(progressPanel);
   const gateAction = gate
     ? (GATE_ACTIONS.includes(gate.primary_action) ? gate.primary_action : "guidance")
     : null;
@@ -1182,7 +1338,7 @@ function diagnosisBrief(diagnosis) {
 }
 
 function gateSummary(gate, events) {
-  const failure = lastFailure(events);
+  const failure = currentFailure(events);
   if (gate && gate.type === "escalation") {
     const cause = failureSummary(failure);
     return cause
@@ -1525,6 +1681,9 @@ function nodeStateOf(stage, detail, facts) {
   if (stage === activeStage) {
     // The current stage is never void: a same-stage repair/rollback is a
     // note on the live visit, not an invalidation of where the run is.
+    // An unresolved attention.required is an operational block, distinct
+    // from the human gate's `attention` face.
+    if (detail && detail.blocked) return "blocked";
     const gate = detail && detail.awaiting_gate;
     return gate ? "attention" : "active";
   }
@@ -2095,7 +2254,7 @@ function stageTrack(stages, events, detail) {
       "data-testid": `timeline-node-${stage}`,
       "data-stage": stage,
       "data-state": nodeState,
-      ...(nodeState === "active" || nodeState === "attention"
+      ...(nodeState === "active" || nodeState === "attention" || nodeState === "blocked"
         ? { "data-active": "true", "data-state-active": "true" }
         : {}),
       "aria-label": `${stage} (${nodeState})`,
@@ -2143,29 +2302,37 @@ function stageTrack(stages, events, detail) {
     // restarts THIS stage; return opens the target/consequence modal.
     const isCurrent = stage === (detail && detail.stage);
     const gate = detail && detail.awaiting_gate;
+    const blocked = detail && detail.blocked;
     const encoded = encodeURIComponent((detail && detail.run_id) || "");
     const nodeActions = element("div", { class: "stage-node-actions" });
     nodeActions.addEventListener("keydown", (event) => event.stopPropagation());
-    if (isCurrent && gate && gate.primary_action === "retry") {
-      const retryWorthy = !(gate.diagnosis && gate.diagnosis.retry_worthy === false);
+    const gateRetry = gate && gate.primary_action === "retry";
+    if (isCurrent && (gateRetry || blocked)) {
+      const retryWorthy = blocked
+        ? blocked.retryable !== false
+        : !(gate.diagnosis && gate.diagnosis.retry_worthy === false);
       const retry = element("button", {
         type: "button",
         class: "stage-node-action",
         "data-testid": "stage-action-retry",
-        title: retryWorthy
-          ? "重新派发当前步骤（保留本阶段已产出）"
-          : "重试预计不会改变结果；建议改用「回退…」选择更早阶段",
+        title: blocked && !retryWorthy
+          ? `请先按指引处理：${blocked.next || "排除阻塞原因"}，然后重试`
+          : retryWorthy
+            ? "重新派发当前步骤（保留本阶段已产出）"
+            : "重试预计不会改变结果；建议改用「回退…」选择更早阶段",
         ...(retryWorthy ? {} : { "data-retry-worthy": "false" }),
+        ...(blocked ? { "data-retryable": retryWorthy ? "true" : "false" } : {}),
         text: "重试当前步骤",
       });
+      const body = blocked ? { clear_evidence: true } : {};
       retry.addEventListener("click", (event) => {
         event.stopPropagation();
         retry.disabled = true;
         requestJson(`/api/runs/${encoded}/retry`, {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify(body),
         })
-          .then(() => scheduleGateRefresh(encoded, "retry"))
+          .then(() => scheduleGateRefresh(encoded, blocked ? "blocked" : "retry"))
           .catch(() => {
             retry.disabled = false;
           });
@@ -2449,7 +2616,9 @@ function selectNode(node, stage, detail, events) {
   // the active legibility marker (§1l.1 data-state channel): the node's
   // own data-state already names it; expose the frozen alias attribute
   // so the active mark is queryable without parsing data-state.
-  for (const candidate of view.querySelectorAll("[data-state='active'],[data-state='attention']") || []) {
+  for (const candidate of view.querySelectorAll(
+    "[data-state='active'],[data-state='attention'],[data-state='blocked']"
+  ) || []) {
     candidate.setAttribute("data-state-active", "true");
   }
   if (host) {
@@ -2807,7 +2976,7 @@ export function gateActionPanel(detail, gate, events = []) {
       element("summary", { text: "技术详情" }),
       element("p", { "data-testid": "gate-raw-reason", text: `门原因：${gate.reason || "-"}` })
     );
-    const failure = lastFailure(events);
+    const failure = currentFailure(events);
     if (failure) {
       details.append(
         element("pre", {
@@ -3181,7 +3350,8 @@ function scheduleGateRefresh(encoded, previous) {
 
 function _gateAction(detail) {
   const gate = detail && detail.awaiting_gate;
-  return gate ? gate.primary_action || gate.type || "" : "";
+  if (gate) return gate.primary_action || gate.type || "";
+  return detail && detail.blocked ? "blocked" : "";
 }
 
 function span(testid, text, extra = {}) {

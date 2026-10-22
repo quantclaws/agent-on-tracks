@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from tests._support.webgate_seed import (
     accepted_commands,
+    command_rows,
     command_service,
     rejected_reasons,
     seed_retry_run,
 )
+from tracks.paths import tracks_home
+from tracks.store import Store
 
 pytestmark = pytest.mark.integration
 
@@ -19,7 +23,7 @@ pytestmark = pytest.mark.integration
 # AC-FR0311-01@v0.9 TRACKS-TRACE retry from legal position no duplicates
 def test_retry_from_legal_position_no_duplicates(tmp_path: Path):
     """AC-FR0311-01: retry resumes legally without repeating side effects."""
-    home, _repo = seed_retry_run(tmp_path, "run-1", legal=True)
+    home, repo = seed_retry_run(tmp_path, "run-1", legal=True)
     svc = command_service(home)
     receipt = svc.accept(
         kind="retry_run",
@@ -31,7 +35,20 @@ def test_retry_from_legal_position_no_duplicates(tmp_path: Path):
     )
     assert receipt.command_id
     assert receipt.status == "accepted"
-    assert [row["kind"] for row in accepted_commands(home)] == ["retry_run"]
+    # v0.12 executes retry_run synchronously at acceptance (2bd50d6): the row
+    # is issued and completed in the same accept, so no worker-facing
+    # "accepted" row survives. The retry side effect is still exactly once.
+    rows = command_rows(home)
+    assert [row["kind"] for row in rows] == ["retry_run"]
+    assert rows[0]["status"] == "completed"
+    assert json.loads(rows[0]["result_json"]) == {"kind": "retry_recorded"}
+    store = Store(tracks_home(repo))
+    try:
+        retries = [e for e in store.events("run-1") if e.type == "human.retry"]
+    finally:
+        store.close()
+    assert len(retries) == 1, "the retry side effect must not repeat"
+    assert retries[0].payload["clear_evidence"] is False
 
 
 # AC-FR0311-02@v0.9 TRACKS-TRACE stale evidence retry rejected

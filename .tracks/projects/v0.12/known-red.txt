@@ -1,8 +1,7 @@
 # v0.12 FULL-gate known-red exclusions (operator OOB 2026-10-22)
-# Pre-existing repo debt red at the M-IMPL baseline, owned by no v0.12 task:
-# stale past-version red tests, non-anchor ui e2e (local FULL is browserless),
-# env-dependent tests (GITHUB_TOKEN), a flaky soak, and stale fixtures.
-# Restore full-suite gating when this debt is burned down (v0.13 backlog).
+# Non-UI quality/legacy red was burned down and removed; the remaining
+# nodes are browser-driven ui e2e. Local FULL is browserless and excludes
+# them by marker; CI ui-e2e remains their execution point.
 tests/e2e/test_intake_ui.py::test_develop_happy_creates_release
 tests/e2e/test_intake_ui.py::test_hotfix_entry_anchored_proceeds
 tests/e2e/test_intake_ui.py::test_scribe_panel_four_actions
@@ -17,22 +16,6 @@ tests/e2e/test_workbench_ui.py::test_runs_registry_human_titles
 tests/e2e/test_workbench_ui.py::test_sse_reconnect_backfill_monotonic
 tests/e2e/test_workbench_ui.py::test_unknown_values_degrade_visibly
 tests/e2e/test_workbench_ui.py::test_v010_rulings_regression
-tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates
-tests/integration/test_escape_gate.py::test_pointer_rollback_lands_target_stage
-tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression
-tests/integration/test_github_effects.py::test_per_item_resume_never_rebuilds
-tests/integration/test_github_effects.py::test_standin_failure_escalates_preserving_progress
-tests/integration/test_intake.py::test_intake_sources_and_actions
-tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention
-tests/integration/test_kernel_language_neutrality.py::test_kernel_schema_language_free
-tests/integration/test_kernel_language_neutrality.py::test_language_invariant_dual_check
-tests/integration/test_kernel_language_neutrality.py::test_no_language_tokens_kernel_executor_cli
-tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding
-tests/integration/test_opencode_backend.py::test_single_doc_reviewer_revise_without_findings_fails
-tests/integration/test_perf_budget.py::test_soak_memory_bounded
-tests/unit/test_t005_static_app_red.py::test_run_registry_rows_truncate_labels_and_drop_id_fallback
-tests/unit/test_t010_size_migration_red.py::test_service_and_projections_within_c0302_module_line_budget
-tests/unit/test_t013_api_command_red.py::test_retry_from_legal_position_accepts
 tests/e2e/test_awaiting_ui.py::test_approve_release_in_panel
 tests/e2e/test_awaiting_ui.py::test_awaiting_panel_reason_impact_action
 tests/e2e/test_awaiting_ui.py::test_no_dangling_stage_review

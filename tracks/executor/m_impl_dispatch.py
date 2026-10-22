@@ -8,7 +8,10 @@ compliance (C0302); code moved verbatim.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,6 +46,60 @@ class TaskSelectionFailure(Exception):
     def __init__(self, message: str, evidence: str):
         super().__init__(message)
         self.evidence = evidence
+
+
+def _resolve_host_hook(cwd: Path) -> Path:
+    """Resolve the host-declared pre-commit hook from its hooksPath.
+
+    The runtime treats the hook as opaque: only the path comes from git
+    config (fallback ``.githooks/pre-commit``), never a tool/language guess.
+    """
+    proc = git(cwd, "config", "--get", "core.hooksPath", check=False)
+    hooks_path = proc.stdout.strip() if proc.returncode == 0 else ""
+    hook_dir = Path(hooks_path) if hooks_path else Path(".githooks")
+    if not hook_dir.is_absolute():
+        hook_dir = cwd / hook_dir
+    return hook_dir / "pre-commit"
+
+
+def _run_host_commit_hook(cwd: Path, repo: Path, paths: list[str]) -> tuple[bool, str]:
+    """Invoke the host hook for explicit paths in ``cwd`` (gate worktree).
+
+    ``TRACKS_HOOK_ROOT`` points at the main repo (config authority) and
+    ``TRACKS_HOOK_BIN`` at the running interpreter's tool directory, so the
+    same host hook can lint gate-worktree files with the installed toolchain.
+    A missing or non-executable hook means the host declared no hook: it is a
+    no-op. A present hook is authoritative and fails the gate on nonzero.
+    """
+    hook = _resolve_host_hook(cwd)
+    if not hook.is_file() or not os.access(hook, os.X_OK):
+        return True, ""
+    env = dict(os.environ)
+    env["TRACKS_HOOK_ROOT"] = str(repo)
+    env["TRACKS_HOOK_BIN"] = str(Path(sys.executable).parent)
+    try:
+        proc = subprocess.run(
+            [str(hook), *paths],
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return False, f"{hook}: {exc}"
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return proc.returncode == 0, output
+
+
+def _existing_changed_py(root: str | Path, changed) -> list[str]:
+    """Changed paths that are Python files still present under ``root``."""
+    base = Path(root)
+    return [
+        path
+        for path in changed or []
+        if isinstance(path, str) and path.endswith(".py") and (base / path).is_file()
+    ]
 
 
 @dataclass(frozen=True)
@@ -126,35 +183,16 @@ class MImplDispatchMixin:
             # R. The captured diff still surfaces hidden R-test mutations that
             # Devon omits from changed_paths; the union closes the self-report.
             r_sha = state.r_tree_identity
-            if r_sha and r_sha.strip() and r_sha != "0" * 40:
-                bad = self._green_regression_tests(r_sha, state)
-                if bad:
-                    self._emit_gate_failure(
-                        cmd,
-                        check="regression",
-                        reason="Runtime observed R unit tests changed",
-                        evidence=json.dumps(
-                            {"r_sha": r_sha, "changed_tests": bad},
-                            sort_keys=True,
-                        ),
-                        task_id=task_id,
-                        attempt=attempt,
-                    )
-                    return
+            if self._green_regression_failure(cmd, state, r_sha, task_id, attempt):
+                return
             task = self._lookup_task(task_id or "")
             if task is None:
                 raise TestSelectError(f"GREEN_GATE task not found: {task_id}")
             selection_evidence = self._execute_task_selection(cmd, state, cwd, task)
-            lint_findings, lint_note = self._run_declared_lint(self._lint_targets("green"))
-            if lint_findings is not None:
-                self._emit_gate_failure(
-                    cmd,
-                    check="lint",
-                    reason="lint findings in GREEN deliverables ([lint].check)",
-                    evidence=lint_findings,
-                    task_id=task_id,
-                    attempt=attempt,
-                )
+            lint_failed, lint_note = self._green_lint_check(cmd, task_id, attempt)
+            if lint_failed:
+                return
+            if self._green_host_hook_failure(cmd, cwd, task_id, attempt):
                 return
             payload = {"check": "green", "task_id": task_id, **selection_evidence}
             if lint_note:
@@ -248,6 +286,70 @@ class MImplDispatchMixin:
         finally:
             if gate_handle is not None:
                 cleanup_worktree(gate_handle)
+
+    def _green_regression_failure(
+        self, cmd, state, r_sha, task_id, attempt
+    ) -> bool:
+        """B39: fail when the Runtime-captured diff mutates an R test."""
+        if not (r_sha and r_sha.strip() and r_sha != "0" * 40):
+            return False
+        bad = self._green_regression_tests(r_sha, state)
+        if not bad:
+            return False
+        self._emit_gate_failure(
+            cmd,
+            check="regression",
+            reason="Runtime observed R unit tests changed",
+            evidence=json.dumps(
+                {"r_sha": r_sha, "changed_tests": bad},
+                sort_keys=True,
+            ),
+            task_id=task_id,
+            attempt=attempt,
+        )
+        return True
+
+    def _green_lint_check(self, cmd, task_id, attempt) -> tuple[bool, str]:
+        """Run the declared lint over GREEN deliverables; emit on findings."""
+        lint_findings, lint_note = self._run_declared_lint(self._lint_targets("green"))
+        if lint_findings is None:
+            return False, lint_note
+        self._emit_gate_failure(
+            cmd,
+            check="lint",
+            reason="lint findings in GREEN deliverables ([lint].check)",
+            evidence=lint_findings,
+            task_id=task_id,
+            attempt=attempt,
+        )
+        return True, ""
+
+    def _green_host_hook_failure(self, cmd, cwd, task_id, attempt) -> bool:
+        """Run the host hook over GREEN .py paths (commit-tree skips hooks).
+
+        The formal G is created with git commit-tree, where git never runs
+        pre-commit hooks. Invoke the host hook explicitly in the gate
+        worktree, path-scoped to the Devon-changed .py deliverables.
+        """
+        hook_paths = _existing_changed_py(
+            cwd, (self._last_devon_outcome() or {}).get("changed_paths")
+        )
+        if not hook_paths:
+            return False
+        hook_ok, hook_output = _run_host_commit_hook(
+            Path(cwd), Path(self.repo), hook_paths
+        )
+        if hook_ok:
+            return False
+        self._emit_gate_failure(
+            cmd,
+            check="commit",
+            reason="pre-commit rejected GREEN deliverables",
+            evidence=hook_output,
+            task_id=task_id,
+            attempt=attempt,
+        )
+        return True
 
     def _prior_oscillation_sets(self, task_id: str) -> dict | None:
         """The latest recorded S1 firing's {healed, newly_red} for this task

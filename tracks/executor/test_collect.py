@@ -84,7 +84,7 @@ def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
 
 
 def _node_function_name(node: str) -> str:
-    """Return the pytest function segment of ``file::[Class::]test[params]``."""
+    """Return the test function segment of ``file::[Class::]test[params]``."""
     parts = node.split("::")
     if len(parts) < 2:
         return ""
@@ -96,6 +96,25 @@ def _function_defined(source: str, name: str) -> bool:
     if not name:
         return True
     return re.search(rf"\bdef\s+{re.escape(name)}\s*\(", source) is not None
+
+
+def _oob_retires_node(
+    file: str,
+    name: str,
+    current_blob: str,
+    oob_shas: list[str],
+    oob_blob: Callable[[str, str], str | None],
+    oob_source: Callable[[str, str], str | None],
+) -> bool:
+    """True when an accepted OOB version no longer defines ``name``."""
+    for sha in oob_shas:
+        if not sha or oob_blob(sha, file) != current_blob:
+            continue
+        source = oob_source(sha, file)
+        if source is None or _function_defined(source, name):
+            continue
+        return True
+    return False
 
 
 def _partition_removed_nodes(
@@ -132,19 +151,9 @@ def _partition_removed_nodes(
         if file not in worktree_cache:
             worktree_cache[file] = worktree_blob(file)
         current_blob = worktree_cache[file]
-        if not current_blob:
-            unexplained.append(node)
-            continue
-        retired_node = False
-        for sha in oob_shas:
-            if not sha or oob_blob(sha, file) != current_blob:
-                continue
-            source = oob_source(sha, file)
-            if source is None or _function_defined(source, name):
-                continue
-            retired_node = True
-            break
-        if retired_node:
+        if current_blob and _oob_retires_node(
+            file, name, current_blob, oob_shas, oob_blob, oob_source
+        ):
             retired.append(node)
         else:
             unexplained.append(node)
@@ -548,6 +557,47 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             )
         return entries
 
+    def _load_collect_inputs(self, all_nodes: list[str]):
+        """Load the passed baseline snapshot + current digests, or errors."""
+        baseline_ev = self._latest_event("test.baseline_captured", status="passed")
+        if baseline_ev is None:
+            return None, None, [
+                "missing test.baseline_captured(passed): classification has "
+                "no pre-WRITE R1 snapshot (MissingBaselineCaptureError)"
+            ]
+        loaded = self._load_baseline_and_digests(baseline_ev, all_nodes)
+        if isinstance(loaded, list):
+            return None, None, loaded
+        baseline_assets, digests = loaded
+        return baseline_assets, digests, None
+
+    def _reclassify_after_oob(
+        self, removed, baseline_assets, all_nodes, digests
+    ) -> tuple[BaselineAssets, dict | None, list[str], list[str]]:
+        """Attribute removed nodes to accepted OOB commits, then reclassify."""
+        oob_retired, unexplained = self._partition_removed_nodes(
+            removed, baseline_assets
+        )
+        if unexplained:
+            return baseline_assets, None, oob_retired, unexplained
+        retired_set = set(oob_retired)
+        baseline_assets = BaselineAssets(
+            nodes=frozenset(
+                node for node in baseline_assets.nodes if node not in retired_set
+            ),
+            node_digests={
+                node: digest
+                for node, digest in baseline_assets.node_digests.items()
+                if node not in retired_set
+            },
+        )
+        return (
+            baseline_assets,
+            classify_nodes(baseline_assets, all_nodes, digests),
+            oob_retired,
+            unexplained,
+        )
+
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
         """SM-01.5 / D-41 FR-0250-01: Runtime independently collects ALL
         declared layers via the host project contract's ``collect`` command
@@ -572,47 +622,26 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             self._emit_collected_failure(cmd, 0, [collect_error])
             return
         all_nodes = sorted(node_layer)
-        baseline_ev = self._latest_event("test.baseline_captured", status="passed")
-        if baseline_ev is None:
+        baseline_assets, digests, load_errors = self._load_collect_inputs(all_nodes)
+        if load_errors is not None:
             self._emit_collected_failure(
-                cmd,
-                len(all_nodes),
-                [
-                    "missing test.baseline_captured(passed): classification has "
-                    "no pre-WRITE R1 snapshot (MissingBaselineCaptureError)"
-                ],
-                failures=[],
+                cmd, len(all_nodes), load_errors, failures=[]
             )
             return
-        loaded = self._load_baseline_and_digests(baseline_ev, all_nodes)
-        if isinstance(loaded, list):
-            self._emit_collected_failure(cmd, len(all_nodes), loaded, failures=[])
-            return
-        baseline_assets, digests = loaded
         classes = classify_nodes(baseline_assets, all_nodes, digests)
         removed = sorted(node for node, klass in classes.items() if klass == "removed")
         oob_retired: list[str] = []
         if removed:
-            oob_retired, unexplained = self._partition_removed_nodes(
-                removed, baseline_assets
+            baseline_assets, classes, oob_retired, unexplained = (
+                self._reclassify_after_oob(
+                    removed, baseline_assets, all_nodes, digests
+                )
             )
             if unexplained:
                 self._emit_removed_assets(
                     cmd, state, all_nodes, unexplained, oob_retired=oob_retired
                 )
                 return
-            retired_set = set(oob_retired)
-            baseline_assets = BaselineAssets(
-                nodes=frozenset(
-                    node for node in baseline_assets.nodes if node not in retired_set
-                ),
-                node_digests={
-                    node: digest
-                    for node, digest in baseline_assets.node_digests.items()
-                    if node not in retired_set
-                },
-            )
-            classes = classify_nodes(baseline_assets, all_nodes, digests)
         self._emit_collected_passed(
             cmd, all_nodes, node_layer, classes, oob_retired=oob_retired
         )

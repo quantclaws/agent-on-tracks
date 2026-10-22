@@ -1,10 +1,12 @@
 """Releases window UI journey (IF-WEBUI-001, IF-RELEASES-001, IF-TIMELINE-002).
 
 The §9.2 browser happy path: login → the five-tab shell → the Releases window
-sidebar (version-grouped registry / backlog fold-over / archive query groups
-plus the summary row) → run selection → the fully drawn timeline → the fixed
-detail pane → the API-failure feedback face. Controls are located only via
-``data-testid``; every observation is a browser-visible outlet (§4d).
+sidebar (version-grouped registry / backlog fold-over / archive query groups)
+→ run selection → the fully drawn timeline → the fixed detail pane → the
+API-failure feedback face. v0.12's main-area contract removes the summary row
+and the main-area registry list: the sidebar owns the registry switcher.
+Controls are located only via ``data-testid``; every observation is a
+browser-visible outlet (§4d).
 """
 
 from __future__ import annotations
@@ -40,10 +42,9 @@ def _seed_release(ui_serve, project_id: str = "proj-rel-ui") -> str:
 # AC-FR0333-01@v0.11 TRACKS-TRACE releases sidebar groups and selection journey
 def test_releases_sidebar_and_selection(ui_serve, page):
     """AC-FR0333-01: the Releases window sidebar presents the version-grouped
-    registry and the backlog fold-over group with the summary row only;
-    selecting a release opens its run detail; selecting a backlog entry
-    presents its promotion entry; the user can return to the registry or move
-    on to Docs/Todos."""
+    registry and the backlog fold-over group; selecting a release opens its
+    run detail; selecting a backlog entry presents its promotion entry; the
+    user can return to the registry or move on to Docs/Todos."""
     run_id = _seed_release(ui_serve)
     _login(page, ui_serve.base_url)
 
@@ -54,11 +55,10 @@ def test_releases_sidebar_and_selection(ui_serve, page):
     expect(page.get_by_test_id("releases-group-registry")).to_be_visible()
     expect(page.get_by_test_id("releases-group-backlog")).to_be_visible()
     expect(page.get_by_test_id("releases-group-archive")).to_be_visible()
-    summary = page.get_by_test_id("releases-summary")
-    expect(summary).to_be_visible()
-    assert "proj-rel-ui" in summary.inner_text(), (
-        "the summary row carries the registered project identity"
-    )
+    # v0.12: the sidebar heading replaces the removed main-area summary row;
+    # the version group carries the registered run's identity.
+    assert page.get_by_test_id("sidebar-heading").inner_text() == "releases"
+    assert "v1.0" in page.get_by_test_id("releases-group-registry").inner_text()
     # the sidebar never lists other tabs' sub-content (§1e.2): no Docs tree
     # or Todos rows may render inside the Releases sidebar
     assert page.locator("[data-testid='releases-sidebar'] [data-testid^='doc-tree-item-']").count() == 0, (
@@ -69,7 +69,7 @@ def test_releases_sidebar_and_selection(ui_serve, page):
     )
 
     # selecting the release(run) enters the run detail in the main area
-    page.get_by_test_id(f"registry-run-{run_id}").click()
+    page.get_by_test_id(f"sidebar-run-{run_id}").click()
     expect(page.get_by_test_id("main-area")).to_contain_text("v1.0")
     expect(page.get_by_test_id("timeline")).to_be_visible()
 
@@ -112,7 +112,12 @@ def test_timeline_full_rendering(ui_serve, page):
     ui_serve.seed_project("proj-rel-ui", "v1.0")
     run_id = ui_serve.seed_run("run-rel-ui-1", "v1.0")
     _login(page, ui_serve.base_url)
-    page.get_by_test_id(f"registry-run-{run_id}").click()
+    page.get_by_test_id(f"sidebar-run-{run_id}").click()
+    # The click re-renders the Releases window in place (the landing face
+    # already auto-focused the newest run). Wait for the run-scoped URL —
+    # set immediately before that re-render replaces the body — so the
+    # assertions below never sample the previous track mid-replacement.
+    page.wait_for_url(f"**/runs/{run_id}")
 
     timeline = page.get_by_test_id("timeline")
     expect(timeline).to_be_visible()
@@ -134,13 +139,18 @@ def test_timeline_full_rendering(ui_serve, page):
     ):
         assert stage in rendered, f"the canonical track must cover {stage}"
     nodes = page.locator("[data-testid^='timeline-node-']")
+    expect(nodes.first).to_be_visible()
     assert nodes.count() >= 1, "each attempt is an independent node"
     states = {
         (nodes.nth(i).get_attribute("data-state") or "")
         for i in range(nodes.count())
     }
-    assert states <= {"done", "active", "pending", "attention", "void"}, (
-        f"node states stay inside the five-state set: {states!r}"
+    # v0.12 adds `blocked` beside the five canonical states: an unresolved
+    # attention.required is the operational face (timeline.js STATE_ICONS/
+    # nodeStateOf; pinned by test_static_ui_red.py::
+    # test_timeline_blocked_banner_shows_reason_detail_next_and_retry).
+    assert states <= {"done", "active", "pending", "attention", "blocked", "void"}, (
+        f"node states stay inside the closed state set: {states!r}"
     )
     assert "active" in states, "the active node is present and focused"
     # the shape channel, not color alone: nodes carry the data-state label
@@ -157,7 +167,7 @@ def test_node_detail_fixed_pane(ui_serve, page):
     ui_serve.seed_project("proj-rel-ui", "v1.0")
     run_id = ui_serve.seed_run("run-rel-ui-1", "v1.0")
     _login(page, ui_serve.base_url)
-    page.get_by_test_id(f"registry-run-{run_id}").click()
+    page.get_by_test_id(f"sidebar-run-{run_id}").click()
 
     nodes = page.locator("[data-testid^='timeline-node-']")
     expect(nodes.first).to_be_visible()
@@ -187,7 +197,7 @@ def test_fixed_pane_position_no_overlay(ui_serve, page):
     ui_serve.seed_project("proj-rel-ui", "v1.0")
     run_id = ui_serve.seed_run("run-rel-ui-1", "v1.0")
     _login(page, ui_serve.base_url)
-    page.get_by_test_id(f"registry-run-{run_id}").click()
+    page.get_by_test_id(f"sidebar-run-{run_id}").click()
 
     nodes = page.locator("[data-testid^='timeline-node-']")
     expect(nodes.first).to_be_visible()
@@ -197,11 +207,14 @@ def test_fixed_pane_position_no_overlay(ui_serve, page):
     assert page.get_by_test_id("timeline-node-overlay").count() == 0, (
         "the floating overlay is gone (the pane replaced it)"
     )
-    main = page.get_by_test_id("main-area").bounding_box()
+    # v0.12 OOB layout: the run face is two zones inside the main area —
+    # the timeline panel above and the fixed detail panel below. The pane
+    # must sit below the timeline face (never an overlay on top of it).
+    timeline_panel = page.get_by_test_id("timeline-panel").bounding_box()
     box = pane.bounding_box()
-    assert main and box, "both faces must be laid out"
-    assert box["y"] >= main["y"] + main["height"] - 1, (
-        "the pane sits below the main area, position fixed"
+    assert timeline_panel and box, "both faces must be laid out"
+    assert box["y"] >= timeline_panel["y"] + timeline_panel["height"] - 1, (
+        "the pane sits below the timeline panel, position fixed"
     )
 
 

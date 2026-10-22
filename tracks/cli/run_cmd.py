@@ -646,20 +646,26 @@ def _review_checkpoint(
     )
 
 
-def cmd_review(repo: Path, *args: str) -> int:
-    usage = "usage: trac review no-comment|revise [--actor NAME] [--comments TEXT]"
+_REVIEW_USAGE = (
+    "usage: trac review no-comment|revise [--actor NAME] [--comments TEXT]"
+)
+
+
+def _parse_review_args(
+    args: tuple[str, ...],
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Parse ``trac review`` arguments; the fourth item is a usage error."""
     argv = list(args)
     if not argv:
-        return _err(usage)
-    raw_action = argv.pop(0)
-    action = raw_action.replace("-", "_")
+        return None, None, None, _REVIEW_USAGE
+    action = argv.pop(0).replace("-", "_")
     actor: str | None = None
     comments: str | None = None
     seen: set[str] = set()
     while argv:
         flag = argv.pop(0)
         if flag not in ("--actor", "--comments") or not argv or flag in seen:
-            return _err(usage)
+            return None, None, None, _REVIEW_USAGE
         seen.add(flag)
         value = argv.pop(0)
         if flag == "--actor":
@@ -667,7 +673,14 @@ def cmd_review(repo: Path, *args: str) -> int:
         else:
             comments = value
     if action not in ("no_comment", "revise"):
-        return _err(usage)
+        return None, None, None, _REVIEW_USAGE
+    return action, actor, comments, None
+
+
+def cmd_review(repo: Path, *args: str) -> int:
+    action, actor, comments, usage_error = _parse_review_args(args)
+    if usage_error is not None:
+        return _err(usage_error)
     with active_run_context(repo) as active:
         if active is None:
             return _err("no active run")

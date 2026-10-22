@@ -1,13 +1,13 @@
-diff --git a/tracks/cli/main.py b/tracks/cli/main.py
-index 696a70d..e00f442 100644
---- a/tracks/cli/main.py
-+++ b/tracks/cli/main.py
-@@ -475,7 +475,7 @@ def cmd_discuss(repo: Path, *args) -> int:
- 
- 
- USAGE = (
+diff --git a/tracks/install.py b/tracks/install.py
+index 673de7c..28a3a6f 100644
+--- a/tracks/install.py
++++ b/tracks/install.py
+@@ -50,7 +50,7 @@ INSTALL_USAGE = (
+     "usage: trac install <path> [--version <X.Y.Z>] [--wheel <path>]"
+ )
+ CLI_INSTALL_USAGE = (
 -    "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
 +    "usage: trac init <path> [--version <v>] [--wheel <path>]"
-     "|version [--json]|start <version>"
-     "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
-     " [--watch|--no-watch]"
+ )
+ 
+ # Installer-owned paths committed by install (interfaces §1b.4/§1.0.5).

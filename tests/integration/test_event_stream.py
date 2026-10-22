@@ -41,6 +41,9 @@ def _seed_stream_run(tmp_path: Path, run_id: str) -> Path:
     finally:
         conn.close()
     db = sdb.ServiceDB(home)
+    db.append_event("service.started", {"version": "v0.9"}, run_id=run_id)
+    # Internal supervisor heartbeat: excluded from the stream read face
+    # (f60ec50) but retained in the non-slim audit projection.
     db.append_event(
         "command.accepted", {"command_id": "cmd-1", "kind": "pause_run"}, run_id=run_id
     )
@@ -103,8 +106,11 @@ def test_reconnect_backfill_no_regression(tmp_path: Path):
     assert [row["type"] for row in events] == [
         "stage.entered",
         "taskgraph.committed",
-        "command.accepted",
+        "service.started",
     ]
+    assert "command.accepted" not in [row["type"] for row in events], (
+        "internal command heartbeats are excluded from the merged stream"
+    )
     keys = [_row_key(row) for row in events]
     assert keys == sorted(keys), "the merged stream must follow (ts, source_rank, seq)"
 
@@ -113,7 +119,7 @@ def test_reconnect_backfill_no_regression(tmp_path: Path):
         api_events.stream_events(_request(home, "run-1", after=_row_cursor(events[0]), wait="0"))
     )
     backfilled = resumed.payload["events"]
-    assert [row["type"] for row in backfilled] == ["taskgraph.committed", "command.accepted"]
+    assert [row["type"] for row in backfilled] == ["taskgraph.committed", "service.started"]
     assert all(_row_key(row) > _row_key(events[0]) for row in backfilled)
     assert resumed.payload["cursor"] == _row_cursor(backfilled[-1])
 

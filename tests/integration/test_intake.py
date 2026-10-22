@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from tests._support.v09_web import (
 )
 from tracks.paths import tracks_home
 from tracks.store import Store, new_ulid
+from tracks.supervisor.db import ServiceDB
 
 pytestmark = pytest.mark.integration
 
@@ -289,7 +291,10 @@ def test_intake_sources_and_actions(tmp_path: Path, host_repo, trac):
         assert status == 202, f"backlog source must be accepted: {status} {body[:200]}"
         backlog_intake = json.loads(body)
 
-        # the read model resolves all three and the list filters by status
+        # the read model resolves all three and lists them (v0.12 wakes the
+        # supervisor on a human submit, so the evaluation may already have
+        # run; the SM-01 lifecycle, not a fixed submitted window, is the
+        # contract)
         for intake in (text_intake, issue_intake, backlog_intake):
             row_status, body = http_get(
                 base,
@@ -298,15 +303,23 @@ def test_intake_sources_and_actions(tmp_path: Path, host_repo, trac):
             )
             assert row_status == 200, f"the intake row must resolve: {row_status}"
         status, body = http_get(
-            base, f"/api/projects/{project_id}/intakes?status=submitted", cookies=cookie
+            base, f"/api/projects/{project_id}/intakes", cookies=cookie
         )
         assert status == 200, f"the list must resolve: {status} {body[:200]}"
         listed = json.loads(body)["intakes"]
-        assert {row["intake_id"] for row in listed} >= {
+        submission_ids = {
             text_intake["intake_id"],
             issue_intake["intake_id"],
             backlog_intake["intake_id"],
-        }, f"all three submissions must list as submitted: {listed!r}"
+        }
+        assert {row["intake_id"] for row in listed} >= submission_ids, (
+            f"all three submissions must list: {listed!r}"
+        )
+        assert all(
+            row["status"] in ("submitted", "evaluating", "evaluated")
+            for row in listed
+            if row["intake_id"] in submission_ids
+        ), f"submissions stay on the SM-01 lifecycle: {listed!r}"
 
         # closed-set validation: an unknown source is refused 422 (§2b #39)
         status, body = _submit(
@@ -316,14 +329,28 @@ def test_intake_sources_and_actions(tmp_path: Path, host_repo, trac):
         )
         assert status == 422, f"an unknown source must be refused: {status} {body[:200]}"
 
-        # unevaluated intakes refuse decisions (§1b #15 precondition)
+        # unevaluated intakes refuse decisions (§1b #15 precondition). An
+        # API-submitted row is claimed immediately by the v0.12 wake-up, so
+        # seed a fresh evaluating row (the stable in-flight window) instead
+        # of racing the evaluation worker.
+        unevaluated_id = new_ulid()
+        now = datetime.now(timezone.utc).isoformat()
+        ServiceDB(tmp_path / "serve-home-src").insert_intake({
+            "intake_id": unevaluated_id,
+            "project_id": project_id,
+            "source": "text",
+            "content": "尚未评估的输入",
+            "status": "evaluating",
+            "created_at": now,
+            "updated_at": now,
+        })
         status, body = _decide(
-            base, cookie, csrf, text_intake["intake_id"],
+            base, cookie, csrf, unevaluated_id,
             {"action": "backlog"},
             "intake-decide-early-1",
         )
         assert status == 422, (
-            f"a submitted (not evaluated) intake must refuse decisions: {status} {body[:200]}"
+            f"an unevaluated intake must refuse decisions: {status} {body[:200]}"
         )
         assert json.loads(body)["error"]["reason"] == "intake_not_ready", body[:200]
 
@@ -335,6 +362,22 @@ def test_intake_sources_and_actions(tmp_path: Path, host_repo, trac):
             assert evaluated["status"] == "evaluated", (
                 f"the fake-backend evaluation must land evaluated: {evaluated!r}"
             )
+
+        # the list filters by the SM-01 status: once the fence lands all
+        # three evaluated, the evaluated filter serves exactly those rows
+        status, body = http_get(
+            base,
+            f"/api/projects/{project_id}/intakes?status=evaluated",
+            cookies=cookie,
+        )
+        assert status == 200, f"the filtered list must resolve: {status} {body[:200]}"
+        evaluated_rows = json.loads(body)["intakes"]
+        assert {row["intake_id"] for row in evaluated_rows} >= submission_ids, (
+            f"the evaluated filter must serve all three submissions: {evaluated_rows!r}"
+        )
+        assert all(row["status"] == "evaluated" for row in evaluated_rows), (
+            f"?status= filters the read model (§1f.3): {evaluated_rows!r}"
+        )
 
         # action ① backlog on the issue-sourced intake
         status, body = _decide(

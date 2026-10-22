@@ -21,6 +21,7 @@ import pytest
 
 from tracks import paths
 from tracks.effects.github import judge_ci_binding, readback_ci_run
+from tracks.executor import verify_ci
 from tracks.executor.executor import Executor
 from tracks.executor.m_verify import collect_binding_violations, freeze_candidate
 from tracks.kernel.events import Command
@@ -158,8 +159,30 @@ def _clear_ci_env(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def _seed_origin(host_repo) -> None:
+    """Bind a local bare origin so observe_ci_runs can push the candidate."""
+    remote = host_repo.parent / "ci-origin.git"
+    if not remote.exists():
+        subprocess.run(
+            ["git", "init", "--bare", str(remote)], check=True, capture_output=True
+        )
+    has_origin = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=host_repo,
+        capture_output=True,
+    ).returncode == 0
+    if not has_origin:
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(remote)],
+            cwd=host_repo,
+            check=True,
+            capture_output=True,
+        )
+
+
 def _seed_verify_boundary(host_repo, trac) -> tuple[str, str]:
     """Create a contract before freezing, then append legal M-VERIFY facts."""
+    _seed_origin(host_repo)
     assert trac("init").returncode == 0
     assert trac("start", "v0.8", stdin="CI readback boundary").returncode == 0
     contract = host_repo / ".tracks" / "projects" / "project.toml"
@@ -279,7 +302,9 @@ def test_api_readback_binds_candidate(host_repo, trac, event_log, monkeypatch, c
 
 
 # AC-FR0270-02@v0.8 TRACKS-TRACE mismatch missing stale blocks and not referenced
-def test_mismatch_missing_stale_blocks(host_repo, trac, event_log, monkeypatch, ci_standin):
+def test_mismatch_missing_stale_blocks(  # pylint: disable=too-many-locals
+    host_repo, trac, event_log, monkeypatch, ci_standin
+):
     chain = [
         {"kind": "candidate.frozen", "candidate_sha": _CANDIDATE},
         {"kind": "ci.run_observed", "candidate_sha": _FOREIGN},
@@ -292,7 +317,6 @@ def test_mismatch_missing_stale_blocks(host_repo, trac, event_log, monkeypatch, 
     scenarios = (
         ("foreign_head", _FOREIGN, {"mismatch", "stale"}),
         ("missing_head", None, {"missing"}),
-        ("no_run", None, {"missing"}),
         ("foreign_workflow", candidate_sha, {"mismatch", "missing"}),
     )
     for name, head_sha, expected_reason in scenarios:
@@ -331,6 +355,31 @@ def test_mismatch_missing_stale_blocks(host_repo, trac, event_log, monkeypatch, 
     status = trac("status")
     replay = trac("replay")
     assert replay.returncode == 0 and "ci.run_observed" in replay.stdout
+    _clear_ci_env(monkeypatch)
+
+
+# AC-FR0270-01@v0.8 TRACKS-TRACE push registers lagging CI with a bounded wait
+def test_missing_run_polls_then_times_out(host_repo, trac, event_log, monkeypatch, ci_standin):
+    run_id, candidate_sha = _seed_verify_boundary(host_repo, trac)
+    ci_standin.configure(head_sha=None, requested_sha=candidate_sha,
+                         checks={"required-ci": "success"})
+    _set_ci_env(monkeypatch, ci_standin)
+    monkeypatch.setattr(verify_ci, "_CI_POLL_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(verify_ci, "_CI_POLL_TIMEOUT_SECONDS", 0)
+    _observe_via_executor(host_repo, run_id, candidate_sha)
+    events = event_log(run_id)
+    assert any(
+        e["type"] == "advisory.recorded"
+        and e["payload"].get("area") == "ci_readback"
+        and e["payload"].get("status") == "pending"
+        for e in events
+    ), "the pending poll must keep the driver visibly alive"
+    attention = [e for e in events if e["type"] == "attention.required"]
+    assert attention and attention[-1]["payload"].get("reason") == "ci_pending_timeout"
+    assert attention[-1]["payload"].get("next")
+    assert not any(e["type"] == "ci.run_observed" for e in events)
+    status = trac("status")
+    assert status.returncode == 0 and "needs_attention=ci_pending_timeout" in status.stdout
     _clear_ci_env(monkeypatch)
 
 

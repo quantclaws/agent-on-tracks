@@ -35,10 +35,12 @@ const PENDING_STATUSES = new Set(["submitted", "evaluating"]);
 const ACTION_LABELS = {
   develop: "进入开发",
   backlog: "进入 backlog",
+  remove: "从 backlog 删除",
   archive: "归档（不开发）",
 };
 const ACTION_SHORT = {
   backlog: "backlog",
+  remove: "remove",
   archive: "archive",
   develop: "develop",
 };
@@ -324,7 +326,8 @@ function buildEvalResult({ intake, report, onExecute }) {
     "data-testid": "panel-actions",
   });
   const buttons = [];
-  const order = ["develop", "backlog", "archive"];
+  const order = ["develop", "backlog", "remove", "archive"];
+  const source = (intake && intake.source) || "";
   for (const action of order) {
     const short = ACTION_SHORT[action];
     const btn = element("button", {
@@ -333,6 +336,11 @@ function buildEvalResult({ intake, report, onExecute }) {
       "data-testid": `panel-action-${short}`,
       text: ACTION_LABELS[action],
     });
+    // SM-01.5: remove_backlog is only legal for a backlog-sourced intake;
+    // the face stays present and visibly unavailable for every other source.
+    const disabledBySource = action === "remove" && source !== "backlog";
+    btn.disabled = disabledBySource;
+    if (disabledBySource) btn.setAttribute("aria-disabled", "true");
     if (action === recommendation.action) {
       btn.classList.add("recommended");
       btn.setAttribute("data-recommended", "true");
@@ -343,7 +351,7 @@ function buildEvalResult({ intake, report, onExecute }) {
       }));
     }
     btn.addEventListener("click", () => onPick(action));
-    buttons.push({ action, btn });
+    buttons.push({ action, btn, disabledBySource });
     bar.append(btn);
   }
   root.append(errorLine, bar, hintLine);
@@ -352,8 +360,8 @@ function buildEvalResult({ intake, report, onExecute }) {
   let pendingConfirmAction = null;
   function setExecuting(value) {
     executing = value;
-    for (const { btn } of buttons) {
-      btn.disabled = value;
+    for (const { btn, disabledBySource } of buttons) {
+      btn.disabled = value || disabledBySource;
     }
   }
 
@@ -362,7 +370,9 @@ function buildEvalResult({ intake, report, onExecute }) {
     setExecuting(true);
     errorLine.hidden = true;
     try {
-      await onExecute(action);
+      // The closed decision action is remove_backlog; the short testid face
+      // stays `remove` for the frozen browser contract.
+      await onExecute(action === "remove" ? "remove_backlog" : action);
     } catch (error) {
       setExecuting(false);
       errorLine.textContent = `决策失败：${error && error.message ? error.message : error}，可重试。`;

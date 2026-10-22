@@ -80,6 +80,27 @@ def _require_target_diff(
             stderr=proc.stderr,
         )
 
+def _human_adjudicated_thread(text: str, thread, ctx) -> bool:
+    """True when the thread's adjudication owner is the Human."""
+    owner = adjudication_owner(text, thread.thread_id)
+    return owner is not None and is_human_owner(owner, ctx)
+
+
+def _doc_unresolved_thread_labels(
+    path: Path, role_key: str, ctx, multi: bool
+) -> list[str]:
+    """Unresolved non-Human threads initiated by ``role_key`` in one doc."""
+    text = path.read_text(encoding="utf-8")
+    labels: list[str] = []
+    for thread in parse_threads(text):
+        if speaker_key(thread.initiator) != role_key or thread.status == "resolved":
+            continue
+        if _human_adjudicated_thread(text, thread, ctx):
+            continue
+        labels.append(f"{path.name}:{thread.thread_id}" if multi else thread.thread_id)
+    return labels
+
+
 def _unresolved_role_threads(
     doc_paths: list[Path], role: str, repo_or_cwd=None
 ) -> list[str]:
@@ -106,18 +127,11 @@ def _unresolved_role_threads(
     role_key = speaker_key(role)
     multi = len(doc_paths) > 1
     ctx = repo_or_cwd if repo_or_cwd is not None else (doc_paths[0].parent if doc_paths else None)
-    offending = []
+    offending: list[str] = []
     for path in doc_paths:
         if not path.exists():
             continue
-        text = path.read_text(encoding="utf-8")
-        for thread in parse_threads(text):
-            if speaker_key(thread.initiator) == role_key and thread.status != "resolved":
-                owner = adjudication_owner(text, thread.thread_id)
-                if owner is not None and is_human_owner(owner, ctx):
-                    continue
-                label = f"{path.name}:{thread.thread_id}" if multi else thread.thread_id
-                offending.append(label)
+        offending.extend(_doc_unresolved_thread_labels(path, role_key, ctx, multi))
     return offending
 
 def _docset_text(doc_paths: list[Path]) -> str:

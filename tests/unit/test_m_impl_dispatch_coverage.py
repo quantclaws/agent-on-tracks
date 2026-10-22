@@ -6,6 +6,8 @@ persistence, forensics capture and stale-selection propagation.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +59,7 @@ class _Host(MImplDispatchMixin):
         self._selection_error: Exception | None = None
         self._lint = (None, "")
         self._oscillation = None
+        self._outcome: dict | None = None
 
     def _emit(self, event, payload=None, **kwargs):
         self.emitted.append((event, payload, kwargs))
@@ -69,6 +72,9 @@ class _Host(MImplDispatchMixin):
 
     def _devon_evidence_error(self, phase, state):
         return self._evidence_error
+
+    def _last_devon_outcome(self):
+        return self._outcome
 
     def _ensure_gate_worktree(self, state, phase=None):
         return "cwd", "handle"
@@ -139,6 +145,91 @@ def test_green_gate_lint_note_and_regression(tmp_path, monkeypatch):
     host._green_regression_tests = lambda r_sha, state: ["tests/unit/test_r.py"]
     host._run_green_gate(_Cmd(), _state(r_tree_identity="r" * 40))
     assert host.emitted[-1][1]["check"] == "regression"
+
+
+def _gate_repo(tmp_path: Path, hooks_path: str, hook_body: str | None) -> Path:
+    gate = tmp_path / "gate"
+    (gate / "tracks").mkdir(parents=True)
+    (gate / "tracks" / "bad.py").write_text("BAD = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(gate), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(gate), "config", "core.hooksPath", hooks_path],
+        check=True,
+    )
+    if hook_body is not None:
+        hooks = gate / hooks_path
+        hooks.mkdir(parents=True)
+        hook = hooks / "pre-commit"
+        hook.write_text(hook_body, encoding="utf-8")
+        hook.chmod(0o755)
+    return gate
+
+
+def _green_host_with_gate(host, gate: Path, changed: list[str]):
+    host._outcome = {"changed_paths": changed}
+    host._ensure_gate_worktree = lambda state, phase=None: (str(gate), None)
+    return host
+
+
+def test_green_gate_host_hook_rejection_uses_core_hooks_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(dispatch, "cleanup_worktree", lambda handle: None)
+    args_log = tmp_path / "args.log"
+    env_log = tmp_path / "env.log"
+    gate = _gate_repo(
+        tmp_path,
+        "custom-hooks",
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$@" > "{args_log}"\n'
+        f'printf "%s|%s\\n" "$TRACKS_HOOK_ROOT" "$TRACKS_HOOK_BIN" > "{env_log}"\n'
+        'echo "pre-commit: bad.py rejected" >&2\n'
+        "exit 1\n",
+    )
+    host = _green_host_with_gate(
+        _Host(tmp_path), gate, ["tracks/bad.py", "tracks/missing.py"]
+    )
+
+    host._run_green_gate(_Cmd(), _state())
+
+    event, payload = host.emitted[-1]
+    assert event == "gate_failed"
+    assert payload["check"] == "commit"
+    assert payload["reason"] == "pre-commit rejected GREEN deliverables"
+    assert "bad.py rejected" in payload["evidence"]
+    assert payload["task_id"] == "T-001"
+    assert payload["attempt"] == 1
+    assert args_log.read_text(encoding="utf-8").splitlines() == ["tracks/bad.py"]
+    expected = f"{host.repo}|{Path(sys.executable).parent}"
+    assert env_log.read_text(encoding="utf-8").strip() == expected
+
+
+def test_green_gate_missing_host_hook_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setattr(dispatch, "cleanup_worktree", lambda handle: None)
+    gate = _gate_repo(tmp_path, ".missing-hooks", None)
+    host = _green_host_with_gate(
+        _Host(tmp_path), gate, ["tracks/bad.py"]
+    )
+
+    host._run_green_gate(_Cmd(), _state())
+
+    event, payload, _ = host.emitted[-1]
+    assert event == "verdict.passed"
+    assert payload["check"] == "green"
+
+
+def test_green_gate_custom_host_hook_pass_is_opaque(tmp_path, monkeypatch):
+    monkeypatch.setattr(dispatch, "cleanup_worktree", lambda handle: None)
+    gate = _gate_repo(
+        tmp_path,
+        "host-hooks",
+        "#!/bin/sh\necho custom-host-hook-pass\nexit 0\n",
+    )
+    host = _green_host_with_gate(_Host(tmp_path), gate, ["tracks/bad.py"])
+
+    host._run_green_gate(_Cmd(), _state())
+
+    event, payload, _ = host.emitted[-1]
+    assert event == "verdict.passed"
+    assert payload["check"] == "green"
 
 
 def test_green_gate_oscillation_detected(tmp_path, monkeypatch):

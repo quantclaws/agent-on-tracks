@@ -85,14 +85,22 @@ def _login(page, base_url: str) -> None:
 
 
 def _submit_via_ui(page, base_url: str, text: str) -> None:
-    """The unified entry: submit one paragraph through the browser."""
-    page.get_by_test_id("intake-input").fill(text)
-    page.get_by_test_id("intake-submit").click()
-    expect(page.get_by_test_id("intake-panel")).to_be_visible()
+    """The unified entry: submit one paragraph through the v0.12 wizard.
+
+    The OOB create wizard owns the unified entry now: the Releases window's
+    always-visible "+" opens the three-page modal (journey pick → seed →
+    live Scribe evaluation), so the seed and its result live inside the
+    modal rather than in a Releases-window composer.
+    """
+    page.get_by_test_id("releases-create-entry").click()
+    expect(page.get_by_test_id("wizard-modal")).to_be_visible()
+    page.get_by_test_id("wizard-option-feature").click()
+    page.get_by_test_id("wizard-seed-input").fill(text)
+    page.get_by_test_id("wizard-create-release").click()
+    expect(page.get_by_test_id("wizard-page-eval")).to_be_visible()
     # the Scribe evaluation runs on the supervisor tick schedule — the
-    # fixed columns present when the intake leaves evaluating (up to ~3min)
-    for testid in ("panel-feasibility", "panel-duplicates", "panel-conflicts"):
-        expect(page.get_by_test_id(testid)).to_be_visible(timeout=180_000)
+    # human-readable result presents when the intake leaves evaluating
+    expect(page.get_by_test_id("eval-result")).to_be_visible(timeout=180_000)
 
 
 # AC-FR0338-01@v0.11 TRACKS-TRACE scribe panel columns and four actions
@@ -105,17 +113,20 @@ def test_scribe_panel_four_actions(trac, tmp_path, page):
     with _entry_serve(tmp_path, repo, "panel") as base:
         _login(page, base)
         _submit_via_ui(page, base, _SEED_TEXT)
-        # (columns already waited in _submit_via_ui; re-assert visibility)
-        # the four actions
+        # the report's fixed columns ride the human-readable result face
+        for testid in ("eval-feasibility-chip", "eval-conflicts-chip"):
+            expect(page.get_by_test_id(testid)).to_be_visible()
+        assert "重复" in page.get_by_test_id("eval-result").inner_text()
+        # the four actions (the backlog-only removal stays visibly unavailable
+        # for a text source)
         for action in ("backlog", "remove", "archive", "develop"):
             expect(page.get_by_test_id(f"panel-action-{action}")).to_be_visible()
-        # a text source may not offer the backlog-only removal
         remove = page.get_by_test_id("panel-action-remove")
         assert remove.is_disabled() or remove.get_attribute("aria-disabled") == "true", (
             "remove_backlog must be unavailable for a text source (SM-01.5)"
         )
         # no hotfix recommendation surface (§1f.5)
-        panel_text = page.get_by_test_id("intake-panel").inner_text().lower()
+        panel_text = page.get_by_test_id("eval-result").inner_text().lower()
         assert "hotfix" not in panel_text, (
             "the unified entry must not recommend the hotfix flow"
         )
@@ -145,11 +156,11 @@ def test_develop_happy_creates_release(trac, tmp_path, page):
             if not seen:
                 time.sleep(1.0)
         assert seen, "the new release version must present after the gate"
-        # the M-STORY activity presents on the timeline: open the new run's
-        # face (the registry re-rendered in place after the decision)
+        # the M-STORY activity presents on the timeline: the sidebar owns
+        # the registry (v0.12 main-area contract), so open the new run there
         page.get_by_test_id("tabbar-item-releases").click()
         page.locator("[data-testid='view-releases']").wait_for(timeout=30_000)
-        rows = page.locator("[data-testid^='registry-run-']")
+        rows = page.locator("[data-testid^='sidebar-run-']")
         rows.first.wait_for(timeout=30_000)
         rows.first.click()
         # the new run awaits triage at M-STORY (attention state carries the
@@ -176,17 +187,15 @@ def test_hotfix_entry_anchored_proceeds(trac, tmp_path, page):
     _seed_hotfix_host(repo)
     with _entry_serve(tmp_path, repo, "hotfix") as base:
         _login(page, base)
-        page.get_by_test_id("hotfix-entry").click()
-        page.get_by_test_id("hotfix-issue-input").fill("42")
-        page.get_by_test_id("hotfix-scenario-post-release").click()
-        page.get_by_test_id("hotfix-preview-submit").click()
-        preview = page.get_by_test_id("hotfix-preview")
-        expect(preview).to_be_visible()
-        assert "anchored" in preview.inner_text(), (
-            "the anchoring result must present on the entry"
-        )
-        proceed = page.get_by_test_id("hotfix-proceed")
-        expect(proceed).to_be_visible()
+        page.get_by_test_id("releases-create-entry").click()
+        expect(page.get_by_test_id("wizard-modal")).to_be_visible()
+        page.get_by_test_id("wizard-option-hotfix").click()
+        page.get_by_test_id("wizard-issue-input").fill("42")
+        page.get_by_test_id("wizard-scenario-post-release").click()
+        anchoring = page.get_by_test_id("hotfix-anchoring")
+        expect(anchoring).to_contain_text("anchored", timeout=30_000)
+        proceed = page.get_by_test_id("wizard-create-hotfix")
+        expect(proceed).to_be_enabled()
         proceed.click()
         # the anchored entry proceeds: the hotfix run's face presents
         # (the fix branch lands via the run's dispatch — allow 120s for

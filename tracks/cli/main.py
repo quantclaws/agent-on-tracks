@@ -28,6 +28,7 @@ from tracks.executor import (  # noqa: F401  (§1.0.9 assembly)
     v07_runtime,
     version_extensions,
 )
+from tracks.install import CLI_INSTALL_USAGE as CLI_INSTALL_USAGE
 
 from .common import (
     HOST_BYPRODUCTS_GITIGNORE as HOST_BYPRODUCTS_GITIGNORE,
@@ -475,8 +476,8 @@ def cmd_discuss(repo: Path, *args) -> int:
 
 
 USAGE = (
-    "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
-    "|version [--json]|start <version>"
+    CLI_INSTALL_USAGE
+    + "|version [--json]|start <version>"
     "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
     " [--watch|--no-watch]"
     "|triage <decision> [--actor NAME]"

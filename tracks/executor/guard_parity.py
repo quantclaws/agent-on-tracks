@@ -19,8 +19,9 @@ deployment files with consistent ``TRACKS_GUARD_REGISTRY`` digests.
 from __future__ import annotations
 
 import hashlib
+import re
 import shlex
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
 from tracks.executor.guard_registry import (
@@ -158,17 +159,98 @@ def _compare_command(
     return []
 
 
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_ASSIGNMENT_RE = re.compile(
+    r"^(?:(?:export|local|readonly|declare|typeset)\s+)?"
+    r"[A-Za-z_][A-Za-z0-9_]*\+?="
+)
+_ASSIGNMENT_TOKEN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+_FUNCTION_DEF_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)\s*\{?$")
+_SHELL_CONTROL_WORDS = frozenset(
+    {
+        "if", "then", "else", "elif", "fi", "for", "while", "until",
+        "do", "done", "case", "esac", "in", "select", "function", "time",
+        "{", "}", "!", "shift", "unset", "trap", "return", "exit",
+        "break", "continue", "export", "local", "readonly", "declare",
+        "typeset",
+    }
+)
+
+
+def _is_shell_scaffolding(line: str) -> bool:
+    """True for assignments, control flow, function headers and case arms."""
+    if _FUNCTION_DEF_RE.match(line) or _ASSIGNMENT_RE.match(line):
+        return True
+    first = line.split(None, 1)[0]
+    if first in _SHELL_CONTROL_WORDS or first in {"[", "[["}:
+        return True
+    return line.endswith(";;") or bool(re.fullmatch(r"\S+\)", line))
+
+
+def _split_shell_line(line: str) -> tuple[str, ...]:
+    """Tokenize one line with inline comments; malformed lines are ignored."""
+    try:
+        return tuple(shlex.split(line, comments=True))
+    except ValueError:
+        return ()
+
+
+def _without_assignment_prefix(argv: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop leading ``NAME=value`` environment assignments from a command."""
+    index = 0
+    while index < len(argv) and _ASSIGNMENT_TOKEN_RE.match(argv[index]):
+        index += 1
+    return argv[index:]
+
+
+def _shell_line_argv(line: str) -> tuple[str, ...]:
+    """argv for one shell line, or ``()`` for a non-command shell construct.
+
+    Assignments, conditionals, loop/case/function scaffolding and continuations
+    are shell grammar, not guard invocations.  Actual command lines are parsed
+    with inline comments honoured so a trailing ``# comment`` cannot drift the
+    argv comparison.  Lines that still cannot be tokenized are tolerated (the
+    script is host-owned), never allowed to abort parity checking.
+    """
+    if _is_shell_scaffolding(line):
+        return ()
+    return _without_assignment_prefix(_split_shell_line(line))
+
+
+def _shell_script_lines(text: str) -> Iterator[str]:
+    """Yield command-bearing lines, excluding comments and here-doc bodies."""
+    heredoc_end: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if heredoc_end is not None:
+            if stripped == heredoc_end:
+                heredoc_end = None
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        heredoc = _HEREDOC_RE.search(stripped)
+        if heredoc is None:
+            yield stripped
+            continue
+        heredoc_end = heredoc.group(2)
+        command = stripped[: heredoc.start()].rstrip()
+        if command:
+            yield command
+
+
 def _parse_shell_commands(path: Path) -> tuple[tuple[str, ...], ...]:
-    """Parse a shell script into argv tuples (one per non-comment, non-empty
-    shell line)."""
+    """Parse a shell script into argv tuples for its actual command lines.
+
+    Shell scaffolding (comments, assignments, control flow, function bodies'
+    variable handling and here-doc bodies) is skipped so the canonical guard
+    commands remain comparable; a missing or drifted lint invocation still
+    produces no matching candidate and therefore a parity mismatch.
+    """
     commands: list[tuple[str, ...]] = []
     if not path.exists():
         return tuple(commands)
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        argv = tuple(shlex.split(stripped))
+    for line in _shell_script_lines(path.read_text(encoding="utf-8")):
+        argv = _shell_line_argv(line)
         if argv:
             commands.append(argv)
     return tuple(commands)

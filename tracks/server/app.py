@@ -460,20 +460,37 @@ class _StaticGzip:
     def __init__(self, app: Any) -> None:
         self._app = app
 
-    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+    def _bypass(self, scope: Any) -> bool:
+        """Whether this request is outside the gzip-on-static contract."""
         if scope.get("type") != "http":
-            await self._app(scope, receive, send)
-            return
+            return True
         if str(scope.get("method", "GET")).upper() == "HEAD":
+            return True
+        if not str(scope.get("path", "")).startswith("/static/"):
+            return True
+        return not _accepts_gzip(scope)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if self._bypass(scope):
             await self._app(scope, receive, send)
             return
-        path = str(scope.get("path", ""))
-        if not path.startswith("/static/"):
-            await self._app(scope, receive, send)
+        start, chunks = await self._capture(scope, receive, send)
+        if start is None:
+            await self._send_chunks(send, chunks)
             return
-        if not _accepts_gzip(scope):
-            await self._app(scope, receive, send)
+        compressed = self._maybe_compress(
+            str(scope.get("path", "")), start, b"".join(chunks)
+        )
+        if compressed is None:
+            await self._replay(send, start, chunks)
             return
+        await send(compressed[0])
+        await send({"type": "http.response.body", "body": compressed[1]})
+
+    async def _capture(
+        self, scope: Any, receive: Any, send: Any
+    ) -> tuple[dict | None, list[bytes]]:
+        """Run the app, capturing the response start + body chunks."""
         start: dict | None = None
         chunks: list[bytes] = []
 
@@ -483,44 +500,49 @@ class _StaticGzip:
                 start = message
             elif message["type"] == "http.response.body":
                 chunks.append(bytes(message.get("body", b"")))
-                if message.get("more_body"):
-                    return
             else:
                 # Trailers/background: nothing to compress, replay as-is.
-                if start is not None:
-                    await send(start)
-                    for piece in chunks:
-                        await send(
-                            {"type": "http.response.body", "body": piece,
-                             "more_body": True}
-                        )
+                await self._replay_partial(send, start, chunks)
                 await send(message)
 
         await self._app(scope, receive, capture)
+        return start, chunks
+
+    async def _replay_partial(
+        self, send: Any, start: dict | None, chunks: list[bytes]
+    ) -> None:
+        """Replay a partial response before a trailing non-body message."""
         if start is None:
-            for piece in chunks:
-                await send(
-                    {"type": "http.response.body", "body": piece, "more_body": True}
-                )
+            return
+        await send(start)
+        for piece in chunks:
+            await send(
+                {"type": "http.response.body", "body": piece, "more_body": True}
+            )
+
+    async def _send_chunks(self, send: Any, chunks: list[bytes]) -> None:
+        """Send captured chunks when the response never started."""
+        for piece in chunks:
+            await send(
+                {"type": "http.response.body", "body": piece, "more_body": True}
+            )
+        await send({"type": "http.response.body", "body": b""})
+
+    async def _replay(
+        self, send: Any, start: dict, chunks: list[bytes]
+    ) -> None:
+        """Replay an uncompressed response exactly as captured."""
+        await send(start)
+        if not chunks:
             await send({"type": "http.response.body", "body": b""})
             return
-        body = b"".join(chunks)
-        compressed = self._maybe_compress(path, start, body)
-        if compressed is None:
-            await send(start)
-            if chunks:
-                for piece in chunks[:-1]:
-                    await send(
-                        {"type": "http.response.body", "body": piece,
-                         "more_body": True}
-                    )
-                await send({"type": "http.response.body", "body": chunks[-1],
-                                  "more_body": False})
-            else:
-                await send({"type": "http.response.body", "body": b""})
-            return
-        await send(compressed[0])
-        await send({"type": "http.response.body", "body": compressed[1]})
+        for piece in chunks[:-1]:
+            await send(
+                {"type": "http.response.body", "body": piece, "more_body": True}
+            )
+        await send(
+            {"type": "http.response.body", "body": chunks[-1], "more_body": False}
+        )
 
     def _maybe_compress(
         self, path: str, start: dict, body: bytes

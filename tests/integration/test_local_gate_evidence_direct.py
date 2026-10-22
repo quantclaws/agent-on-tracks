@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.integration.test_verify_ci_readback import _REPO, _CiStandIn
+from tests.integration.test_verify_ci_readback import _REPO, _CiStandIn, _seed_origin
 from tracks import paths
 from tracks.executor.executor import Executor
 from tracks.executor.host_contract import (
@@ -141,6 +141,7 @@ def _write_contract(repo: Path, counter: Path, *, second_mode: str = "pass_exit"
 
 
 def _seed_candidate(host_repo: Path, trac, counter: Path, *, second_mode: str = "pass_exit") -> tuple[str, str, Path]:
+    _seed_origin(host_repo)
     assert trac("init").returncode == 0
     assert trac("start", "v0.8", stdin="LOCAL_GATES acceptance boundary").returncode == 0
     contract = _write_contract(host_repo, counter, second_mode=second_mode)
@@ -303,7 +304,7 @@ def test_partial_gate_failure_runs_remaining_and_blocks(
 
 
 # AC-FR0269-02: a changed contract digest reruns the same candidate's gates.
-def test_changed_contract_digest_reruns_same_candidate(
+def test_changed_contract_digest_reruns_same_candidate(  # pylint: disable=too-many-locals
     host_repo, trac, tmp_path, monkeypatch, ci_standin
 ):
     counter = tmp_path / "counts.json"

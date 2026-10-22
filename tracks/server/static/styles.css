@@ -1249,6 +1249,109 @@ textarea {
   margin: 0;
 }
 
+/* operational block (attention.required): reason/detail/next + retry */
+.blocked-banner {
+  margin: var(--s-2) 0;
+  padding: var(--s-3);
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.blocked-banner.blocked-needs-action {
+  border-color: var(--warn);
+}
+
+.blocked-title {
+  margin: 0 0 var(--s-1);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.blocked-banner.blocked-needs-action .blocked-title {
+  color: var(--warn);
+}
+
+.blocked-detail,
+.blocked-next,
+.blocked-retry-hint {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-body);
+}
+
+.blocked-detail {
+  white-space: pre-wrap;
+}
+
+.blocked-next {
+  font-weight: 600;
+}
+
+.blocked-retry-hint {
+  color: var(--fg-muted);
+}
+
+.blocked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
+/* M-VERIFY sub-step progress (freeze / local gates / version / CI / Prism) */
+.verify-progress {
+  margin: var(--s-2) 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+}
+
+.verify-progress-title {
+  margin: 0 0 var(--s-1);
+  color: var(--fg-muted);
+  font-weight: 600;
+  font-size: var(--fs-caption);
+}
+
+.verify-progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.verify-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--fs-caption);
+}
+
+.verify-step-done .verify-step-icon {
+  color: var(--success);
+}
+
+.verify-step-failed .verify-step-icon {
+  color: var(--danger);
+}
+
+.verify-step-active .verify-step-icon {
+  color: var(--focus);
+}
+
+.verify-step-pending {
+  color: var(--fg-muted);
+}
+
+.verify-step-pending .verify-step-icon {
+  color: var(--fg-subtle);
+}
+
 .page-return {
   margin: 0 0 var(--s-2);
 }
@@ -1452,6 +1555,17 @@ textarea {
 
 .stage-node.state-attention .node-icon {
   color: var(--warn);
+}
+
+.stage-node.state-blocked {
+  border-color: var(--danger);
+  border-width: 2px;
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
+.stage-node.state-blocked .node-icon {
+  color: var(--danger);
 }
 
 .stage-node.state-pending {

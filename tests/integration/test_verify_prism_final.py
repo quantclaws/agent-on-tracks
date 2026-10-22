@@ -8,16 +8,13 @@ for the agent effect and is configured for the final verdict.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from tests.integration.test_verify_ci_readback import _CiStandIn, _seed_origin
 from tracks import paths
 from tracks.discuss.locate import token_for
 from tracks.discuss.parser import parse_threads
@@ -53,93 +50,6 @@ result.write_text(
     'name="test_%s" /></testsuite>' % (layer, layer, layer)
 )
 """
-
-
-class _CiStandIn:
-    """Loopback subset of the GitHub workflow-runs and jobs API."""
-
-    def __init__(self):
-        self.expected_head_sha: str | None = None
-        self.requests: list[str] = []
-        self._lock = threading.Lock()
-        owner = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *_args):  # pragma: no cover - server noise
-                return
-
-            def _reply(self, status: int, body: dict):
-                raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-
-            def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler protocol
-                parsed = urlparse(self.path)
-                with owner._lock:
-                    owner.requests.append(self.path)
-                    expected = owner.expected_head_sha
-                prefix = f"/repos/{_REPO}/actions/"
-                if parsed.path in (f"{prefix}workflows/{_WORKFLOW}/runs", f"{prefix}runs"):
-                    query = parse_qs(parsed.query)
-                    if query.get("head_sha") != [expected]:
-                        self._reply(200, {"total_count": 0, "workflow_runs": []})
-                    else:
-                        self._reply(
-                            200,
-                            {
-                                "total_count": 1,
-                                "workflow_runs": [
-                                    {
-                                        "id": 17,
-                                        "name": "Build and verify",
-                                        "workflow_id": int(_WORKFLOW),
-                                        "path": ".github/workflows/ci.yml",
-                                        "head_sha": expected,
-                                        "status": "completed",
-                                        "conclusion": "success",
-                                    }
-                                ],
-                            },
-                        )
-                    return
-                if parsed.path == f"{prefix}runs/17/jobs":
-                    self._reply(
-                        200,
-                        {
-                            "total_count": 1,
-                            "jobs": [
-                                {
-                                    "id": 1,
-                                    "run_id": 17,
-                                    "name": _REQUIRED[0],
-                                    "head_sha": expected,
-                                    "status": "completed",
-                                    "conclusion": "success",
-                                }
-                            ],
-                        },
-                    )
-                    return
-                self._reply(404, {"message": "not found"})
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self._thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-
-    @property
-    def base_url(self) -> str:
-        return f"http://127.0.0.1:{self.server.server_port}"
-
-    def start(self):
-        self._thread.start()
-        return self
-
-    def close(self):
-        self.server.shutdown()
-        self.server.server_close()
-        self._thread.join(timeout=5)
 
 
 @pytest.fixture
@@ -233,6 +143,7 @@ def _write_contract(repo: Path) -> None:
 
 
 def _seed_prism_boundary(host_repo, trac, *, anchored: bool = False) -> tuple[str, str]:
+    _seed_origin(host_repo)
     assert trac("init").returncode == 0
     assert trac("start", "v0.8", stdin="Prism final boundary").returncode == 0
     if anchored:
@@ -297,7 +208,7 @@ def _configure_ci(monkeypatch, standin: _CiStandIn, candidate_sha: str) -> None:
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", standin.base_url)
     monkeypatch.setenv("TRAC_CI_REPO", _REPO)
     monkeypatch.setenv("GITHUB_TOKEN", "loopback-token")
-    standin.expected_head_sha = candidate_sha
+    standin.configure(head_sha=candidate_sha, checks={"required-ci": "success"})
 
 
 def _set_simulation(monkeypatch, value: str) -> None:

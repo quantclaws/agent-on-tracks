@@ -42,6 +42,7 @@ _IGNORE = shutil.ignore_patterns(
     ".tracks",
     ".opencode",
     ".pytest_cache",
+    ".coverage*",
     "tests",
     "dist",
     "build",

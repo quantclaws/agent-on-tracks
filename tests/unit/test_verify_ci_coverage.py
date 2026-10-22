@@ -205,7 +205,8 @@ def test_readback_binding_failed_judgment(tmp_path, monkeypatch):
     assert types == ["ci.run_observed", "attention.required"]
     assert host.emitted[0][1]["reason"] == "mismatch"
     assert host.emitted[0][1]["status"] == "failed"
-    assert host.emitted[1][1]["reason"] == "ci_binding_blocked"
+    assert host.emitted[1][1]["reason"] == "mismatch"
+    assert host.emitted[1][1]["detail"] == "mismatch"
 
 
 def test_readback_binding_passed_payload(tmp_path, monkeypatch):

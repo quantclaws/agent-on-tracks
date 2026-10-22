@@ -326,10 +326,13 @@ def test_review_two_decisions_thread_and_continue(ui_serve, page):
     assert threads[0].status == "open"
     assert comments in threads[0].root.body
     assert returned["payload"].get("thread_id") == threads[0].thread_id
+    # Success re-renders/closes the review face, so the feedback node may be
+    # gone; when it is still mounted it must not carry the failure marker.
     feedback = page.get_by_test_id("review-feedback")
-    assert feedback.get_attribute("data-failed") != "true", (
-        "a landed return must not show the failure face"
-    )
+    if feedback.count():
+        assert feedback.get_attribute("data-failed") != "true", (
+            "a landed return must not show the failure face"
+        )
 
 
 # AC-FR0359-02@v0.12 TRACKS-TRACE normal gate terse exception keeps reason impact inline failure
@@ -401,3 +404,83 @@ def test_rounds_lazy_first_paint(ui_serve, page):
     page.get_by_test_id("stage-round-12").wait_for(timeout=15_000)
     assert page.locator("[data-testid^='stage-round-']").count() == 12
     assert [url for url in requests if "/stages/M-TEST/rounds" in url]
+
+
+# AC-FR0355-03@v0.12 TRACKS-TRACE operational block banner and retry action
+def _seed_blocked_verify_run(ui_serve, run_id: str) -> str:
+    from tracks.paths import tracks_home
+    from tracks.store import Store
+
+    candidate = "a" * 40
+    store = Store(tracks_home(ui_serve.repo))
+    try:
+        for event_type, payload in (
+            ("stage.entered", {"stage": "M-VERIFY"}),
+            (
+                "candidate.frozen",
+                {"candidate_sha": candidate, "clean_tree": True, "branch": "main"},
+            ),
+            (
+                "local_gate.passed",
+                {"kind": "quality", "candidate_sha": candidate},
+            ),
+            (
+                "local_gate.passed",
+                {"kind": "version", "candidate_sha": candidate},
+            ),
+            (
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "missing_token",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate,
+                    "detail": "[host-contract.ci] repo_env/workflow unresolved",
+                    "next": "set the CI target/token; trac run retries in place",
+                },
+            ),
+        ):
+            store.append(run_id, _VERSION, event_type, payload)
+    finally:
+        store.close()
+    return run_id
+
+
+def test_verify_blocked_banner_progress_and_retry(ui_serve, page):
+    """AC-FR0355-03: an unresolved attention.required renders the blocked
+    banner (reason/detail/next), marks the M-VERIFY node blocked (not
+    active/attention), shows the sub-step states, and retries through the
+    existing POST /retry surface."""
+    ui_serve.seed_project("proj-blocked", _VERSION)
+    _seed_blocked_verify_run(ui_serve, "run-blocked")
+    _login_and_open_run(ui_serve, page, "run-blocked")
+
+    banner = page.get_by_test_id("blocked-banner")
+    expect(banner).to_be_visible()
+    assert "ci_readback" in page.get_by_test_id("blocked-reason").inner_text()
+    assert "missing_token" in page.get_by_test_id("blocked-reason").inner_text()
+    assert "[host-contract.ci]" in page.get_by_test_id("blocked-detail").inner_text()
+    assert "set the CI target/token" in page.get_by_test_id("blocked-next").inner_text()
+    assert page.get_by_test_id("card-action").inner_text().strip() == "阻塞"
+
+    node = page.get_by_test_id("timeline-node-M-VERIFY")
+    assert node.get_attribute("data-state") == "blocked"
+    assert node.get_attribute("data-active") == "true"
+
+    steps = {
+        "freeze": "done",
+        "local_gates": "done",
+        "version": "done",
+        "ci": "failed",
+        "prism": "pending",
+    }
+    for key, state in steps.items():
+        assert page.get_by_test_id(f"verify-step-{key}").get_attribute("data-state") == state
+
+    retry = page.get_by_test_id("blocked-retry")
+    expect(retry).to_be_visible()
+    assert retry.get_attribute("data-retryable") == "false"
+    assert "重试当前步骤" in retry.inner_text()
+    retry.click()
+    recorded = wait_event(ui_serve.repo, "run-blocked", "human.retry")
+    assert recorded["payload"].get("clear_evidence") is True

@@ -73,6 +73,30 @@ def test_gate_worktree(tmp_path):
     cleanup_worktree(authority)
 
 
+def test_gate_worktree_cherry_pick_keeps_repo_hooks_path(tmp_path):
+    """P0 (2026-10-22): the frozen-bundle cherry-pick must scope its
+    hooksPath override to the command (``git -c``), never write the shared
+    ``.git/config``. The old ``git config core.hooksPath`` leaked a stale
+    worktree-local ``.no-hooks`` path into the main repo and silently
+    disabled every quality hook."""
+    repo, base = _init_repo(tmp_path)
+    (repo / "frozen.txt").write_text("frozen\n", encoding="utf-8")
+    _git(repo, "add", "frozen.txt")
+    _git(repo, "commit", "-m", "frozen bundle")
+    frozen = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "reset", "--hard", base)
+    _git(repo, "config", "core.hooksPath", ".githooks")
+    gate = create_gate_worktree(str(repo), base, frozen, "", "run-1", "T-001")
+    try:
+        assert (Path(gate.path) / "frozen.txt").is_file()
+        assert (
+            _git(repo, "config", "--get", "core.hooksPath").stdout.strip()
+            == ".githooks"
+        )
+    finally:
+        cleanup_worktree(gate)
+
+
 def test_cleanup_idempotent(tmp_path):
     repo, base = _init_repo(tmp_path)
     handle = create_devon_worktree(str(repo), base, "run-1", "T-001")

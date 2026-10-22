@@ -1,13 +1,9 @@
 diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
-index 9637a91..58d317e 100644
+index cb6a028..96ed5ad 100644
 --- a/tracks/server/static/app/timeline.js
 +++ b/tracks/server/static/app/timeline.js
-@@ -954,7 +954,7 @@ function nodeStateOf(stage, detail, facts) {
-     // The current stage is never void: a same-stage repair/rollback is a
-     // note on the live visit, not an invalidation of where the run is.
+@@ -1683,3 +1683,3 @@ function nodeStateOf(stage, detail, facts) {
      const gate = detail && detail.awaiting_gate;
 -    return gate ? "attention" : "active";
 +    return "done";
    }
-   const list = facts.visits.get(stage) || [];
-   if (!list.length) return "pending";

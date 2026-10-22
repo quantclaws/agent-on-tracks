@@ -610,3 +610,161 @@ def test_slim_payload_keeps_rollback_source_and_repair_flag():
     )
     assert recovered["from_stage"] == "M-DESIGN"
     assert recovered["stage"] == "M-IMPL"
+
+
+# -- operational block (attention.required) ---------------------------------
+
+_CANDIDATE = "a" * 40
+
+
+def _verify_events(*extra: dict) -> list[dict]:
+    return [
+        {"type": "stage.entered", "payload": {"stage": "M-VERIFY"}},
+        {
+            "type": "candidate.frozen",
+            "payload": {
+                "candidate_sha": _CANDIDATE,
+                "clean_tree": True,
+                "branch": "releases/v0.9",
+            },
+        },
+        {
+            "type": "local_gate.passed",
+            "payload": {"kind": "quality", "candidate_sha": _CANDIDATE},
+        },
+        {
+            "type": "local_gate.passed",
+            "payload": {"kind": "version", "candidate_sha": _CANDIDATE},
+        },
+        *extra,
+    ]
+
+
+_CI_ATTENTION = {
+    "type": "attention.required",
+    "payload": {
+        "area": "ci_readback",
+        "reason": "missing_token",
+        "stage": "M-VERIFY",
+        "candidate_sha": _CANDIDATE,
+        "detail": "[host-contract.ci] repo_env/workflow unresolved",
+        "next": "set the CI target/token; trac run retries in place",
+    },
+}
+
+
+def test_run_detail_blocked_group_tracks_latest_unresolved_attention(
+    tmp_path: Path,
+):
+    run_id = "run-blocked"
+    home, _ = _seed(
+        tmp_path,
+        run_id=run_id,
+        events=_verify_events(_CI_ATTENTION),
+    )
+
+    detail = _detail(home, run_id)
+
+    blocked = detail["blocked"]
+    assert isinstance(blocked, dict), "attention.required projects a blocked group"
+    assert set(blocked) == {
+        "area", "reason", "detail", "next", "retryable", "seq", "stage",
+    }
+    assert blocked["area"] == "ci_readback"
+    assert blocked["reason"] == "missing_token"
+    assert blocked["detail"] == "[host-contract.ci] repo_env/workflow unresolved"
+    assert blocked["next"] == "set the CI target/token; trac run retries in place"
+    assert blocked["retryable"] is False, "missing_token needs an operator action first"
+    assert blocked["stage"] == "M-VERIFY"
+    assert blocked["seq"] > 0
+    assert detail["control_state"] == "阻塞"
+    assert detail["last_failure"] is None
+
+    steps = {
+        step["key"]: step["state"] for step in detail["verify_progress"]["steps"]
+    }
+    assert steps == {
+        "freeze": "done",
+        "local_gates": "done",
+        "version": "done",
+        "ci": "failed",
+        "prism": "pending",
+    }
+
+
+def test_run_detail_blocked_clears_after_same_candidate_ci_success(
+    tmp_path: Path,
+):
+    run_id = "run-unblocked"
+    success = {
+        "type": "ci.run_observed",
+        "payload": {
+            "candidate_sha": _CANDIDATE,
+            "head_sha": _CANDIDATE,
+            "status": "passed",
+            "api_verified": True,
+            "reason": "bound",
+        },
+    }
+    home, _ = _seed(
+        tmp_path,
+        run_id=run_id,
+        events=_verify_events(_CI_ATTENTION, success),
+    )
+
+    detail = _detail(home, run_id)
+
+    assert detail.get("blocked") is None, (
+        "a later same-candidate successful gate resolves the attention"
+    )
+    assert detail["control_state"] != "阻塞"
+    steps = {
+        step["key"]: step["state"] for step in detail["verify_progress"]["steps"]
+    }
+    assert steps["ci"] == "done"
+
+
+def test_run_detail_last_failure_does_not_surface_after_later_gate_pass(
+    tmp_path: Path,
+):
+    run_id = "run-stale-failure"
+    events = [
+        {"type": "stage.entered", "payload": {"stage": "M-VERIFY"}},
+        {
+            "type": "verdict.failed",
+            "payload": {"check": "local_gate", "reason": "quality gate failed"},
+        },
+        {
+            "type": "local_gate.passed",
+            "payload": {"kind": "quality", "candidate_sha": _CANDIDATE},
+        },
+    ]
+    home, _ = _seed(tmp_path, run_id=run_id, events=events)
+
+    detail = _detail(home, run_id)
+
+    assert detail["last_failure"] is None, (
+        "a later successful gate supersedes the earlier verdict.failed"
+    )
+
+
+def test_run_detail_blocked_uses_latest_unresolved_attention(tmp_path: Path):
+    run_id = "run-two-attentions"
+    freeze_attention = {
+        "type": "attention.required",
+        "payload": {
+            "area": "freeze",
+            "reason": "dirty_tree",
+            "stage": "M-VERIFY",
+            "detail": "tracked changes present",
+            "next": "clean tracked changes",
+        },
+    }
+    events = _verify_events(freeze_attention, _CI_ATTENTION)
+    home, _ = _seed(tmp_path, run_id=run_id, events=events)
+
+    blocked = _detail(home, run_id).get("blocked")
+
+    assert blocked["area"] == "ci_readback", (
+        "the most recent unresolved attention owns the blocked group"
+    )

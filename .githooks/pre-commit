@@ -1,24 +1,115 @@
 #!/bin/sh
-# Quality gate (install once: `git config core.hooksPath .githooks`).
+# Path-scoped quality gate (install once: `git config core.hooksPath .githooks`).
 #   ruff   -> general lint + line length            (tracks + tests)
 #   flake8 -> cognitive complexity, CCR001          (tracks; tests exempt)
 #   pylint -> duplication R0801 + file length C0302 (tracks only; tests exempt)
 #           -> method length R0915 / locals R0914   (tracks only; tests exempt)
 # Thresholds live in pyproject [tool.pylint.*] and .flake8.
-set -e
-ROOT="$(git rev-parse --show-toplevel)"
-BIN="$ROOT/.venv/bin"
-if [ ! -x "$BIN/python" ]; then
-    echo "[pre-commit] .venv missing; run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+#
+# Lint-only by design: this hook never runs tests, so RGR RED commits are
+# compatible. It is PATH-SCOPED: explicit path arguments are linted exactly;
+# with no arguments only the staged set (ACMR) is linted. A dirty file that is
+# not part of the commit can therefore never veto it.
+#
+# TRACKS_HOOK_ROOT overrides the tree root (config/cwd); TRACKS_HOOK_BIN
+# overrides the tool directory (e.g. the main repo's .venv when the runtime
+# invokes this hook inside a gate worktree).
+set -eu
+
+ROOT="${TRACKS_HOOK_ROOT:-$(git rev-parse --show-toplevel)}"
+BIN="${TRACKS_HOOK_BIN:-$ROOT/.venv/bin}"
+
+if [ "$#" -gt 0 ]; then
+    CANDIDATES=$(printf '%s\n' "$@")
+else
+    CANDIDATES=$(git diff --cached --name-only --diff-filter=ACMR)
+fi
+
+RUFF_PATHS=""
+FLAKE8_PATHS=""
+PYLINT_PATHS=""
+
+while IFS= read -r PATH_ARG; do
+    [ -n "$PATH_ARG" ] || continue
+    case "$PATH_ARG" in
+        *.py) ;;
+        *) continue ;;
+    esac
+    case "$PATH_ARG" in
+        /*) ABS="$PATH_ARG" ;;
+        *)
+            if [ -f "$PATH_ARG" ]; then
+                case "$PWD" in
+                    /) ABS="/$PATH_ARG" ;;
+                    *) ABS="$PWD/$PATH_ARG" ;;
+                esac
+            elif [ -f "$ROOT/$PATH_ARG" ]; then
+                ABS="$ROOT/$PATH_ARG"
+            else
+                continue
+            fi
+            ;;
+    esac
+    # Deleted/staged-removed paths are not lint surfaces.
+    [ -f "$ABS" ] || continue
+
+    REL="$PATH_ARG"
+    case "$ABS" in
+        "$PWD"/*) REL="${ABS#"$PWD"/}" ;;
+        "$ROOT"/*) REL="${ABS#"$ROOT"/}" ;;
+    esac
+
+    case "$REL" in
+        tracks/*)
+            RUFF_PATHS="${RUFF_PATHS}${ABS}
+"
+            FLAKE8_PATHS="${FLAKE8_PATHS}${ABS}
+"
+            PYLINT_PATHS="${PYLINT_PATHS}${ABS}
+"
+            ;;
+        tests/*)
+            RUFF_PATHS="${RUFF_PATHS}${ABS}
+"
+            ;;
+    esac
+done <<EOF
+$CANDIDATES
+EOF
+
+if [ -z "$RUFF_PATHS" ] && [ -z "$FLAKE8_PATHS" ] && [ -z "$PYLINT_PATHS" ]; then
+    echo "[pre-commit] no matching paths"
+    exit 0
+fi
+
+if [ ! -x "$BIN/ruff" ] || [ ! -x "$BIN/flake8" ] || [ ! -x "$BIN/pylint" ]; then
+    echo "[pre-commit] toolchain missing under $BIN; run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
     exit 1
 fi
+
+run_tool() {
+    TOOL="$1"
+    FLAGS="$2"
+    PATHS="$3"
+    [ -n "$PATHS" ] || return 0
+    OLD_IFS=$IFS
+    IFS='
+'
+    set -f
+    # shellcheck disable=SC2086
+    set -- $PATHS
+    set +f
+    IFS=$OLD_IFS
+    "$BIN/$TOOL" $FLAGS "$@"
+}
+
 cd "$ROOT"
 echo "[pre-commit] ruff"
-"$BIN/ruff" check tracks tests
+run_tool ruff "check" "$RUFF_PATHS"
 echo "[pre-commit] cognitive complexity (tracks)"
-"$BIN/flake8" tracks
+run_tool flake8 "" "$FLAKE8_PATHS"
 echo "[pre-commit] pylint: duplication + file length (tracks)"
-"$BIN/pylint" --disable=all --enable=R0801,C0302 tracks
+run_tool pylint "--disable=all --enable=R0801,C0302" "$PYLINT_PATHS"
 echo "[pre-commit] pylint: method length + locals (tracks)"
-"$BIN/pylint" --disable=all --enable=R0915,R0914 tracks
+run_tool pylint "--disable=all --enable=R0915,R0914" "$PYLINT_PATHS"
 echo "[pre-commit] OK"

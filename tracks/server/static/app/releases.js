@@ -496,6 +496,9 @@ export async function renderReleasesView(body, context = {}) {
   } catch (error) {
     failure = error;
   }
+  // A newer activation replaced this body while the projection loaded:
+  // stop before the stale mount overwrites the live sidebar/focus.
+  if (!body.isConnected) return null;
   if (!payload) {
     body.append(
       element("p", {

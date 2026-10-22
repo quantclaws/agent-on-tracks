@@ -210,6 +210,58 @@ def _merged_items(
     return merged
 
 
+def _session_keys(items: dict[str, dict[str, Any]]) -> list[float]:
+    """Timestamp sort keys of one session's items."""
+    return [
+        intake_activity._ts_key(item.get("ts", "")) for item in items.values()
+    ]
+
+
+def _session_rank(
+    keys: list[float], start: float, floor: float, ceiling: float
+) -> tuple[int, float] | None:
+    """(0=at/after start, 1=pre-start, gap) of a session inside the window."""
+    if not any(floor <= key <= ceiling for key in keys):
+        return None
+    post = [key for key in keys if start <= key <= ceiling]
+    if post:
+        return 0, min(post) - start
+    pre = [key for key in keys if key >= floor]
+    if pre:
+        return 1, start - max(pre)
+    return None
+
+
+def _candidate_sessions(
+    states: list[tuple[Path, Any]], sessions: list[str],
+    start: float, floor: float, ceiling: float,
+) -> list[tuple[int, float, str, dict[str, dict[str, Any]]]]:
+    """Sessions overlapping the dispatch window with their rank/gap."""
+    found: list[tuple[int, float, str, dict[str, dict[str, Any]]]] = []
+    for session in sessions:
+        items = _merged_items(states, session)
+        if not items:
+            continue
+        ranked = _session_rank(_session_keys(items), start, floor, ceiling)
+        if ranked is not None:
+            found.append((ranked[0], ranked[1], session, items))
+    return found
+
+
+def _best_candidate(
+    candidates: list[tuple[int, float, str, dict[str, dict[str, Any]]]],
+    rank: int,
+) -> tuple[int, float, str, dict[str, dict[str, Any]]] | None:
+    """Lowest-gap candidate of one rank (first wins ties)."""
+    best = None
+    for candidate in candidates:
+        if candidate[0] != rank:
+            continue
+        if best is None or candidate[1] < best[1]:
+            best = candidate
+    return best
+
+
 def _match_session(
     states: list[tuple[Path, Any]], version: str,
     start_ts: str, end_ts: str | None,
@@ -229,37 +281,20 @@ def _match_session(
         {item for _, state in states for item in state.runs.get(version, ())}
     )
     start = intake_activity._ts_key(start_ts)
-    ceiling = intake_activity._ts_key(end_ts) + _SESSION_SLOP_S if end_ts else float("inf")
-    floor = start - _SESSION_SLOP_S
-    best: str | None = None
-    best_items: dict[str, dict[str, Any]] = {}
-    best_gap: float | None = None
-    fallback: str | None = None
-    fallback_items: dict[str, dict[str, Any]] = {}
-    fallback_gap: float | None = None
-    for session in sessions:
-        items = _merged_items(states, session)
-        if not items:
-            continue
-        keys = [
-            intake_activity._ts_key(item.get("ts", "")) for item in items.values()
-        ]
-        if not any(floor <= key <= ceiling for key in keys):
-            continue
-        post = [key for key in keys if start <= key <= ceiling]
-        if post:
-            gap = min(post) - start
-            if best_gap is None or gap < best_gap:
-                best, best_items, best_gap = session, items, gap
-            continue
-        pre = [key for key in keys if key >= floor]
-        if pre:
-            gap = start - max(pre)
-            if fallback_gap is None or gap < fallback_gap:
-                fallback, fallback_items, fallback_gap = session, items, gap
-    if best is not None:
-        return best, best_items
-    return fallback, fallback_items
+    ceiling = (
+        intake_activity._ts_key(end_ts) + _SESSION_SLOP_S
+        if end_ts
+        else float("inf")
+    )
+    candidates = _candidate_sessions(
+        states, sessions, start, start - _SESSION_SLOP_S, ceiling
+    )
+    best = _best_candidate(candidates, 0)
+    if best is None:
+        best = _best_candidate(candidates, 1)
+    if best is None:
+        return None, {}
+    return best[2], best[3]
 
 
 def _live_tail(items: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -334,6 +369,29 @@ def _assemble_round(
     }
 
 
+def _dispatch_bound(
+    dispatches: list[dict[str, Any]], pos: int, window: tuple[int, int | None]
+) -> int | None:
+    """Seq of the next dispatch, else the stage window's exit."""
+    if pos + 1 < len(dispatches):
+        return dispatches[pos + 1]["seq"]
+    return window[1]
+
+
+def _build_rounds(
+    states: list[tuple[Path, Any]], version: str,
+    dispatches: list[dict[str, Any]], seqs: list[int], outs: list[Any],
+    window: tuple[int, int | None],
+) -> list[dict[str, Any]]:
+    """One assembled round per dispatch inside the stage window."""
+    rounds: list[dict[str, Any]] = []
+    for pos, disp in enumerate(dispatches):
+        bound = _dispatch_bound(dispatches, pos, window)
+        outcome = _pair_outcome(seqs, outs, disp["seq"], bound, disp["command_id"])
+        rounds.append(_assemble_round(states, version, disp, outcome, pos + 1))
+    return rounds
+
+
 def rounds_for_stage(
     repo_path: str | Path, run_id: str, stage: str
 ) -> list[dict[str, Any]]:
@@ -347,15 +405,7 @@ def rounds_for_stage(
     seqs, outs = _outcome_index(events)
     version = _run_version(repo, run_id, events)
     states = _sessions_view(repo)
-    rounds: list[dict[str, Any]] = []
-    for pos, disp in enumerate(dispatches):
-        if pos + 1 < len(dispatches):
-            bound: int | None = dispatches[pos + 1]["seq"]
-        else:
-            bound = window[1]
-        outcome = _pair_outcome(seqs, outs, disp["seq"], bound, disp["command_id"])
-        rounds.append(_assemble_round(states, version, disp, outcome, pos + 1))
-    return rounds
+    return _build_rounds(states, version, dispatches, seqs, outs, window)
 
 
 def _stdout_row(line: str) -> tuple[str | None, str | None]:
@@ -473,28 +523,30 @@ def _locate_round(
     return hit, _pair_outcome(seqs, outs, hit["seq"], bound, command_id)
 
 
-def round_detail(
-    repo_path: str | Path, run_id: str, command_id: str
-) -> dict[str, Any] | None:
-    """One round's input/output/thinking (None = command not dispatched)."""
-    repo = str(repo_path)
-    events = api_query._run_events(repo, run_id)
-    hit, outcome = _locate_round(events, command_id)
-    if hit is None:
-        return None
+def _outcome_agent(outcome: Any | None) -> dict[str, Any]:
+    """The outcome's ``agent_io`` dict (empty when absent/invalid)."""
     payload = outcome.payload if outcome is not None else {}
     if not isinstance(payload, dict):
-        payload = {}
+        return {}
     agent = payload.get("agent_io")
-    agent = agent if isinstance(agent, dict) else {}
-    end_ts = outcome.ts if outcome is not None else None
-    version = _run_version(repo, run_id, events)
-    thinking, available = _detail_thinking(
-        repo, version, hit["ts"], end_ts
-    )
-    states = _sessions_view(repo)
-    session, items = _match_session(states, version, hit["ts"], end_ts)
-    live = _live_tail(items) if session is not None else []
+    return agent if isinstance(agent, dict) else {}
+
+
+def _round_live(
+    repo_path: str, version: str, start_ts: str, end_ts: str | None
+) -> list[dict[str, Any]]:
+    """Live tail rows of the round's matched session ([] when rotated out)."""
+    states = _sessions_view(repo_path)
+    session, items = _match_session(states, version, start_ts, end_ts)
+    return _live_tail(items) if session is not None else []
+
+
+def _round_detail_body(
+    repo: str, command_id: str, hit: dict[str, Any], outcome: Any | None,
+    agent: dict[str, Any], end_ts: str | None, live: list[dict[str, Any]],
+    thinking: list[dict[str, Any]] | None, available: bool,
+) -> dict[str, Any]:
+    """The round-detail payload (identity, params, live, input/output)."""
     params = hit["params"]
     assignment = params.get("assignment")
     assignment = assignment if isinstance(assignment, dict) else None
@@ -523,6 +575,25 @@ def round_detail(
         "thinking": thinking,
         "thinking_available": available,
     }
+
+
+def round_detail(
+    repo_path: str | Path, run_id: str, command_id: str
+) -> dict[str, Any] | None:
+    """One round's input/output/thinking (None = command not dispatched)."""
+    repo = str(repo_path)
+    events = api_query._run_events(repo, run_id)
+    hit, outcome = _locate_round(events, command_id)
+    if hit is None:
+        return None
+    end_ts = outcome.ts if outcome is not None else None
+    version = _run_version(repo, run_id, events)
+    thinking, available = _detail_thinking(repo, version, hit["ts"], end_ts)
+    live = _round_live(repo, version, hit["ts"], end_ts)
+    return _round_detail_body(
+        repo, command_id, hit, outcome, _outcome_agent(outcome),
+        end_ts, live, thinking, available,
+    )
 
 
 async def stage_rounds(request: Any) -> Any:

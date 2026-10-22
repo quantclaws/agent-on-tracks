@@ -86,7 +86,9 @@ def host_repo(tmp_path):
 
 
 @pytest.fixture
-def trac(host_repo, steps):
+def trac(host_repo, steps, tmp_path):
+    coverage_file = _REPO_ROOT / f".coverage.subprocess.{os.getpid()}.{tmp_path.name}"
+
     def run(*args, stdin=None, simulate=None):
         env = {key: value for key, value in os.environ.items() if key not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
         env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
@@ -94,7 +96,7 @@ def trac(host_repo, steps):
             env["TRAC_FAKE_SIMULATE"] = simulate
         if _UNDER_COVERAGE:
             env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
-            env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
+            env["COVERAGE_FILE"] = str(coverage_file)
             env["PYTHONPATH"] = _SUBCOV_DIR + os.pathsep + env.get("PYTHONPATH", "")
         result = subprocess.run([sys.executable, "-m", "tracks.cli.main", *args], cwd=host_repo, env=env, input=stdin, capture_output=True, text=True)
         steps.step("trac " + " ".join(args), status="ok" if result.returncode == 0 else "fail", returncode=result.returncode)

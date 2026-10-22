@@ -46,6 +46,13 @@ _OPENCODE_MEMBER = "tracks/assets/opencode.json"
 _PACKAGE_INIT = "tracks/__init__.py"
 _RUNNING_DIST_NAME = "agent-on-tracks"
 
+INSTALL_USAGE = (
+    "usage: trac install <path> [--version <X.Y.Z>] [--wheel <path>]"
+)
+CLI_INSTALL_USAGE = (
+    "usage: trac init|install <path> [--version <v>] [--wheel <path>]"
+)
+
 # Installer-owned paths committed by install (interfaces §1b.4/§1.0.5).
 # Only the files this install wrote are listed — never a scaffold directory
 # wholesale (an existing project may carry user docs under .tracks/projects).
@@ -97,6 +104,56 @@ class _WheelInfo:
     opencode_json: str
     init_version: str | None
     names: tuple[str, ...]
+
+
+def _option_value(args: tuple[str, ...], index: int) -> str:
+    if index + 1 >= len(args):
+        raise InstallError("usage", f"{args[index]} requires a value")
+    return args[index + 1]
+
+
+def _parse_install_options(
+    args: tuple[str, ...],
+) -> tuple[str | None, str | None, str | None]:
+    target: str | None = None
+    version: str | None = None
+    wheel: str | None = None
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument in ("--version", "--wheel"):
+            value = _option_value(args, index)
+            if argument == "--version":
+                version = value
+            else:
+                wheel = value
+            index += 2
+            continue
+        if argument.startswith("-"):
+            raise InstallError("usage", f"unknown option {argument}")
+        if target is not None:
+            raise InstallError("usage", "expected exactly one <path>")
+        target = argument
+        index += 1
+    return target, version, wheel
+
+
+def _as_repo_path(repo: Path, value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else Path(repo) / path
+
+
+def parse_install_args(
+    repo: Path, args: tuple[str, ...]
+) -> tuple[Path, str | None, Path | None]:
+    target, version, wheel = _parse_install_options(args)
+    if target is None:
+        raise InstallError("usage", INSTALL_USAGE)
+    target_path = _as_repo_path(repo, target)
+    assert target_path is not None
+    return target_path, version, _as_repo_path(repo, wheel)
 
 
 def normalize_version(raw: str) -> str:

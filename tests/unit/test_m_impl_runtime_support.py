@@ -37,8 +37,20 @@ from tracks.store import Store as Store
 
 
 def _repo(tmp_path: Path) -> Path:
-    """Repo fixture with a committed .tracks/ gitignore (M-IMPL docs repo)."""
-    return git_repo(tmp_path, gitignore=True)
+    """Repo fixture with a committed .tracks/ gitignore (M-IMPL docs repo).
+
+    Hosts declare their own pre-commit hook; GREEN_GATE invokes it explicitly
+    after commit-tree, so the fixture carries a no-op hook like a real host.
+    """
+    repo = git_repo(tmp_path, gitignore=True)
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    hook = hooks / "pre-commit"
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hook.chmod(0o755)
+    _git(repo, "add", ".githooks/pre-commit")
+    _git(repo, "commit", "-m", "test host hook")
+    return repo
 
 def _contract(repo: Path) -> None:
     """Current atomic project contract (D-41): ``-q`` collect output is the

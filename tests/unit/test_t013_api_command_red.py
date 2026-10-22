@@ -684,14 +684,21 @@ def test_retry_from_legal_position_accepts(tmp_path: Path):
 
     assert status == 202
     assert payload.get("command_id")
-    accepted = [row for row in _accepted_commands(home) if row["status"] == "accepted"]
-    assert len(accepted) == 1
-    row = accepted[0]
+    # v0.12 executes retry_run synchronously at acceptance (2bd50d6): the
+    # issued row is completed in the same accept, so assert the persisted
+    # command rather than a worker-facing "accepted" status.
+    rows = _accepted_commands(home)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["command_id"] == payload["command_id"]
     assert row["kind"] == "retry_run"
     assert row["surface"] == "http"
+    assert row["status"] == "completed"
+    assert json.loads(row["result_json"]) == {"kind": "retry_recorded"}
     params = json.loads(row["params_json"])
     assert params["run_id"] == run_id
     assert params["clear_evidence"] is False
+    assert "human.retry" in _tracks_event_types(repo)
 
 
 # AC-FR0311-02@v0.9 TRACKS-TRACE IF-WEBGATE-001 retry outside legal position rejected with reason

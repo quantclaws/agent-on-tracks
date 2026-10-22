@@ -4,11 +4,204 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from tracks.effects.github import GithubIssuesError, judge_ci_binding, readback_ci_run
 from tracks.executor import m_verify
+from tracks.executor.helpers import git
 from tracks.kernel.events import Command
+
+# The CI run is triggered by the candidate push itself; a host that names its
+# remote differently can override the conventional origin without a config
+# write (the runtime never mutates ``remote.*`` / ``core.hooksPath``).
+CI_REMOTE_ENV = "TRAC_GIT_REMOTE"
+_DEFAULT_REMOTE = "origin"
+# Registration lag / queued / in-progress only. Bounded so a dead CI target
+# parks on attention instead of holding the driver forever.
+_CI_POLL_INTERVAL_SECONDS = 30.0
+_CI_POLL_TIMEOUT_SECONDS = 30 * 60.0
+_FAILED_CHECK_REASONS = frozenset({"failed_conclusion", "check_failed"})
+
+
+def _ci_target(ci: dict) -> tuple[str, str]:
+    repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
+    workflow = str(ci.get("workflow", ""))
+    return repo_id, workflow
+
+
+def _remote_branch_sha(listing: str, branch: str) -> str:
+    """The remote SHA for ``refs/heads/<branch>`` from ``git ls-remote``."""
+    wanted = f"refs/heads/{branch}"
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == wanted:
+            return parts[0]
+    return ""
+
+
+def _process_detail(proc) -> str:
+    """Captured stdout/stderr of a failed git subprocess (trimmed)."""
+    return ((proc.stdout or "") + (proc.stderr or "")).strip()
+
+
+def _ci_run_pending(observed: dict) -> bool:
+    """True for registration lag (no run yet) or a queued/in-progress run.
+
+    A completed run that merely lacks ``head_sha`` keeps its ``missing``
+    binding reason (``run_id`` is present); only a run-less response is a
+    registration lag worth polling.
+    """
+    reason = str(observed.get("reason") or "")
+    if reason == "run_incomplete":
+        return True
+    if observed.get("run_status") in {"queued", "in_progress", "waiting", "pending"}:
+        return True
+    return reason == "missing" and observed.get("run_id") is None
+
+
+def _ci_failure_detail(observed: dict, required_checks) -> str:
+    """Readable failed-check summary for attention.required(ci_failed)."""
+    checks = observed.get("checks") or {}
+    failed = [
+        f"{name}=" + str(checks.get(name) if checks.get(name) is not None else "missing")
+        for name in required_checks
+    ]
+    failed.extend(
+        f"{name}={result}"
+        for name, result in checks.items()
+        if name not in required_checks and result != "success"
+    )
+    if not failed:
+        failed.append(f"conclusion={observed.get('conclusion')}")
+    return "failed checks: " + ", ".join(failed)
+
+
+def _wait_for_ci_run(host, cmd, candidate_sha: str, repo_id: str, workflow: str):
+    """Bounded poll for the pushed candidate's CI run registration.
+
+    After the push GitHub needs time to create the run and for it to
+    finish. A missing run (registration lag) or a queued/in-progress run
+    is polled until the run completes; every poll emits an audit
+    ``advisory.recorded`` so the driver is visibly alive (no invented
+    event type). Exhausting the bound lands attention.required with
+    ``ci_pending_timeout`` and never a synthetic pass.
+    """
+    started = time.monotonic()
+    deadline = started + _CI_POLL_TIMEOUT_SECONDS
+    attempt = 0
+    while True:
+        attempt += 1
+        observed = _readback_ci_transport(host, cmd, candidate_sha, repo_id, workflow)
+        if observed is None:
+            return None
+        last_reason = str(observed.get("reason") or "pending")
+        if not _ci_run_pending(observed):
+            return observed
+        elapsed = time.monotonic() - started
+        host._emit(
+            "advisory.recorded",
+            {
+                "area": "ci_readback",
+                "candidate_sha": candidate_sha,
+                "status": "pending",
+                "reason": last_reason,
+                "run_id": observed.get("run_id"),
+                "attempt": attempt,
+                "elapsed_seconds": int(elapsed),
+            },
+            command_id=cmd.command_id,
+        )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            host._emit(
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "ci_pending_timeout",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "detail": (
+                        f"{workflow} stayed {last_reason} for the pushed "
+                        f"candidate after {int(elapsed)}s"
+                    ),
+                    "next": (
+                        "inspect the GitHub Actions run for the pushed "
+                        "candidate and fix registration/failure, then "
+                        "trac run retries in place"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+        time.sleep(min(_CI_POLL_INTERVAL_SECONDS, remaining))
+
+
+def _readback_ci_transport(host, cmd, candidate_sha: str, repo_id: str, workflow: str):
+    """One transport read; transport/config failures keep attention faces."""
+    try:
+        return readback_ci_run(repo_id, workflow, candidate_sha)
+    except GithubIssuesError as err:
+        attention_reason = err.classification
+        host._emit(
+            "attention.required",
+            {
+                "area": "ci_readback",
+                "reason": attention_reason,
+                "stage": "M-VERIFY",
+                "candidate_sha": candidate_sha,
+                "detail": str(err),
+                "next": (
+                    "set the CI token; trac run retries in place"
+                    if attention_reason == "missing_token"
+                    else "resolve the CI API error; trac run retries in place"
+                ),
+            },
+            command_id=cmd.command_id,
+        )
+        return None
+    except (OSError, ValueError) as err:
+        host._emit(
+            "attention.required",
+            {
+                "area": "ci_readback",
+                "reason": "network_error",
+                "stage": "M-VERIFY",
+                "candidate_sha": candidate_sha,
+                "detail": str(err),
+                "next": "retry when the CI API is reachable",
+            },
+            command_id=cmd.command_id,
+        )
+        return None
+
+
+def _attention_for_ci_failure(
+    host, cmd, candidate_sha: str, observed: dict, ci: dict, reason: str
+) -> None:
+    """Route a completed red run to ci_failed; binding refusals keep their
+    own closed reason (missing/mismatch/stale) on the attention face."""
+    if reason in _FAILED_CHECK_REASONS:
+        attention_reason = "ci_failed"
+        detail = _ci_failure_detail(observed, ci.get("required_checks", []))
+        next_step = "fix the CI failure and trac run retries"
+    else:
+        attention_reason = reason
+        detail = reason
+        next_step = "re-run CI on the frozen candidate; trac run retries"
+    host._emit(
+        "attention.required",
+        {
+            "area": "ci_readback",
+            "reason": attention_reason,
+            "stage": "M-VERIFY",
+            "candidate_sha": candidate_sha,
+            "run_id": observed.get("run_id"),
+            "detail": detail,
+            "next": next_step,
+        },
+        command_id=cmd.command_id,
+    )
 
 
 class ExecVerifyCiMixin:
@@ -34,11 +227,99 @@ digests + advance/release preview."""
         ci = contract.ci or {}
         if reconcile and self._ci_observation_reusable(cmd, candidate_sha, ci):
             return
+        repo_id, workflow = _ci_target(ci)
+        if (
+            repo_id
+            and workflow
+            and not self._push_ci_candidate(cmd, state, candidate_sha)
+        ):
+            return
         run_payload = self._readback_ci_binding(cmd, candidate_sha, ci)
         if run_payload is None:
             return
         self._emit("ci.run_observed", run_payload, command_id=cmd.command_id)
         self._issue_verify_final(candidate_sha)
+
+    def _frozen_branch(self, state, candidate_sha: str) -> str:
+        """The branch recorded by the candidate freeze, else State/git HEAD."""
+        for event in reversed(list(self.store.events(self.run_id))):
+            payload = event.payload or {}
+            if (
+                event.type == "candidate.frozen"
+                and payload.get("candidate_sha") == candidate_sha
+            ):
+                branch = str(payload.get("branch") or "").strip()
+                if branch and branch != "HEAD":
+                    return branch
+        branch = str(getattr(state, "branch", "") or "").strip()
+        if branch and branch != "HEAD":
+            return branch
+        current = git(self.repo, "branch", "--show-current", check=False)
+        return current.stdout.strip() if current.returncode == 0 else ""
+
+    def _push_ci_candidate(self, cmd, state, candidate_sha: str) -> bool:
+        """Push the frozen candidate so GitHub can register the CI run.
+
+        Idempotent by remote readback: an origin branch already at the frozen
+        SHA is a reconciled skip. Any push failure (missing remote/branch,
+        auth, network) lands attention.required(push_failed) and the caller
+        never reads back a run that cannot exist. No git config is written.
+        """
+        remote = os.environ.get(CI_REMOTE_ENV, "").strip() or _DEFAULT_REMOTE
+        branch = self._frozen_branch(state, candidate_sha)
+        if not branch:
+            return self._ci_push_failed(
+                cmd, candidate_sha, remote, "", "cannot resolve the frozen branch"
+            )
+        listed = git(self.repo, "ls-remote", "--heads", remote, branch, check=False)
+        if listed.returncode != 0:
+            return self._ci_push_failed(
+                cmd,
+                candidate_sha,
+                remote,
+                branch,
+                _process_detail(listed) or "git ls-remote failed",
+            )
+        if _remote_branch_sha(listed.stdout, branch) == candidate_sha:
+            return True
+        pushed = git(
+            self.repo,
+            "push",
+            remote,
+            f"{candidate_sha}:refs/heads/{branch}",
+            check=False,
+        )
+        if pushed.returncode != 0:
+            return self._ci_push_failed(
+                cmd,
+                candidate_sha,
+                remote,
+                branch,
+                _process_detail(pushed) or "git push failed",
+            )
+        return True
+
+    def _ci_push_failed(
+        self, cmd, candidate_sha: str, remote: str, branch: str, detail: str
+    ) -> bool:
+        self._emit(
+            "attention.required",
+            {
+                "area": "ci_readback",
+                "reason": "push_failed",
+                "stage": "M-VERIFY",
+                "candidate_sha": candidate_sha,
+                "remote": remote,
+                "branch": branch,
+                "detail": detail,
+                "next": (
+                    "fix the git remote/push permissions, then trac run retries "
+                    "in place"
+                ),
+            },
+            command_id=cmd.command_id,
+        )
+        return False
 
     def _ci_observation_reusable(self, cmd, candidate_sha: str, ci: dict) -> bool:
         """A persisted ci.run_observed bound to the same candidate/command."""
@@ -115,8 +396,7 @@ digests + advance/release preview."""
         selection scopes who writes, never what the Runtime observes.
         A fake agent therefore cannot synthesize api_verified evidence.
         """
-        repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
-        workflow = str(ci.get("workflow", ""))
+        repo_id, workflow = _ci_target(ci)
         if not repo_id or not workflow:
             # AC-FR0270-03 locked vocabulary (missing_token|network_error):
             # an undeclared/unresolved CI target is the credentials face,
@@ -136,45 +416,14 @@ digests + advance/release preview."""
                 command_id=cmd.command_id,
             )
             return None
-        try:
-            observed = readback_ci_run(repo_id, workflow, candidate_sha)
-        except GithubIssuesError as err:
-            attention_reason = err.classification
-            self._emit(
-                "attention.required",
-                {
-                    "area": "ci_readback",
-                    "reason": attention_reason,
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
-                    "detail": str(err),
-                    "next": (
-                        "set the CI token; trac run retries in place"
-                        if attention_reason == "missing_token"
-                        else "resolve the CI API error; trac run retries in place"
-                    ),
-                },
-                command_id=cmd.command_id,
-            )
-            return None
-        except (OSError, ValueError) as err:
-            self._emit(
-                "attention.required",
-                {
-                    "area": "ci_readback",
-                    "reason": "network_error",
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
-                    "detail": str(err),
-                    "next": "retry when the CI API is reachable",
-                },
-                command_id=cmd.command_id,
-            )
+        observed = _wait_for_ci_run(self, cmd, candidate_sha, repo_id, workflow)
+        if observed is None:
             return None
         binding = judge_ci_binding(
             observed, candidate_sha, ci.get("required_checks", [])
         )
         if binding.get("status") != "passed":
+            reason = str(binding.get("reason", "mismatch"))
             # AC-FR0270-02 fail-closed event face: a binding failure lands
             # ci.run_observed(status=failed) with its closed reason
             # (mismatch|missing|stale|failed_conclusion|check_failed) so the
@@ -197,22 +446,13 @@ digests + advance/release preview."""
                     "checks": observed.get("checks") or {},
                     "required_checks": list(ci.get("required_checks", [])),
                     "status": "failed",
-                    "reason": str(binding.get("reason", "mismatch")),
+                    "reason": reason,
                     "api_verified": False,
                 },
                 command_id=cmd.command_id,
             )
-            self._emit(
-                "attention.required",
-                {
-                    "area": "ci_readback",
-                    "reason": "ci_binding_blocked",
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
-                    "detail": binding.get("reason", "mismatch"),
-                    "next": "re-run CI on the frozen candidate; trac run retries",
-                },
-                command_id=cmd.command_id,
+            _attention_for_ci_failure(
+                self, cmd, candidate_sha, observed, ci, reason
             )
             return None
         return {

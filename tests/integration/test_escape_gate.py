@@ -249,11 +249,12 @@ def test_pointer_rollback_lands_target_stage(trac, event_log):
     and routes re-entry via its StageDef.initial_substate (M-TEST=DISPATCH —
     no fixed-DRAFT dead state); the run stays re-enterable and a further
     escape is accepted with a strictly increasing cutover. A second migration
-    lands M-TEST again inside the run-breaker budget of two, parking legally
-    executable; --to M-IMPL has no legal batch-1 source (universal targets
-    are strictly upstream — no self-target — and release stages land with
-    T-039), so the M-IMPL=BASELINE routing stays pinned at unit level until
-    the T-039 era."""
+    lands M-TEST again; human_return rollbacks are governance actions exempt
+    from the run-breaker (d34b233), so the walk then continues to the injected
+    M-IMPL park instead of breaker-tripping. --to M-IMPL has no legal batch-1
+    source (universal targets are strictly upstream — no self-target — and
+    release stages land with T-039), so the M-IMPL=BASELINE routing stays
+    pinned at unit level until the T-039 era."""
     run_id = walk_to_m_impl_parked(trac)
     assert trac("return", "--to", "M-TEST", "--reason", "pointer rollback").returncode == 0
     c1 = _cutover(event_log(run_id))
@@ -286,8 +287,8 @@ def test_pointer_rollback_lands_target_stage(trac, event_log):
     assert trac("return", "--to", "M-TEST", "--reason", "pointer rollback 2").returncode == 0
     assert _cutover(event_log(run_id)) > c1
     # Second migration: r3run consumes the second RETURNED and migrates to
-    # M-TEST again (rollback #2 of the run-breaker budget of two), then parks
-    # legally executable instead of dispatching further.
+    # M-TEST again. The human_return is exempt from the run-breaker, so the
+    # injected walk continues and re-parks at the M-IMPL escalation gate.
     r3run = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r3run.returncode == 0, r3run.stderr
     rolled_again = [e for e in event_log(run_id) if e["type"] == "stage.rolled_back"]
@@ -295,7 +296,7 @@ def test_pointer_rollback_lands_target_stage(trac, event_log):
     assert rolled_again[-1]["payload"].get("to_stage") == "M-TEST"
     assert rolled_again[-1]["payload"].get("reason") == "human_return"
     status3 = trac("status").stdout
-    assert "stage=M-TEST" in status3 and "awaiting=escalation" in status3
+    assert "stage=M-IMPL" in status3 and "awaiting=escalation" in status3
 
 
 # AC-FR0287-02@v0.8 TRACKS-TRACE real quiesce freezes in-flight dispatch (batch 2 §1.0.14.1)

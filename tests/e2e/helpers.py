@@ -194,10 +194,13 @@ def walk_to_awaiting_release(
     The loop is bounded; a missing arrival is a harness bug, not a park
     expectation.
 
-    The release preview needs the version facts' remote tag census, so a
-    host_repo passed here gets a bare origin first (the security advance
-    made the chain genuinely reach the preview on fixture hosts too --
-    without a remote the facts attention fail-closes the walk)."""
+    The release preview needs the version facts' remote tag census, so the
+    host repo gets a bare origin first (the security advance made the chain
+    genuinely reach the preview on fixture hosts too -- without a remote the
+    facts attention fail-closes the walk). The trac fixture exposes its
+    backing repo; an explicit host_repo still wins."""
+    if host_repo is None:
+        host_repo = getattr(trac, "repo", None)
     if host_repo is not None:
         import subprocess as _sp
 

@@ -276,6 +276,17 @@ def accepted_commands(home: Path) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def command_rows(home: Path) -> list[dict]:
+    """Every persisted command row in acceptance order (any status)."""
+    conn = sqlite3.connect(f"file:{home / 'service.db'}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("SELECT * FROM commands ORDER BY rowid").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
 def rejected_reasons(home: Path) -> list[str]:
     """The audited ``command.rejected`` reasons (§1a #8)."""
     conn = sqlite3.connect(f"file:{home / 'service.db'}?mode=ro", uri=True)

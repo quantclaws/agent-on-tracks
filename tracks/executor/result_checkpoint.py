@@ -321,30 +321,15 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
         # ResultCheckpoint twin of the helpers.py single-writer fix. The
         # unscoped _commit_if_staged swept EVERYTHING staged -- an
         # operator-staged file would land inside Devon's GREEN commit under
-        # the wrong command_id (AC-FR0236-01 attribution) -- and ran with
-        # repo hygiene hooks that evaluate the whole tree, so an
-        # out-of-scope agent's WIP vetoed the checkpoint (same R0801 class
-        # that mis-routed the 04:51 shield fix into a spurious replan).
-        # The runtime stages exactly stage_paths above; commit exactly
-        # those, --no-verify: the dispatch contract's gate suite is the
-        # agent-facing lint authority, and operator commits keep the hooks.
-        # 2026-09-23 (island-2 sweep, Prism revise R1): hooks ONLY for DOC
-        # deliverables (paths inside the version dir) -- the author's content
-        # IS the deliverable and the frozen D-30/F-1 contract (hook rejection
-        # -> verdict.failed(check=commit) -> author re-dispatch) governs there.
-        # Code/test checkpoint paths keep the single-writer --no-verify
-        # bypass: whole-tree hygiene hooks vetoing scoped checkpoints for
-        # out-of-scope findings was the exact mis-route the bypass fixed.
-        vdir_prefix = str(self._vdir()) if hasattr(self, "_vdir") else ".tracks/projects/"
-        is_doc_commit = all(
-            str(p).startswith(vdir_prefix) or ".tracks/projects/" in str(p)
-            for p in stage_paths
-        )
+        # the wrong command_id (AC-FR0236-01 attribution).
+        # 2026-10-22 (design ii): checkpoint commits run the host hook. The
+        # hook is path-scoped and lint-only, so an out-of-scope agent's WIP
+        # no longer vetoes the checkpoint and RGR RED commits stay valid.
         proc = _scoped_commit_if_staged(
             self.repo,
             f"{commit_label}\n\ncommand_id: {cmd.command_id}",
             paths=stage_paths,
-            hooks=is_doc_commit,
+            hooks=True,
         )
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)

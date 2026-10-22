@@ -103,6 +103,17 @@ class _FullEvidence:
     empty_pass_layers: dict
 
 
+@dataclass(frozen=True)
+class _FullLayerStage:
+    """One FULL layer's staged argv/result binding and node selection."""
+
+    result_path: Path
+    argv: list
+    whole_layer: bool
+    section_cwd: Path
+    selected: list
+
+
 class MImplFullChainMixin:
     """M-IMPL FULL chain mixin."""
 
@@ -181,83 +192,114 @@ class MImplFullChainMixin:
             cwds[layer] = str(Path(section_cwd).resolve())
         return self._full_command_identity(commands, cwds)
 
-    def _run_full_layers(  # pylint: disable=too-many-locals
+    @staticmethod
+    def _full_layer_nodes(layer, inventory, nodes):
+        """The inventory-owned nodes of ``layer`` and the selected subset."""
+        layer_inventory = [node for node, owner in inventory.items() if owner == layer]
+        selected = [node for node in nodes if inventory.get(node) == layer]
+        if not selected and layer_inventory:
+            raise TestSelectError(f"[{layer}] FULL selection excludes the entire layer")
+        return layer_inventory, selected
+
+    def _stage_full_layer(
+        self, cmd, round_name, layer, section, inventory, nodes, staged
+    ) -> _FullLayerStage:
+        """Resolve one FULL layer's argv and register its staged result path."""
+        layer_inventory, selected = self._full_layer_nodes(layer, inventory, nodes)
+        section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+        staging_key = f"full-{round_name.lower()}-{layer}"
+        whole_layer = not layer_inventory or set(selected) == set(layer_inventory)
+        if whole_layer or len(selected) >= _FULL_ARGV_NODE_LIMIT:
+            result_path = self._result_staging_path(cmd.command_id, staging_key)
+            staged.append(result_path)
+            result_path.unlink(missing_ok=True)
+            argv = resolve_selected_command(
+                section.run,
+                [],
+                str(result_path),
+                Path(section_cwd),
+            )
+            if not audit_selection_argv(
+                section.run,
+                [],
+                str(result_path),
+                list(argv),
+                Path(section_cwd),
+            ):
+                raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
+            return _FullLayerStage(
+                result_path, argv, whole_layer, section_cwd, selected
+            )
+        result_path, argv = MImplTestOpsMixin._stage_selection_argv(
+            self,
+            cmd,
+            staging_key,
+            section,
+            selected,
+            section_cwd,
+            staged,
+            f"[{layer}] FULL argv diverges from contract",
+        )
+        return _FullLayerStage(result_path, argv, whole_layer, section_cwd, selected)
+
+    @staticmethod
+    def _full_layer_outcomes(result_path, selected, whole_layer, excluded):
+        """Per-node outcomes for one FULL layer from its staged result file."""
+        cases = parse_test_result(result_path)
+        if not whole_layer and len(selected) >= _FULL_ARGV_NODE_LIMIT:
+            cases = [case for case in cases if case.nodeid not in excluded]
+        mapping = require_exact_node_coverage(cases, selected)
+        return [
+            {
+                "node": node,
+                "status": mapping[node].status,
+                "detail": mapping[node].detail or "",
+            }
+            for node in selected
+        ]
+
+    def _run_full_layer(
+        self, cmd, round_name, layer, section, inventory, nodes, excluded, staged
+    ):
+        """Execute one FULL layer, returning its staged path and observation."""
+        stage = self._stage_full_layer(
+            cmd, round_name, layer, section, inventory, nodes, staged
+        )
+        obs = execute_gate_command(
+            shlex.join(stage.argv), str(stage.section_cwd), f"full-{layer}"
+        )
+        outcomes = self._full_layer_outcomes(
+            stage.result_path, stage.selected, stage.whole_layer, excluded
+        )
+        return stage.result_path, obs, outcomes
+
+    def _run_full_layers(
         self, cmd, round_name: str, sections, inventory, nodes, known_red=None
     ):
         """Run every declared FULL layer, staging one test result per layer."""
         excluded = set(self._known_red_nodes() if known_red is None else known_red)
-        outcomes: list[dict] = []
-        command_echo: dict[str, list[str]] = {}
-        command_cwds: dict[str, str] = {}
-        command_exit_codes: dict[str, int] = {}
-        result_paths: dict[str, str] = {}
+        run = _FullRun([], {}, {}, {}, {})
         staged: list[Path] = []
         try:
             for layer, section in sections.items():
                 assert section is not None
-                layer_inventory = [
-                    node for node, owner in inventory.items() if owner == layer
-                ]
-                selected = [node for node in nodes if inventory.get(node) == layer]
-                if not selected and layer_inventory:
-                    raise TestSelectError(
-                        f"[{layer}] FULL selection excludes the entire layer"
-                    )
-                section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
-                staging_key = f"full-{round_name.lower()}-{layer}"
-                whole_layer = not layer_inventory or set(selected) == set(layer_inventory)
-                if whole_layer or len(selected) >= _FULL_ARGV_NODE_LIMIT:
-                    result_path = self._result_staging_path(cmd.command_id, staging_key)
-                    result_paths[layer] = str(result_path)
-                    staged.append(result_path)
-                    result_path.unlink(missing_ok=True)
-                    argv = resolve_selected_command(
-                        section.run,
-                        [],
-                        str(result_path),
-                        Path(section_cwd),
-                    )
-                    if not audit_selection_argv(
-                        section.run,
-                        [],
-                        str(result_path),
-                        list(argv),
-                        Path(section_cwd),
-                    ):
-                        raise TestSelectError(
-                            f"[{layer}] FULL argv diverges from contract"
-                        )
-                else:
-                    result_path, argv = MImplTestOpsMixin._stage_selection_argv(
-                        self,
-                        cmd,
-                        staging_key,
-                        section,
-                        selected,
-                        section_cwd,
-                        staged,
-                        f"[{layer}] FULL argv diverges from contract",
-                    )
-                    result_paths[layer] = str(result_path)
-                obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
-                command_echo[layer] = list(obs.argv)
-                command_cwds[layer] = str(Path(obs.cwd).resolve())
-                command_exit_codes[layer] = obs.exit_code
-                cases = parse_test_result(result_path)
-                if not whole_layer and len(selected) >= _FULL_ARGV_NODE_LIMIT:
-                    cases = [case for case in cases if case.nodeid not in excluded]
-                mapping = require_exact_node_coverage(cases, selected)
-                outcomes.extend(
-                    {
-                        "node": node,
-                        "status": mapping[node].status,
-                        "detail": mapping[node].detail or "",
-                    }
-                    for node in selected
+                result_path, obs, layer_outcomes = self._run_full_layer(
+                    cmd, round_name, layer, section, inventory, nodes, excluded, staged
                 )
+                run.result_paths[layer] = str(result_path)
+                run.command_echo[layer] = list(obs.argv)
+                run.command_cwds[layer] = str(Path(obs.cwd).resolve())
+                run.command_exit_codes[layer] = obs.exit_code
+                run.outcomes.extend(layer_outcomes)
         finally:
             cleanup_staged_results(staged)
-        return outcomes, command_echo, command_cwds, command_exit_codes, result_paths
+        return (
+            run.outcomes,
+            run.command_echo,
+            run.command_cwds,
+            run.command_exit_codes,
+            run.result_paths,
+        )
 
     def _declared_anchor_layers(self) -> set[str] | None:
         """Test-plan §8 anchor layers for this run's frozen design.
@@ -409,15 +451,20 @@ class MImplFullChainMixin:
             selection_event=selection.selection_event,
         )
 
-    def _full_round_evidence(self, header: _FullRoundHeader, run: _FullRun) -> _FullEvidence:
-        """Bind execution outcomes to persisted evidence (fail-closed blobs)."""
+    def _full_empty_pass_layers(self, run: _FullRun) -> dict:
+        """Layers that legally collected nothing (exit 5, no declared anchors)."""
         declared_layers = self._declared_anchor_layers()
         if declared_layers is None:
             declared_layers = set(_FULL_LAYERS)
-        empty_pass_layers = {
+        return {
             layer: code in _EMPTY_LAYER_RC and layer not in declared_layers
             for layer, code in run.command_exit_codes.items()
         }
+
+    def _full_round_identity(
+        self, header: _FullRoundHeader, run: _FullRun
+    ) -> tuple[EvidenceIdentity, object, object]:
+        """The round's evidence identity plus its command/env components."""
         command_identity = self._full_command_identity(
             run.command_echo, run.command_cwds, run.result_paths
         )
@@ -428,9 +475,10 @@ class MImplFullChainMixin:
             env=env_identity,
             selection_id=header.selection_id,
         )
-        evidence_by_node = evidence_by_node_for(
-            identity, run.outcomes, header.state.current_attempt + 1
-        )
+        return identity, command_identity, env_identity
+
+    def _persist_full_outcomes(self, run: _FullRun, evidence_by_node: dict) -> str:
+        """Persist every outcome with its evidence id (fail closed on no blob)."""
         persisted_outcomes = [
             {**outcome, "evidence_id": evidence_by_node[outcome["node"]]}
             for outcome in run.outcomes
@@ -438,6 +486,18 @@ class MImplFullChainMixin:
         outcomes_ref = self.store.write_audit_blob(persisted_outcomes)
         if outcomes_ref is None:
             raise TestSelectError("FULL outcomes blob write failed")
+        return outcomes_ref
+
+    def _full_round_evidence(self, header: _FullRoundHeader, run: _FullRun) -> _FullEvidence:
+        """Bind execution outcomes to persisted evidence (fail-closed blobs)."""
+        empty_pass_layers = self._full_empty_pass_layers(run)
+        identity, command_identity, env_identity = self._full_round_identity(
+            header, run
+        )
+        evidence_by_node = evidence_by_node_for(
+            identity, run.outcomes, header.state.current_attempt + 1
+        )
+        outcomes_ref = self._persist_full_outcomes(run, evidence_by_node)
         failed = self._signed_failures(run.outcomes)
         # FR-0286 §5 waiver: nodes bound to a registered known issue are
         # still executed and recorded (outcomes_ref carries every outcome)

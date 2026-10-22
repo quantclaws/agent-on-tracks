@@ -13,10 +13,8 @@ import sys
 from pathlib import Path
 
 from tracks import __version__, install, project_runtime
+from tracks.install import INSTALL_USAGE as INSTALL_USAGE
 
-INSTALL_USAGE = (
-    "usage: trac install <path> [--version <X.Y.Z>] [--wheel <path>]"
-)
 VERSION_USAGE = "usage: trac version [--json]"
 
 
@@ -25,60 +23,10 @@ def _install_failure(reason: str, detail: str) -> int:
     return 1
 
 
-def _option_value(args: tuple[str, ...], index: int) -> str:
-    if index + 1 >= len(args):
-        raise install.InstallError("usage", f"{args[index]} requires a value")
-    return args[index + 1]
-
-
-def _parse_install_options(
-    args: tuple[str, ...],
-) -> tuple[str | None, str | None, str | None]:
-    target: str | None = None
-    version: str | None = None
-    wheel: str | None = None
-    index = 0
-    while index < len(args):
-        argument = args[index]
-        if argument in ("--version", "--wheel"):
-            value = _option_value(args, index)
-            if argument == "--version":
-                version = value
-            else:
-                wheel = value
-            index += 2
-            continue
-        if argument.startswith("-"):
-            raise install.InstallError("usage", f"unknown option {argument}")
-        if target is not None:
-            raise install.InstallError("usage", "expected exactly one <path>")
-        target = argument
-        index += 1
-    return target, version, wheel
-
-
-def _as_repo_path(repo: Path, value: str | None) -> Path | None:
-    if value is None:
-        return None
-    path = Path(value).expanduser()
-    return path if path.is_absolute() else Path(repo) / path
-
-
-def _install_args(
-    repo: Path, args: tuple[str, ...]
-) -> tuple[Path, str | None, Path | None]:
-    target, version, wheel = _parse_install_options(args)
-    if target is None:
-        raise install.InstallError("usage", INSTALL_USAGE)
-    target_path = _as_repo_path(repo, target)
-    assert target_path is not None
-    return target_path, version, _as_repo_path(repo, wheel)
-
-
 def cmd_install(repo: Path, *args: str) -> int:
     try:
-        target, version, wheel = _install_args(repo, args)
-        installed = install.install_project(target, version, wheel)
+        target, version, artifact = install.parse_install_args(repo, args)
+        installed = install.install_project(target, version, artifact)
     except install.InstallError as exc:
         return _install_failure(exc.reason, exc.detail)
     print(f"installed tracks {installed.version} at {installed.target}")

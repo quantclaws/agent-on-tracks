@@ -24,10 +24,6 @@ _ISSUE_TOKEN_NEXT = (
     "export GITHUB_TOKEN (and TRAC_GITHUB_REPO) then re-run;"
     " no silent Fake fallback is consumed"
 )
-_ISSUE_NETWORK_NEXT = (
-    "GitHub was unreachable after bounded retries; the run parks here —"
-    " retry once connectivity is restored"
-)
 
 
 class IssueCreationFailure(RuntimeError):
@@ -243,38 +239,59 @@ class ExecReleaseTailMixin:
         )
         return issue_id
 
-    def _raise_issue_failure(
-        self, cmd, task_id, failure_class, reason, detail, next_hint
-    ):
-        """Surface an actionable attention and fail the drive boundary.
+    def _ensure_issue_backend(self, cmd, task_id):
+        """Select (once) and return the issue backend, failing closed."""
+        if self._issue_backend is not None:
+            return self._issue_backend
+        try:
+            self._issue_backend = select_issue_backend(self.repo, self.version)
+        except GithubIssuesError as exc:
+            if exc.classification == "missing_token":
+                self._emit(
+                    "attention.required",
+                    {
+                        "area": "issue_creation",
+                        "reason": "missing_token",
+                        "detail": str(exc),
+                        "next": _ISSUE_TOKEN_NEXT,
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
+                return None
+            raise
+        return self._issue_backend
 
-        The attention carries the reason/next hint; ``outcome.received``
-        keeps the kernel's per-attempt accounting advancing (3rd escalates
-        to Human). The structured raise makes the drive layer report
-        ``failed`` instead of re-issuing ``create_issues`` in a hot loop.
-        """
-        self._emit(
-            "attention.required",
-            {
-                "area": "issue_creation",
-                "reason": reason,
-                "detail": detail,
-                "next": next_hint,
-            },
-            command_id=cmd.command_id,
-            task_id=task_id,
-        )
-        self._emit(
-            "outcome.received",
-            {
-                "role": "github",
-                "status": "failed",
-                "failure_class": reason,
-                "self_report": detail or reason,
-            },
-            command_id=cmd.command_id,
-        )
-        raise IssueCreationFailure(failure_class, reason, next_hint, detail)
+    def _create_issue_items(self, backend, digest, done, cmd, task_id) -> bool:
+        """Create every not-yet-logged item; False stops the command."""
+        try:
+            for item_id, title, body in issue_items(self._vdir(), digest):
+                if item_id in done:
+                    continue
+                issue_id = self._map_issue_item(
+                    backend, item_id, title, body, digest, cmd, task_id
+                )
+                if issue_id is None:
+                    return False
+                done[item_id] = issue_id
+        except GithubIssuesError as e:
+            # NFR-0030 style: no half-written summary; the reducer counts the
+            # failed outcome as an attempt (3rd escalates to Human). The
+            # bounded transport retries already ran inside the effects layer;
+            # the drive loop re-issues this command in the same run so a
+            # recoverable external failure parks instead of aborting.
+            self._emit(
+                "outcome.received",
+                {
+                    "role": "github",
+                    "status": "failed",
+                    "failure_class": e.classification,
+                    "self_report": str(e),
+                },
+                command_id=cmd.command_id,
+            )
+            return False
+        return True
 
     def _do_create_issues(self, cmd, state, task_id, reconcile):
         """(F) M-REQ-APPROVAL ISSUES execution path (IF-ISSUE-001).
@@ -286,72 +303,26 @@ class ExecReleaseTailMixin:
         crash-idempotent dedup by item id); unverified real-channel
         artifacts are rejected fake_rejected + blocked.
 
-        Credential and network/SSL failures are durable drive boundaries:
-        they emit the failed outcome (attempt accounting/escalation) and
-        raise ``IssueCreationFailure`` so the loop stops instead of
-        re-issuing ``create_issues`` until the step budget burns out.
+        Credential failures surface ``attention.required`` and leave the
+        command to be re-issued once the operator restores the prerequisite;
+        network failures emit the failed outcome so the reducer's per-attempt
+        accounting escalates after the inherited three-attempt budget.
         """
         digest = cmd.params["digest"]
         if reconcile and state.issues_created:
             return
         if self._stale_regenerate(cmd, digest):
             return
-        if self._issue_backend is None:
-            try:
-                self._issue_backend = select_issue_backend(self.repo, self.version)
-            except GithubIssuesError as exc:
-                if exc.classification == "missing_token":
-                    self._raise_issue_failure(
-                        cmd,
-                        task_id,
-                        "missing_token",
-                        "missing_token",
-                        str(exc),
-                        _ISSUE_TOKEN_NEXT,
-                    )
-                raise
-        backend = self._issue_backend
+        backend = self._ensure_issue_backend(cmd, task_id)
+        if backend is None:
+            return
         # D-06 breakpoint resume: item_ids already logged are never rebuilt.
         done = {
             e.payload["item_id"]: e.payload["issue_id"]
             for e in self.store.events(self.run_id)
             if e.type == "issue.created"
         }
-        try:
-            for item_id, title, body in issue_items(self._vdir(), digest):
-                if item_id in done:
-                    continue
-                issue_id = self._map_issue_item(
-                    backend, item_id, title, body, digest, cmd, task_id
-                )
-                if issue_id is None:
-                    return
-                done[item_id] = issue_id
-        except GithubIssuesError as e:
-            # NFR-0030 style: no half-written summary; the reducer counts the
-            # failed outcome as an attempt (3rd escalates to Human). Network
-            # failures are a durable boundary: the bounded transport retries
-            # inside the effects layer already ran, so re-issuing the command
-            # here would only burn the step budget.
-            if e.classification == "network":
-                self._raise_issue_failure(
-                    cmd,
-                    task_id,
-                    "network",
-                    "network",
-                    str(e),
-                    _ISSUE_NETWORK_NEXT,
-                )
-            self._emit(
-                "outcome.received",
-                {
-                    "role": "github",
-                    "status": "failed",
-                    "failure_class": e.classification,
-                    "self_report": str(e),
-                },
-                command_id=cmd.command_id,
-            )
+        if not self._create_issue_items(backend, digest, done, cmd, task_id):
             return
         self._emit(
             "issues.created",
