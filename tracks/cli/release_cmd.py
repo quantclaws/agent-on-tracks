@@ -429,6 +429,27 @@ def _full_reuse_status(events: list) -> str | None:
     return "full_reuse=full_rerun" + (f" reason={reason}" if reason else "")
 
 
+def _blocked_chain_lines(events: list) -> list[str]:
+    """Fail-closed block reason for a frozen candidate without a preview.
+
+    ``gate_evidence_missing`` is a status-only projection (no attention
+    event), so it also renders the operator's recovery pointer -- otherwise
+    the status names a block with no documented command to clear it.
+    """
+    if not any(e.type == "candidate.frozen" for e in events) or any(
+        e.type == "release.previewed" for e in events
+    ):
+        return []
+    reason = _release_block_reason(events)
+    lines = ["blocked: " + reason]
+    if reason == "gate_evidence_missing":
+        lines.append(
+            "next: trac run --resume re-runs the missing local gates; "
+            "trac retry clears a stale verify link"
+        )
+    return lines
+
+
 def _release_chain_fragments(events: list, lines: list[str]) -> None:
     """(F) evidence-chain fragments (FR-0270/FR-0287 wiring): CI readback
     binding and security verdict surface whenever the chain emitted them; a
@@ -463,10 +484,7 @@ def _release_chain_fragments(events: list, lines: list[str]) -> None:
             f"repair=in_place round={last_round.get('round', len(rounds))}"
             f"/{last_round.get('budget', 3)}"
         )
-    if any(e.type == "candidate.frozen" for e in events) and not [
-        e for e in events if e.type == "release.previewed"
-    ]:
-        lines.append("blocked: " + _release_block_reason(events))
+    lines.extend(_blocked_chain_lines(events))
 
 
 def _release_status_lines(events: list, primary, repo: Path | None = None) -> list[str]:

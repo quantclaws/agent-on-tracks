@@ -208,3 +208,115 @@ def test_same_candidate_gate_pass_supersedes_its_failure(tmp_path):
     store.close()
 
     assert _release_block_reason(events) != "local_gate_failed"
+
+
+def _seed_gate_evidence_missing(repo, store, *, pending=False):
+    """Live bd0c68eb shape: a frozen repair candidate with only the OLD
+    candidate's gate evidence, optionally leaving the long FULL judgment
+    link in the WAL (a killed driver's pending command)."""
+    _seed(store)
+    head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    store.append(
+        _RUN,
+        _VERSION,
+        "local_gate.passed",
+        {"candidate_sha": _OLD, "gate_identity": "quality[0]", "kind": "quality"},
+    )
+    store.append(
+        _RUN,
+        _VERSION,
+        "candidate.frozen",
+        {"candidate_sha": head, "clean_tree": True},
+    )
+    if pending:
+        store.append(
+            _RUN,
+            _VERSION,
+            "command.issued",
+            {
+                "command": {
+                    "kind": "judge_full_f_reuse",
+                    "params": {"candidate_sha": head},
+                    "command_id": "C-FULL-PENDING",
+                }
+            },
+            command_id="C-FULL-PENDING",
+        )
+    return head
+
+
+def test_stale_full_link_parks_with_attention_and_releases_the_lock(tmp_path, capsys):
+    """A pending long verify link + missing gate evidence must not be
+    replayed under the writer lock: return an operator attention immediately
+    (live bd0c68eb held the lock for 90+ minutes in the FULL rerun)."""
+    repo, store = _setup(tmp_path)
+    _seed_gate_evidence_missing(repo, store, pending=True)
+    assert store.state(_RUN).pending["kind"] == "judge_full_f_reuse"
+    before = [e.type for e in store.events(_RUN)].count("command.issued")
+
+    started = time.monotonic()
+    rc = run_cmd.cmd_run(repo, "--resume", "--no-watch")
+    elapsed = time.monotonic() - started
+
+    err = capsys.readouterr().err
+    events = list(store.events(_RUN))
+    assert rc == 0
+    assert elapsed < 10, f"re-drive must return promptly, took {elapsed:.1f}s"
+    assert "stale verify link judge_full_f_reuse" in err
+    assert "no gate evidence" in err
+    assert not (repo / ".tracks" / "runtime" / "lock").exists()
+    assert [e.type for e in events].count("command.issued") == before
+    attention = [e for e in events if e.type == "attention.required"][-1]
+    assert attention.payload["area"] == "local_gate"
+    assert attention.payload["reason"] == "gate_evidence_missing"
+    assert attention.payload["candidate_sha"] == store.state(_RUN).candidate_sha
+
+    assert cmd_retry(repo, "--actor", "Maestro") == 0
+    store.close()
+
+
+def test_retry_accepts_stale_gate_evidence_without_an_attention(tmp_path, capsys):
+    """``blocked: gate_evidence_missing`` is a status projection, not an
+    attention event; retry is still its documented recovery verb."""
+    repo, store = _setup(tmp_path)
+    _seed_gate_evidence_missing(repo, store)
+    events = list(store.events(_RUN))
+    store.close()
+    assert _release_block_reason(events) == "gate_evidence_missing"
+
+    assert cmd_retry(repo, "--actor", "Maestro") == 0, capsys.readouterr().err
+
+    store = Store(repo / ".tracks")
+    assert [e.type for e in store.events(_RUN)].count("human.retry") == 1
+    store.close()
+
+
+def test_redrive_reruns_missing_gates_for_the_frozen_candidate(tmp_path, capsys):
+    """With no stale WAL link, the re-drive re-runs the missing local gates
+    and records candidate-bound evidence (never the long FULL head)."""
+    repo, store = _setup(tmp_path)
+    head = _seed_gate_evidence_missing(repo, store)
+
+    started = time.monotonic()
+    rc = run_cmd.cmd_run(repo, "--resume", "--no-watch")
+    elapsed = time.monotonic() - started
+
+    events = list(store.events(_RUN))
+    assert rc == 0, capsys.readouterr().err
+    assert elapsed < 30, f"gate recovery must be prompt, took {elapsed:.1f}s"
+    assert not (repo / ".tracks" / "runtime" / "lock").exists()
+    passed = [
+        e
+        for e in events
+        if e.type == "local_gate.passed"
+        and e.payload.get("candidate_sha") == head
+    ]
+    assert passed, "the missing local gates must record evidence for the current candidate"
+    issued = [
+        e.payload["command"]["kind"]
+        for e in events
+        if e.type == "command.issued"
+    ]
+    assert "judge_full_f_reuse" not in issued
+    assert "run_local_gates" in issued
+    store.close()

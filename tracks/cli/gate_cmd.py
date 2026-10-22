@@ -32,6 +32,7 @@ from .hotfix_cmd import _approve_hotfix_gap, _hotfix_gap_exit
 from .release_cmd import (
     _already_executed_ops,
     _establish_escape_barrier,
+    _release_block_reason,
     _stale_downstream_evidence,
 )
 
@@ -51,7 +52,30 @@ def _retryable_attention(attention) -> bool:
     return area in RETRYABLE_ATTENTION_AREAS
 
 
-def _retry_gate_error(state, clear_evidence: bool, attention=None) -> str | None:
+def _retryable_gate_evidence_block(state, events) -> bool:
+    """True for an active M-VERIFY window whose only block is missing gates.
+
+    ``blocked: gate_evidence_missing`` is a status projection, not an
+    ``attention.required`` event, so ``trac retry`` used to reject exactly
+    the state whose documented recovery verb is retry (live run bd0c68eb).
+    Accepting it clears any stale WAL link; the next drive re-runs the
+    missing local gates for the frozen candidate.
+    """
+    if (
+        state.stage != "M-VERIFY"
+        or state.status != "active"
+        or state.awaiting
+        or not state.candidate_sha
+    ):
+        return False
+    if events is None:
+        return False
+    return _release_block_reason(list(events)) == "gate_evidence_missing"
+
+
+def _retry_gate_error(
+    state, clear_evidence: bool, attention=None, events=None
+) -> str | None:
     if clear_evidence:
         if state.awaiting != "escalation" and not (
             state.status == "active" and state.awaiting is None
@@ -66,7 +90,10 @@ def _retry_gate_error(state, clear_evidence: bool, attention=None) -> str | None
         and not (
             state.awaiting is None
             and state.status == "active"
-            and _retryable_attention(attention)
+            and (
+                _retryable_attention(attention)
+                or _retryable_gate_evidence_block(state, events)
+            )
         )
         and not (
             state.stage == "M-IMPL"
@@ -98,8 +125,9 @@ def cmd_retry(repo: Path, *args: str) -> int:
             return _err("no active run")
         home, store, run_id = opened
         state = store.state(run_id)
-        attention = latest_unresolved_attention(store.events(run_id))
-        gate_err = _retry_gate_error(state, clear_evidence, attention)
+        events = list(store.events(run_id))
+        attention = latest_unresolved_attention(events)
+        gate_err = _retry_gate_error(state, clear_evidence, attention, events)
         if gate_err is not None:
             return _err(gate_err)
         store.append(

@@ -40,6 +40,23 @@ from tracks.kernel.machine import State, decide
 from tracks.project import lint_check_command
 from tracks.store import new_ulid
 
+# Verify-chain links that can run for a long time (FULL battery, closure
+# experiments, local gates, CI readback). A pending one at re-drive entry is
+# an interrupted/stale WAL record, not an in-flight command of this process:
+# replaying it under the writer lock can hold the lock indefinitely (live
+# run bd0c68eb: a 90+ minute FULL integration rerun blocked every operator
+# command). When the current candidate has no gate evidence yet, the missing
+# local gates are the safe resume point -- never a blind long-link replay.
+_VERIFY_RESUME_GUARD_KINDS = frozenset(
+    {
+        "judge_full_f_reuse",
+        "produce_closure_evidence",
+        "run_local_gates",
+        "observe_ci_runs",
+        "assess_security",
+    }
+)
+
 
 class ExecRunLoopMixin:
     """Project -> decide -> issue -> execute loop and its recovery/boundary helpers;
@@ -272,6 +289,126 @@ the host Executor keeps construction and the command handlers."""
             return None
         return pending[-1]
 
+    def _event_payload(self, event) -> dict:
+        """Resolve an event payload, dereferencing a stored blob when needed."""
+        payload = getattr(event, "payload", {}) or {}
+        if isinstance(payload, dict) and set(payload) == {"$ref"}:
+            try:
+                return self.store.load_payload(dict(payload))
+            except (OSError, ValueError, TypeError):
+                return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _verify_gate_evidence_missing(self, state: State) -> bool:
+        """True when the frozen candidate has no local-gate evidence yet.
+
+        Mirrors the status projection's ``blocked: gate_evidence_missing``:
+        the current M-VERIFY window froze a candidate but no
+        ``local_gate.passed`` event is bound to it. A moved HEAD is not this
+        condition -- the freeze/re-walk path owns it.
+        """
+        if (
+            state.stage != "M-VERIFY"
+            or state.substate != "VERIFYING"
+            or state.stage_exited
+        ):
+            return False
+        candidate = state.candidate_sha or ""
+        if not candidate:
+            return False
+        if self._repo_head_sha() != candidate:
+            return False
+        return not any(
+            event.type == "local_gate.passed"
+            and self._event_payload(event).get("candidate_sha") == candidate
+            for event in self.store.events(self.run_id)
+        )
+
+    def _stale_verify_resume_attention(self, state: State):
+        """Park a stale long verify link instead of replaying it under lock.
+
+        At run_loop entry any pending command belongs to a process that is no
+        longer driving this run. Replaying a FULL/closure/gate link whose
+        current candidate still has no gate evidence can hold the writer lock
+        for the link's whole duration (and forever if the link itself hangs),
+        leaving the operator no command that can acquire the lock. Land an
+        operator-actionable attention instead; ``trac retry`` clears the WAL
+        record and the next drive resumes at the missing local gates.
+        """
+        if state.stage != "M-VERIFY" or state.status != "active":
+            return None
+        pending = state.pending or {}
+        if pending.get("kind") not in _VERIFY_RESUME_GUARD_KINDS:
+            return None
+        if not self._verify_gate_evidence_missing(state):
+            return None
+        existing = self._pending_operator_attention(state)
+        if existing is not None:
+            return existing
+        candidate = state.candidate_sha or ""
+        self._emit(
+            "attention.required",
+            {
+                "area": "local_gate",
+                "reason": "gate_evidence_missing",
+                "stage": "M-VERIFY",
+                "candidate_sha": candidate,
+                "detail": (
+                    f"pending {pending.get('kind')} has no gate evidence for "
+                    f"candidate {candidate[:12]}; replaying it under the run "
+                    "lock can block the operator indefinitely"
+                ),
+                "next": (
+                    "trac retry --actor <name> clears the stale link; the "
+                    "next trac run re-runs the missing local gates"
+                ),
+            },
+        )
+        return self.store.state(self.run_id)
+
+    def _resume_release_chain(self, state: State) -> None:
+        """One bounded re-drive of an unfinished M-VERIFY / M-SECURITY link.
+
+        M-VERIFY resumes at the missing local gates when the frozen
+        candidate has no gate evidence (the status's
+        ``blocked: gate_evidence_missing`` state) instead of replaying the
+        FULL/closure head under the writer lock; every other unfinished
+        window resumes idempotently at freeze.
+        """
+        if (
+            state.stage == "M-VERIFY"
+            and state.substate == "VERIFYING"
+            and not state.stage_exited
+        ):
+            if self._verify_gate_evidence_missing(state):
+                print(
+                    f"run {self.run_id}: no gate evidence for candidate "
+                    f"{(state.candidate_sha or '')[:12]}; "
+                    "re-running the missing local gates",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self.issue(
+                    Command(
+                        kind="run_local_gates",
+                        params={"candidate_sha": state.candidate_sha or ""},
+                    )
+                )
+            else:
+                self.issue(
+                    Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
+                )
+            return
+        if (
+            state.stage == "M-SECURITY"
+            and state.substate == "ASSESSING"
+            and not state.stage_exited
+        ):
+            # Same bounded one-shot resume for the security link: a blocked
+            # assessment (attention/repair disposition) parks; a stale
+            # assessment for an older candidate re-assesses idempotently.
+            self.issue(Command(kind="assess_security", params={}))
+
     def _sleep_wait(self, seconds: float) -> bool:
         """Sleep for a bounded wait; return True when an operator wrote.
 
@@ -302,6 +439,19 @@ the host Executor keeps construction and the command handlers."""
                 file=sys.stderr,
                 flush=True,
             )
+        resume_state = self.store.state(self.run_id)
+        stale_resume = self._stale_verify_resume_attention(resume_state)
+        if stale_resume is not None:
+            pending_kind = (resume_state.pending or {}).get("kind")
+            print(
+                f"run {self.run_id}: stale verify link "
+                f"{pending_kind or '?'} has no gate evidence for the frozen "
+                "candidate; releasing the writer lock for an operator retry "
+                "instead of replaying it under the lock",
+                file=sys.stderr,
+                flush=True,
+            )
+            return stale_resume
         stop, recovered_kind, pending = self._recover_for_run()
         if stop:
             return self.store.state(self.run_id)
@@ -328,23 +478,7 @@ the host Executor keeps construction and the command handlers."""
                 flush=True,
             )
             return state_after_recover
-        if (
-            state_after_recover.stage == "M-VERIFY"
-            and state_after_recover.substate == "VERIFYING"
-            and not state_after_recover.stage_exited
-        ):
-            self.issue(
-                Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
-            )
-        elif (
-            state_after_recover.stage == "M-SECURITY"
-            and state_after_recover.substate == "ASSESSING"
-            and not state_after_recover.stage_exited
-        ):
-            # Same bounded one-shot resume for the security link: a blocked
-            # assessment (attention/repair disposition) parks; a stale
-            # assessment for an older candidate re-assesses idempotently.
-            self.issue(Command(kind="assess_security", params={}))
+        self._resume_release_chain(state_after_recover)
         try:
             return self._run_loop_body(dispatches, bound_substate)
         finally:
