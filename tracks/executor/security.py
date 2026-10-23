@@ -22,6 +22,7 @@ from .host_contract import (
     NormalizedGateResult,
     SecurityScanDecl,
     execute_gate,
+    parse_json_report,
 )
 
 
@@ -162,6 +163,79 @@ def run_security_scans(
     return results
 
 
+def _is_bandit(decl: SecurityScanDecl) -> bool:
+    return str(getattr(decl, "tool", "")).strip().casefold() == "bandit"
+
+
+def _report_health(payload: dict) -> tuple[dict | None, str]:
+    """Read the fail-closed health fields of a structured scan report."""
+    errors = payload.get("errors")
+    results = payload.get("results")
+    metrics = payload.get("metrics")
+    if not isinstance(errors, list):
+        return None, "report errors missing or not a list"
+    if not isinstance(results, list):
+        return None, "report results missing or not a list"
+    if not isinstance(metrics, dict):
+        return None, "report metrics missing or not an object"
+    files = [
+        name
+        for name, values in metrics.items()
+        if name != "_totals" and isinstance(values, dict)
+    ]
+    health = {
+        "errors": len(errors),
+        "results": len(results),
+        "files_analyzed": len(files),
+    }
+    return health, ""
+
+
+def _malformed_report(
+    result: NormalizedGateResult, reason: str, summary: dict
+) -> NormalizedGateResult:
+    return replace(
+        result,
+        status="malformed",
+        summary={**summary, "report_error": reason},
+    )
+
+
+def _validate_scan_report(
+    decl: SecurityScanDecl, result: NormalizedGateResult
+) -> NormalizedGateResult:
+    """An exit-code pass is authorized only by a healthy structured report.
+
+    Bandit is strict: the report is required even when the process exits 0.
+    Other tools keep the declared exit-code channel unless they actually
+    emitted a structured report, in which case its errors/analyzed-file
+    counts must also be clean. Unknown/malformed reports fail closed.
+    """
+    if result.status != "passed" or decl.result_channel != "exit_code":
+        return result
+    summary = dict(result.summary or {})
+    payload, reason = parse_json_report(summary.get("stdout"))
+    if payload is None:
+        if _is_bandit(decl):
+            return _malformed_report(result, reason, summary)
+        return result
+    health, reason = _report_health(payload)
+    if health is None:
+        if _is_bandit(decl) or any(
+            key in payload for key in ("errors", "metrics", "results")
+        ):
+            return _malformed_report(result, reason, summary)
+        return result
+    summary["report"] = health
+    if health["errors"]:
+        return _malformed_report(
+            result, f"tool reported {health['errors']} error(s)", summary
+        )
+    if health["files_analyzed"] <= 0:
+        return _malformed_report(result, "tool analyzed no files", summary)
+    return replace(result, summary=summary)
+
+
 def _execute_scan(decl: SecurityScanDecl, repo) -> NormalizedGateResult:
     """Consume the declared result channel using the shared normalized protocol."""
     if not decl.command.strip() or decl.result_channel not in ("exit_code", "file"):
@@ -174,6 +248,7 @@ def _execute_scan(decl: SecurityScanDecl, repo) -> NormalizedGateResult:
         result = execute_gate(gate, Path(repo), {})
     except (OSError, ValueError) as err:
         return _scan_result(decl, None, {"error": str(err)})
+    result = _validate_scan_report(decl, result)
     return replace(result, gate_id=decl.scan_id)
 
 

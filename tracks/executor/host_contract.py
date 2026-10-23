@@ -595,6 +595,39 @@ def execute_gate(
     )
 
 
+def parse_json_report(raw: bytes | str | None) -> tuple[dict | None, str]:
+    """Parse a tool's structured JSON report from captured output (fail-closed).
+
+    The whole payload and its last non-empty line are both considered so a
+    report remains parseable when a launcher prefixes log lines. Anything
+    other than one JSON object is rejected; callers decide whether a missing
+    report is fatal for their tool.
+    """
+    if raw is None:
+        return None, "report missing"
+    if isinstance(raw, bytes):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return None, f"report is not valid UTF-8: {exc}"
+    elif isinstance(raw, str):
+        text = raw
+    else:
+        return None, "report is not text"
+    text = text.strip()
+    if not text:
+        return None, "report missing"
+    for candidate in (text, text.splitlines()[-1].strip()):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload, ""
+        return None, "report is not a JSON object"
+    return None, "report is not valid JSON"
+
+
 def _parse_result_blob(raw: bytes | None) -> tuple[dict | None, str]:
     if raw is None:
         return None, "gate result file missing"

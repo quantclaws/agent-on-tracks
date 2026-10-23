@@ -170,9 +170,9 @@ timeout_seconds = 900
 [[host-contract.security_scan]]
 id = "static-security-lint"
 tool = "bandit"
-tool_version = "1.8.3"
-install = ".venv/bin/python -m pip install bandit==1.8.3"
-command = ".venv/bin/bandit -r tracks -ll -q"
+tool_version = "1.9.4"
+install = ".venv/bin/python -m pip install bandit==1.9.4"
+command = ".venv/bin/bandit -r tracks -lll -q -f json"
 result_channel = "exit_code"
 threshold = "severity_high_or_above=0"
 timeout_seconds = 600

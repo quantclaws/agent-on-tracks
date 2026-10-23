@@ -20,6 +20,7 @@ import json
 import shlex
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +29,7 @@ from tracks.executor.host_contract import (
     NormalizedGateResult,
     SecurityScanDecl,
     VersionDecl,
+    load_host_contract,
 )
 from tracks.executor.security import (
     aggregate_security_status,
@@ -244,3 +246,94 @@ def test_run_security_scans_undeclared_policy_fails_closed(tmp_path):
     # the fail-closed chain: empty set aggregates to unknown (blocked), never pass
     outcome = _calls(aggregate_security_status, [], label="aggregate_security_status")
     assert outcome == "unknown"
+
+
+def _report_scan(tmp_path: Path, report: dict | None, *, raw: str | None = None):
+    path = tmp_path / "report.json"
+    path.write_text(raw if raw is not None else json.dumps(report), encoding="utf-8")
+    script = tmp_path / "emit_report.py"
+    script.write_text(
+        "import pathlib, sys\n"
+        "sys.stdout.write(pathlib.Path(sys.argv[1]).read_text())\n",
+        encoding="utf-8",
+    )
+    command = (
+        f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
+        f"{shlex.quote(str(path))}"
+    )
+    return replace(
+        _scan("static-security-lint", command),
+        tool="bandit",
+        tool_version="1.9.4",
+        threshold="severity_high_or_above=0",
+    )
+
+
+# AC-FR0272-02@v0.8 TRACKS-TRACE exit-code report integrity
+@pytest.mark.parametrize(
+    "report",
+    [
+        {
+            "errors": [{"filename": "tracks/__init__.py", "reason": "AST failure"}],
+            "results": [],
+            "metrics": {"tracks/__init__.py": {"loc": 5}},
+        },
+        {"errors": [], "results": [], "metrics": {}},
+        {"errors": [], "results": [], "metrics": {"_totals": {"loc": 0}}},
+        {"errors": [], "results": 0, "metrics": {"tracks/a.py": {"loc": 1}}},
+        {"errors": "none", "results": [], "metrics": {"tracks/a.py": {"loc": 1}}},
+    ],
+)
+def test_bandit_exit_zero_with_unhealthy_report_cannot_pass(tmp_path, report):
+    """SEC-001/002: exit 0 plus internal errors or zero analyzed files is not a pass."""
+    scan = _report_scan(tmp_path, report)
+    result = run_security_scans(_contract(scan), tmp_path, "a" * 40)[0]
+    assert result.exit_code == 0
+    assert result.status == "malformed"
+    assert "report_error" in result.summary
+    assert aggregate_security_status([result]) != "passed"
+
+
+# AC-FR0272-02@v0.8 TRACKS-TRACE exit-code report integrity
+def test_bandit_exit_zero_without_structured_report_cannot_pass(tmp_path):
+    """SEC-002: a bandit exit-code pass still requires its structured report."""
+    scan = replace(_scan("static-security-lint", "true"), tool="bandit")
+    result = run_security_scans(_contract(scan), tmp_path, "a" * 40)[0]
+    assert result.status == "malformed"
+    assert result.summary["report_error"] == "report missing"
+
+
+# AC-FR0272-02@v0.8 TRACKS-TRACE exit-code report integrity
+def test_bandit_exit_zero_with_clean_analyzed_report_passes(tmp_path):
+    """SEC-001: a clean report with analyzed files remains an authorized pass."""
+    report = {
+        "errors": [],
+        "results": [],
+        "metrics": {"tracks/a.py": {"loc": 3}, "_totals": {"loc": 3}},
+    }
+    scan = _report_scan(tmp_path, report)
+    result = run_security_scans(_contract(scan), tmp_path, "a" * 40)[0]
+    assert result.status == "passed"
+    assert result.summary["report"] == {
+        "errors": 0,
+        "results": 0,
+        "files_analyzed": 1,
+    }
+
+
+# AC-FR0272-01@v0.8 TRACKS-TRACE declared scan threshold alignment
+def test_declared_static_scan_command_matches_high_threshold():
+    """SEC-001/003: the pinned runner analyzes files and -lll matches high-only=0."""
+    repo = Path(__file__).resolve().parents[2]
+    contract = load_host_contract(repo / ".tracks" / "projects" / "project.toml")
+    scan = next(
+        item for item in contract.security_scans if item.scan_id == "static-security-lint"
+    )
+    argv = shlex.split(scan.command)
+    assert scan.tool == "bandit"
+    assert scan.tool_version == "1.9.4"
+    assert scan.install.endswith("bandit==1.9.4")
+    assert scan.threshold == "severity_high_or_above=0"
+    assert "-lll" in argv
+    assert "-ll" not in argv
+    assert argv[-2:] == ["-f", "json"]

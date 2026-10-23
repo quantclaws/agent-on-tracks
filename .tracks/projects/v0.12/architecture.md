@@ -20,12 +20,12 @@ sha:
 - 唯一生产路径 `cli -> kernel.machine.decide -> executor.execute -> store.append`、SQLite append-only events、投影可重建、单写者 writer_lock 与 per-kind reconcile 不变。v0.12 **不新增 tracks.db 事件类型**；`human.review` 仅追加可选 payload 键（§1.0.8）。
 - `kernel/` 纯控制、`executor/` 副作用、`checks/` 静态闭合、`effects/` 外部通道、`adapters/` 宿主测试框架语义、`cli/` 交付面、`server/` Web 交付面、`supervisor/` 后台驱动控制层的分层不变。安装器属于 `cli/` 的宿主 provisioning 面，不进入 kernel/executor。
 - 既有 CLI 子命令集合与语义不变：`init/start/run/hotfix/triage/review/approve/return/recover/retry/status/replay/report/validate/validate-reply/discuss/check/release/abandon/serve` 的参数面与退出码逐字继承。`trac serve` 的前台行为与 `serve_cmd.cmd_serve` 的直接调用面不变（测试夹具继续直接 import 该函数）；v0.12 只在外层 CLI 入口追加项目安装前置与生命周期 flag。
-- `.tracks/projects/project.toml` 的 `[unit]/[integration]/[e2e]/[nightly]/[adapter]/[layout]/[lint]/[host-contract.*]` 段结构逐字继承；本设计的原始变更集不修改该文件，但现行 bytes 已包含 v0.12 OOB 修复对 e2e `collect` marker 过滤的变更与 4-worker 单元/集成并发修复，`hooks-runner-ci-required` 的 `config_digest` 已由 `e1735466…` 重锚为 `2a3e131c…`（§4.2）。JUnit 参数、`ui` marker 通道隔离、质量守卫阈值与 required checks 七名全部继承。
+- `.tracks/projects/project.toml` 的 `[unit]/[integration]/[e2e]/[nightly]/[adapter]/[layout]/[lint]/[host-contract.*]` 段结构逐字继承；本设计的原始变更集不修改该文件，但现行 bytes 已包含 v0.12 OOB 修复对 e2e `collect` marker 过滤的变更与 4-worker 单元/集成并发修复，`hooks-runner-ci-required` 的 `config_digest` 已由 `e1735466…` 重锚为 `94d9774e…`（§4.2）。JUnit 参数、`ui` marker 通道隔离、质量守卫阈值与 required checks 七名全部继承。
 - v0.9 服务面：HTTP API 基底约定（认证、CSRF + Idempotency-Key、错误封装）、命令服务、supervisor 单活动 run 串行、SSE、redaction、本机单用户边界全部继承。v0.10/v0.11 的 PAGES 六名、五 tab、Releases 投影、时间线/ac-chain、awaiting_gate/return_options、评审轮写入通道全部继承。
 - v0.12 OOB 已落地的读取面与 UI 面按现状纳入合同：`GET /api/runs/{run_id}/stages/{stage}/rounds`、`GET /api/runs/{run_id}/rounds/{command_id}`；`timeline.js` 的阶段轨道、阶段实际工作流聚合图、按轮手风琴、可读卡片与本地时间、评审两决策面；`_AppModulesNoCache` 的静态文本 no-cache。这些面不重做设计，只补齐可观察合同与测试（§1.0.7/§1.0.8）。`GET /api/runs/{run_id}/activity`（run 版）是未消费遗留读面，仅继承既有 API 语义，不纳入 v0.12 断言基线。
 - `tracks/agents`、`tracks/skills`、`tracks/templates` 的 canonical 内容与 agent materialization 语义不变；v0.12 只是把同一份资源纳入官方 wheel 承诺并由项目安装复制到宿主 `.opencode/`（agents/skills/templates），根 `opencode.json` 仅 seeded。
 - 发布闭环、version gate bindings、`release-evidence` milestone、reference host、三旅程合同、security scan、build/smoke 合同全部继承。v0.12 设计期把 `pyproject.toml` 与 `tracks/__init__.py` bump 到 `0.12.0`（version gate 绑定对象，§2/§4.2）。
-- 质量守卫八类与 canonical registry 机制不变；CI required checks 七名（lint/coverage/test/deliverables/trace/reach/ui-e2e）不变。`pyproject.toml` 的 bytes 变化（版本 + package-data）使六条 pyproject-backed `config_digest` 重锚（§4.2）；`.tracks/projects/project.toml` 因 v0.12 OOB 修复 e2e `collect` marker 过滤与 4-worker 单元/集成并发修复产生 bytes 变化，`hooks-runner-ci-required` 的 `config_digest` 已重锚为 `2a3e131c…`（§4.2）；`.flake8` 未变化，digest 继承。
+- 质量守卫八类与 canonical registry 机制不变；CI required checks 七名（lint/coverage/test/deliverables/trace/reach/ui-e2e）不变。`pyproject.toml` 的 bytes 变化（版本 + package-data）使六条 pyproject-backed `config_digest` 重锚（§4.2）；`.tracks/projects/project.toml` 因 v0.12 OOB 修复 e2e `collect` marker 过滤与 4-worker 单元/集成并发修复产生 bytes 变化，`hooks-runner-ci-required` 的 `config_digest` 已重锚为 `94d9774e…`（§4.2）；`.flake8` 未变化，digest 继承。
 
 > **Prism [RESOLVED]:** 【阻塞 finding PRISM-D13-01 · DESIGN-1/8 合同真实性】本节行 28 称 `.tracks/projects/project.toml` 与 `.flake8` 未变化、digest 继承；但同文档 §4.2（行 243）明确该文件因 OOB 修复 e2e `collect` 的 marker 过滤而 bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 由 `e1735466…` 重锚为 `2a3e131c…`，且该 TOML block 的 digest 与工作区文件实测 sha256 一致（`2a3e131c1349e079c689c744df44a43efa7a176eb25dee0c1648613822688af8`）。行 23「v0.12 不修改该文件」与 test-plan §2.3.1 行 103「v0.12 零变更，逐字继承」同样沿用了变更前的前提。请统一三处口径：在 §0.1 与 test-plan §2.3.1 写明 project.toml 在 v0.12 期间因 OOB 修复产生 bytes 变更并重锚 digest（引用 §4.2），`.flake8` 仍为未变化继承；若意图是「本设计不改文件」，请明确限定为设计变更集并同时说明现行字节已含 OOB 修复。其余核验（三向闭包/六元组/命令实跑/scaffold/registry digest/e2e collect 与 ui 选择）通过。
 >> **Archer:** 已统一三处口径并修复 advisory：architecture §0.1 行 23 改为「本设计变更集不修改该文件，但现行 bytes 已含 v0.12 OOB 修复的 e2e collect marker 过滤变更」，行 28 明确 project.toml digest 由 e1735466… 重锚为 2a3e131c…（引用 §4.2），.flake8 仍继承；test-plan §2.3.1 同步为同一口径。另按 PRISM-D13-02 从 interfaces §1b.4 删除内部 cmd_init 命名约束，只保留外部可观察的宿主根 .gitignore 不创建/不修改；内部实现约束已在 architecture §1.2 表达。请复核。
@@ -243,7 +243,7 @@ v0.12 测试执行合同（v0.12 修复后的现行字节：unit/integration 4 w
 
 ### 4.2 Canonical quality guard registry（v0.12）
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data + certifi 2026.10.19 CVE pin，PYSEC-2026-4320）——六条 pyproject-backed `config_digest` 重锚为 `sha256:a6ce9e71…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）与 4-worker 单元/集成并发修复 bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:2a3e131c…`（原 `e1735466…`）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data + certifi 2026.10.19 CVE pin，PYSEC-2026-4320）——六条 pyproject-backed `config_digest` 重锚为 `sha256:a6ce9e71…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）与 4-worker 单元/集成并发修复 bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:94d9774e…`（原 `2a3e131c…`，M-SECURITY 修复：bandit 1.9.4 / `-lll` / JSON report）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
 
 > **质量基线（2026-10-22 更新）— 严格包络恢复**：v0.12 M-VERIFY 初期曾因 v0.11 遗留债以 CLI 覆盖锚定实测基线；该债务已 burn-down（`_task_progress` 与 FULL 选择/分阶段 argv 等重复块重构、新增模块拆分），严格包络已在当前树实测通过。故 registry 命令/阈值恢复严格：CCR001 15、C0302 1200、R0914 15 / R0915 50、coverage 89；八类与 fail_closed 语义不变；`config_digest` 中 pyproject-backed 六条随现行 pyproject bytes 重锚为 `sha256:a6ce9e71…`，`.flake8` 随 bytes 未变继承。
 
@@ -372,7 +372,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:2a3e131c1349e079c689c744df44a43efa7a176eb25dee0c1648613822688af8"
+config_digest = "sha256:94d9774e093f62a9ee845da8fdc59c74e7778a32579035c2f5bf1c7616859458"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach,ui-e2e; milestone=release-evidence"
 timeout_seconds = 3600
