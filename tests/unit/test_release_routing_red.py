@@ -175,3 +175,34 @@ def test_release_routing_replaces_notimplemented_error():
         decide_release_stage("M-RELEASE", "AWAITING_RELEASE", state)
     except NotImplementedError as exc:
         _fail(f"decide_release_stage() is still an IF-VERIFY-001 stub: {exc}")
+
+
+def test_human_return_rolls_back_from_m_security():
+    # FR-0287: trac return while parked on M-SECURITY/RETURNED must route the
+    # rollback to the recorded target, not depend on a stage-specific decider
+    # (M-SECURITY has none, so RETURNED previously routed None and stalled).
+    state = _fresh_state(
+        stage="M-SECURITY", substate="RETURNED", return_target="M-VERIFY"
+    )
+    cmd = _route("M-SECURITY", "RETURNED", state)
+    if not (isinstance(cmd, Command) and cmd.kind == "rollback_stage"):
+        _fail(f"M-SECURITY/RETURNED must route Command('rollback_stage'), got {cmd!r}")
+    if cmd.params != {"to_stage": "M-VERIFY", "reason": "human_return"}:
+        _fail(f"rollback must target M-VERIFY with reason human_return, got {cmd.params!r}")
+    # Human return dominates a classified repair route still carried in state.
+    repair_route = {
+        "exit_class": "defect_repair",
+        "defect_class": "behavior",
+        "owner": "guru",
+        "discipline": 0,
+        "budget_remaining": 3,
+    }
+    state = _fresh_state(
+        stage="M-SECURITY",
+        substate="RETURNED",
+        return_target="M-VERIFY",
+        last_failure={"reason": "cve_blocked", "repair_route": repair_route},
+    )
+    cmd = _route("M-SECURITY", "RETURNED", state)
+    if not (isinstance(cmd, Command) and cmd.kind == "rollback_stage"):
+        _fail(f"human return must dominate defect_repair, got {cmd!r}")

@@ -173,13 +173,23 @@ _DECIDERS = {
 def decide_release_stage(stage: str, substate: str, state: State) -> Command | None:
     """Route decide() for the five release stages (SM-01.1–.10).
 
-    A classified repair route (architecture §1.0.14; classification is
-    T-029's ``classify_defect_route``, carried in ``state.last_failure``)
-    dominates: defect_repair dispatches the in-place repair, irreparable
+    A Human return (substate RETURNED) dominates every stage and every
+    classified route: it rolls back to ``state.return_target`` or, absent a
+    target, parks fail-closed (None). A classified repair route
+    (architecture §1.0.14; classification is T-029's
+    ``classify_defect_route``, carried in ``state.last_failure``) dominates
+    the walk: defect_repair dispatches the in-place repair, irreparable
     product defects register a known issue, env_transient/human_escape retry
     at walk level (None). Otherwise the walk boundaries route the executor
     commands; anything unmatched routes None (fail-closed).
     """
+    if substate == "RETURNED":
+        if not state.return_target:
+            return None
+        return Command(
+            kind="rollback_stage",
+            params={"to_stage": state.return_target, "reason": "human_return"},
+        )
     failure = getattr(state, "last_failure", None)
     route = failure.get("repair_route") if isinstance(failure, dict) else None
     if isinstance(route, dict):
