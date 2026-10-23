@@ -442,7 +442,7 @@ def test_run_full_chain_loops_fullf_without_a_loop_cap():
 # any appended -n/--dist/worker flag or injected --junitxml or swapped node
 # fails closed.
 _TEMPLATE = (
-    ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope "
+    ".venv/bin/python -m pytest {nodes} --tb=short -q -n 4 --dist loadscope "
     "--junitxml={result}"
 )
 _NODES = [
@@ -473,7 +473,7 @@ def test_resolve_selected_command_substitutes_nodes_and_resolves_argv0(tmp_path)
         "--tb=short",
         "-q",
         "-n",
-        "8",
+        "4",
         "--dist",
         "loadscope",
         f"--junitxml={_RESULT}",

@@ -30,14 +30,18 @@ from tracks.store import Store
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _UNIT_RUN = (
-    ".venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 "
+    ".venv/bin/python -m pytest tests/unit/ --tb=short -q -n 4 "
     "--dist loadscope --junitxml={result}"
 )
 _UNIT_RUN_SELECTED = (
-    ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+    ".venv/bin/python -m pytest {nodes} --tb=short -q -n 4 "
     "--dist loadscope --junitxml={result}"
 )
 _INTEGRATION_RUN_SELECTED = (
+    ".venv/bin/python -m pytest {nodes} --tb=short -q -n 4 "
+    "--dist loadscope --junitxml={result}"
+)
+_E2E_RUN_SELECTED = (
     ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
     "--dist loadscope --junitxml={result}"
 )
@@ -63,14 +67,14 @@ def _engine_repo(tmp_path: Path) -> Path:
         f"run_selected='{_UNIT_RUN_SELECTED}'\ncwd='.'\n\n"
         "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
         "collect='.venv/bin/python -m pytest --collect-only -q tests/integration/'\n"
-        "run='.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 "
+        "run='.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 4 "
         "--dist loadscope --junitxml={result}'\n"
         f"run_selected='{_INTEGRATION_RUN_SELECTED}'\ncwd='.'\n\n"
         "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
         "collect='.venv/bin/python -m pytest --collect-only -q tests/e2e/'\n"
         "run='.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 "
         "--dist loadscope --junitxml={result}'\n"
-        f"run_selected='{_INTEGRATION_RUN_SELECTED}'\ncwd='.'\n\n"
+        f"run_selected='{_E2E_RUN_SELECTED}'\ncwd='.'\n\n"
         "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
         "job='nightly-regression'\nlayers=['unit','integration','e2e']\n"
         "purpose='regression'\n\n"

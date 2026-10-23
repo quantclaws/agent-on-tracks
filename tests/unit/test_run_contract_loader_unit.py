@@ -17,6 +17,9 @@ concurrency flags itself.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from tracks.project import ContractError, load_contract
@@ -34,9 +37,9 @@ _MINIMAL_UNIT_SECTION = (
     'framework = "pytest"\n'
     'paths = ["tests/unit/"]\n'
     'collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"\n'
-    'run = ".venv/bin/python -m pytest tests/unit/ -q -n 8 --dist loadscope '
+    'run = ".venv/bin/python -m pytest tests/unit/ -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
-    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope '
+    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
     'cwd = "."\n\n'
 )
@@ -46,9 +49,9 @@ _INTEGRATION_SECTION = (
     'framework = "pytest"\n'
     'paths = ["tests/integration/"]\n'
     'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-    'run = ".venv/bin/python -m pytest tests/integration/ -q -n 8 --dist loadscope '
+    'run = ".venv/bin/python -m pytest tests/integration/ -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
-    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope '
+    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
     'cwd = "."\n\n'
 )
@@ -64,7 +67,7 @@ def test_sections_expose_run_selected_contract(tmp_path):
     _write_contract(tmp_path, _full_atomic_schema_body())
     contract = load_contract(tmp_path)
     assert getattr(contract.integration, "run_selected", None) == (
-        ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope "
+        ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope "
         "--junitxml={result}"
     )
     unit = getattr(contract, "unit", None)
@@ -81,6 +84,49 @@ def test_sections_expose_run_selected_contract(tmp_path):
             "run_selected must embed {result} exactly once"
         )
         assert section.run_selected.count("{nodes}") == 1
+
+
+# v0.12 host contract: the architecture machine contract is the design source
+# for the test execution contract, so the live architecture.md must declare the
+# operator-required xdist fan-out -- 4 workers for unit/integration (the
+# 8-worker integration FULL hung on nested subprocesses), 8 for e2e.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_V012_ARCHITECTURE = (
+    _REPO_ROOT / ".tracks" / "projects" / "v0.12" / "architecture.md"
+)
+_ARCHITECTURE_LAYER_LINE = re.compile(
+    r"^- `\[(unit|integration|e2e)\]`：(?P<body>.*)$", re.MULTILINE
+)
+
+
+def _architecture_contract_commands() -> dict[str, tuple[str, str]]:
+    text = _V012_ARCHITECTURE.read_text(encoding="utf-8")
+    commands: dict[str, tuple[str, str]] = {}
+    for match in _ARCHITECTURE_LAYER_LINE.finditer(text):
+        body = match.group("body")
+        run = re.search(r"run=`([^`]*)`", body)
+        run_selected = re.search(r"run_selected=`([^`]*)`", body)
+        assert run and run_selected, (
+            f"v0.12 architecture [{match.group(1)}] must declare run/run_selected"
+        )
+        commands[match.group(1)] = (run.group(1), run_selected.group(1))
+    return commands
+
+
+def test_v012_architecture_contract_declares_worker_counts():
+    commands = _architecture_contract_commands()
+    assert set(commands) == {"unit", "integration", "e2e"}, (
+        "v0.12 architecture must declare the three test layers"
+    )
+    expected = {"unit": "4", "integration": "4", "e2e": "8"}
+    for layer, workers in expected.items():
+        for key, template in zip(
+            ("run", "run_selected"), commands[layer], strict=True
+        ):
+            assert re.findall(r"-n (\d+)", template) == [workers], (
+                f"v0.12 architecture [{layer}] {key} must pin -n {workers}; "
+                f"got {template!r}"
+            )
 
 
 # v6/interfaces §1m: a layer missing the {result} placeholder in run OR
@@ -184,7 +230,7 @@ def test_missing_run_selected_fails_closed_contract_error(tmp_path, section):
         "integration": no_sel_integration + _MINIMAL_UNIT_SECTION,
         "unit": no_sel_integration
         + _MINIMAL_UNIT_SECTION.replace(
-            'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope '
+            'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope '
             '--junitxml={result}"\n',
             "",
         ),

@@ -106,8 +106,8 @@ The host project test execution contract is declared in `.tracks/projects/projec
   - framework: pytest
   - paths: ["tests/integration/"]
   - collect: `.venv/bin/python -m pytest --collect-only tests/integration/`
-  - run: `.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`
-  - run_selected: `.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}`
+  - run: `.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 4 --dist loadscope --junitxml={result}`
+  - run_selected: `.venv/bin/python -m pytest {nodes} --tb=short -q -n 4 --dist loadscope --junitxml={result}`
   - cwd: "."
 - **E2e**:
   - framework: pytest

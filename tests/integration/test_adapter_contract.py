@@ -76,7 +76,7 @@ def test_reference_adapter_equivalent_to_v06(tmp_path):
     result_path = tmp_path / "result.xml"
     template = (
         ".venv/bin/python -m pytest {nodes} --tb=short -q "
-        "-n 8 --dist loadscope --junitxml={result}"
+        "-n 4 --dist loadscope --junitxml={result}"
     )
     selected = ("tests/unit/test_select_pure_functions.py::test_select_r2_returns_r2_only",)
     argv = adapter.run_selected(template, selected, result_path, repo)

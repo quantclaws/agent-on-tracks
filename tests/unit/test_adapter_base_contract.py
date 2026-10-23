@@ -75,9 +75,9 @@ _UINT_SECTION = (
     'framework = "pytest"\n'
     'paths = ["tests/unit/"]\n'
     'collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"\n'
-    'run = ".venv/bin/python -m pytest tests/unit/ -q -n 8 --dist loadscope '
+    'run = ".venv/bin/python -m pytest tests/unit/ -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
-    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope '
+    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
     'cwd = "."\n\n'
 )
@@ -87,9 +87,9 @@ _INTEGRATION_SECTION = (
     'framework = "pytest"\n'
     'paths = ["tests/integration/"]\n'
     'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-    'run = ".venv/bin/python -m pytest tests/integration/ -q -n 8 --dist loadscope '
+    'run = ".venv/bin/python -m pytest tests/integration/ -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
-    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 8 --dist loadscope '
+    'run_selected = ".venv/bin/python -m pytest {nodes} -q -n 4 --dist loadscope '
     '--junitxml={result}"\n'
     'cwd = "."\n\n'
 )

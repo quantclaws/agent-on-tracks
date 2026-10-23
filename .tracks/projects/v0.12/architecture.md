@@ -235,8 +235,8 @@ spec 只要求 macOS/Linux 下“发起 shell 退出后继续运行直至显式�
 
 v0.12 逐字继承现行测试执行合同（不修改文件）：
 
-- `[unit]`：framework=pytest；paths=`["tests/unit/"]`；collect=`.venv/bin/python -m pytest --collect-only tests/unit/`；run=`.venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`；run_selected=`.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}`；cwd=`.`
-- `[integration]`：framework=pytest；paths=`["tests/integration/"]`；collect=`.venv/bin/python -m pytest --collect-only tests/integration/`；run=`.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`；run_selected=`.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}`；cwd=`.`
+- `[unit]`：framework=pytest；paths=`["tests/unit/"]`；collect=`.venv/bin/python -m pytest --collect-only tests/unit/`；run=`.venv/bin/python -m pytest tests/unit/ --tb=short -q -n 4 --dist loadscope --junitxml={result}`；run_selected=`.venv/bin/python -m pytest {nodes} --tb=short -q -n 4 --dist loadscope --junitxml={result}`；cwd=`.`
+- `[integration]`：framework=pytest；paths=`["tests/integration/"]`；collect=`.venv/bin/python -m pytest --collect-only tests/integration/`；run=`.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 4 --dist loadscope --junitxml={result}`；run_selected=`.venv/bin/python -m pytest {nodes} --tb=short -q -n 4 --dist loadscope --junitxml={result}`；cwd=`.`
 - `[e2e]`：framework=pytest；paths=`["tests/e2e/"]`；collect=`.venv/bin/python -m pytest --collect-only tests/e2e/ -m 'not performance'`；run=`.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`；run_selected=`.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope -m 'not performance' --junitxml={result}`；cwd=`.`
 
 `ui` marker 默认由 addopts 排除；e2e `collect` / `run_selected` 的 `-m 'not performance'` 覆盖该过滤以收集/选中 UI 节点。`ui-e2e` job 选择语义、nightly FULL 合同、adapter `reference-pytest`、layout 写域与 lint check 全部继承。本版新测试全部落既有 paths，合同无需扩容。
