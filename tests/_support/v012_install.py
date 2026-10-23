@@ -36,6 +36,13 @@ PYTHON = Path(sys.executable)
 CURRENT_VERSION = "0.12.0"
 OLD_VERSION = "0.11.0"
 
+_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "tracks-install-test",
+    "GIT_AUTHOR_EMAIL": "tracks-install-test@example.com",
+    "GIT_COMMITTER_NAME": "tracks-install-test",
+    "GIT_COMMITTER_EMAIL": "tracks-install-test@example.com",
+}
+
 _IGNORE = shutil.ignore_patterns(
     ".git",
     ".venv",
@@ -160,6 +167,8 @@ class GlobalCli:
         env.setdefault("TRAC_INFRA_RETRY_LIMIT", "2")
         if extra:
             env.update(extra)
+        for key, value in _GIT_IDENTITY.items():
+            env.setdefault(key, value)
         return env
 
     def run(
