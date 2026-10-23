@@ -257,6 +257,18 @@ def test_triage_review_events_csrf_idempotency(tmp_path: Path, host_repo, trac):
             f"the event carries the acting principal: {triage_events[0]!r}"
         )
 
+        # Preempt ordering (regression): the human.triage event lands before
+        # the supervisor drives the triage leg on to its DRAFT/SAGE
+        # checkpoints. Creating the preempting run right here races those
+        # in-flight checkpoint commits against the new run's bootstrap commit
+        # in the shared host repo: the preempted run then aborts on the
+        # ResultCheckpoint base_sha re-check (or leaves a half-bootstrapped
+        # M-START plane). Wait until the triage leg parks at its own review
+        # gate — its writes are settled, so the preempt cannot overlap them.
+        wait_run_awaiting(
+            base, cookie, triage_run, ("review", "review_pending_threads")
+        )
+
         # review half: the no-comment review reuses the same discipline — a
         # distinct story keeps this a distinct run (see _create_feature_run),
         # and preempt is the documented way to start it while the triage
