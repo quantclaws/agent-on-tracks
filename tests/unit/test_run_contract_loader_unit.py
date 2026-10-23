@@ -129,6 +129,21 @@ def test_v012_architecture_contract_declares_worker_counts():
             )
 
 
+# The design doc is not the runtime contract: `trac run` loads the live
+# `.tracks/projects/project.toml`, so pin the real bytes (not a fixture copy).
+def test_live_project_contract_pins_worker_counts():
+    contract = load_contract(_REPO_ROOT)
+    expected = {"unit": "4", "integration": "4", "e2e": "8"}
+    for layer, workers in expected.items():
+        section = getattr(contract, layer)
+        for key in ("run", "run_selected"):
+            template = getattr(section, key)
+            assert re.findall(r"-n (\d+)", template) == [workers], (
+                f"live project.toml [{layer}] {key} must pin -n {workers}; "
+                f"got {template!r}"
+            )
+
+
 # v6/interfaces §1m: a layer missing the {result} placeholder in run OR
 # run_selected is contract_error fail-closed at load time -- a template without
 # it would force Runtime to parse ambiguous pytest stdout text or inject
