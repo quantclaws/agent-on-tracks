@@ -21,6 +21,7 @@ from tracks.executor.release_authorization import (
     assess_release,
     validate_authorization,
 )
+from tracks.executor.repair import registered_known_issues
 from tracks.kernel.attention import RECOVERY_EVENTS, unresolved_attentions
 from tracks.kernel.attention import (
     attention_resolved as _shared_attention_resolved,
@@ -304,14 +305,13 @@ def _release_block_reason(events: list) -> str:
 
 
 def _known_issues_fragment(events: list | None) -> str:
-    """(I) known_issues preview fragment (FR-0274): every
-    known_issue.registered event contributes its title to the release
-    preview; known_issue.rejected (shield-rejected fakes) never surface.
-    Renders empty (no output change) when nothing is registered."""
+    """(I) known_issues preview fragment (FR-0274): every unfixed
+    registration contributes its title to the release preview; a later
+    fixed registration supersedes the earlier one and rejected fakes never
+    surface. Renders empty (no output change) when nothing is open."""
     registered = [
-        (e.payload or {}).get("title", "-")
-        for e in (events or [])
-        if e.type == "known_issue.registered"
+        registration.get("title", "-")
+        for registration in registered_known_issues(events or [])
     ]
     if not registered:
         return ""
@@ -715,10 +715,8 @@ def _unlisted_known_issues(events: list, preview_payload: dict) -> list[str]:
         if isinstance(entry, dict)
     }
     unlisted: list[str] = []
-    for e in events:
-        if e.type != "known_issue.registered":
-            continue
-        number = str((e.payload or {}).get("issue_number", ""))
+    for registration in registered_known_issues(events):
+        number = str(registration.get("issue_number", ""))
         if number and number not in listed_numbers:
             unlisted.append(number)
     return unlisted

@@ -156,6 +156,12 @@ from .install_cmd import (
 from .install_cmd import (
     cmd_version as cmd_version,
 )
+from .known_issue_cmd import (
+    _KNOWN_ISSUE_USAGE as _KNOWN_ISSUE_USAGE,
+)
+from .known_issue_cmd import (
+    cmd_known_issue as cmd_known_issue,
+)
 from .release_cmd import (
     _ATTENTION_RECOVERY_EVENTS as _ATTENTION_RECOVERY_EVENTS,
 )
@@ -485,6 +491,7 @@ USAGE = (
     "|recover --reason TEXT"
     "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
     "|hotfix <issue> --scenario post-release or dev or anchor or feature-route"
+    "|known-issue resolve --issue N [--issue N ...] --reason TEXT"
     "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ..."
     "|check <deliverables|trace|reach|release-evidence>"
@@ -505,6 +512,7 @@ _COMMANDS = {
     "start": (cmd_start, None),
     "run": (cmd_run, None),
     "hotfix": (cmd_hotfix, None),
+    "known-issue": (cmd_known_issue, None),
     "triage": (cmd_triage, None),
     "review": (cmd_review, None),
     "approve": (cmd_approve, None),

@@ -26,6 +26,7 @@ from tracks.executor.milestone import (
 )
 from tracks.executor.publish import operation_idempotency_key
 from tracks.executor.release_gate import render_placeholders, version_facts
+from tracks.executor.repair import registered_known_issues
 
 _PUBLISH_FAILURE_EVENTS = frozenset(
     {"publish.failed", "publish.blocked", "reconcile_conflict"}
@@ -103,9 +104,7 @@ class ExecMilestoneMixin:
             if event.type == "issue.closed"
         ]
         issue_map = self._load_authoritative_issue_map()
-        known_issues = [
-            event.payload or {} for event in events if event.type == "known_issue.registered"
-        ]
+        known_issues = registered_known_issues(events)
         self._close_milestone_issues(
             cmd, task_id, trace, issue_map, known_issues, closed_numbers
         )

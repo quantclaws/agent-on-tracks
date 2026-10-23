@@ -15,6 +15,7 @@ from tracks import paths
 from tracks.baseline import m_impl_baseline_digest, m_impl_baseline_missing, m_impl_baseline_summary
 from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
 from tracks.executor.helpers import git
+from tracks.executor.repair import registered_known_issues
 from tracks.executor.taskgraph import (
     TaskNode,
     parse_tasks_json,
@@ -832,17 +833,18 @@ class MImplLedgerMixin:
             and ev.payload.get("task_id")
             and ev.seq > latest_taskgraph_seq
         }
+        generation_events = [
+            ev for ev in events if ev.seq > latest_taskgraph_seq
+        ]
         waived = {
-            ev.payload.get("task_id")
-            for ev in events
-            if ev.type == "known_issue.registered"
-            and ev.seq > latest_taskgraph_seq
-            and not (ev.payload or {}).get("fixed")
+            registration.get("task_id")
+            for registration in registered_known_issues(generation_events)
+            if registration.get("task_id")
         }
         return (
             set(state.retained_completed_task_ids or [])
             | current_gen
-            | {task for task in waived if task}
+            | waived
         )
 
     def _recover_task_lease(self, cmd, events, completed: set[str]) -> None:

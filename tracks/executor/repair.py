@@ -35,6 +35,19 @@ _CLASSIFICATION: dict[str, tuple[str, str]] = {
 # for security; publish-mechanism failures must be fixed or abandoned).
 _NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding"})
 
+# Stop reasons that name an infrastructure/credential failure, never a
+# product defect: a retry/configure action is the only legal disposition.
+# Version-gate stops carry these verbatim on local_gate.failed; they must
+# route to not_product_defect instead of minting a waiver.
+_MECHANISM_FAILURE_REASONS = frozenset(
+    {
+        "remote_unavailable",
+        "missing_credentials",
+        "missing_token",
+        "ci_missing_credentials",
+    }
+)
+
 # AC reference token (an unfixed known issue is bound to the AC(s) it waives).
 _AC_TOKEN = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
 
@@ -226,18 +239,43 @@ def _event_payload(event) -> dict:
     return dict(payload) if isinstance(payload, dict) else {}
 
 
+def is_mechanism_failure_reason(reason: str) -> bool:
+    """True when a gate-stop reason is a mechanism failure, not a product
+    defect (remote/credential unavailability must be fixed or abandoned)."""
+    return str(reason or "").strip() in _MECHANISM_FAILURE_REASONS
+
+
+def latest_known_issues(events) -> list[dict]:
+    """Latest ``known_issue.registered`` payload per issue number.
+
+    A later registration for the same issue (the ``fixed: true`` resolution)
+    supersedes the earlier one; anonymous legacy payloads stay independent.
+    The result keeps the stream order of each winning event.
+    """
+    latest: dict[str, tuple[int, dict]] = {}
+    for position, event in enumerate(events):
+        if _event_type(event) != "known_issue.registered":
+            continue
+        payload = _event_payload(event)
+        number = payload.get("issue_number")
+        key = f"issue:{number}" if number is not None else f"event:{position}"
+        latest[key] = (position, payload)
+    return [payload for _, payload in sorted(latest.values(), key=lambda item: item[0])]
+
+
 def registered_known_issues(events) -> list[dict]:
-    """Every unfixed ``known_issue.registered`` payload, in stream order.
+    """Every unfixed Known Issue, latest event per issue_number wins.
 
     The event stream is the durable authority (FR-0286 §5 informed consent):
     process-local registries do not survive the M7 handover regime, and the
-    release preview must list every open waiver even after a restart.
+    release preview must list every open waiver even after a restart. A
+    ``fixed: true`` registration is a durable resolution, so the issue it
+    names is no longer open (nor a waiver source).
     """
     return [
-        _event_payload(event)
-        for event in events
-        if _event_type(event) == "known_issue.registered"
-        and not _event_payload(event).get("fixed")
+        registration
+        for registration in latest_known_issues(events)
+        if not registration.get("fixed")
     ]
 
 

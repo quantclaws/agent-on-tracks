@@ -457,10 +457,16 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
         budget = 3
         used = self._park_repair_budget_used()
         if used >= budget:
+            registration = registration_kind or finding_kind
+            if registration == "gate" and _repair.is_mechanism_failure_reason(reason):
+                # Infrastructure/credential stops are not product defects:
+                # register_known_issue rejects this kind as not_product_defect
+                # instead of minting a waiver (FR-0286 §6).
+                registration = "mechanism_failure"
             self._park_known_issue(
                 cmd,
                 candidate_sha,
-                registration_kind or finding_kind,
+                registration,
                 reason,
                 used,
                 budget,

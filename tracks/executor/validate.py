@@ -106,6 +106,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "hotfix",
         "init",
         "install",
+        "known-issue",
         "recover",
         "release",
         "replay",
