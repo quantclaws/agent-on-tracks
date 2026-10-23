@@ -243,9 +243,9 @@ v0.12 逐字继承现行测试执行合同（不修改文件）：
 
 ### 4.2 Canonical quality guard registry（v0.12）
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data）——六条 pyproject-backed `config_digest` 重锚为 `sha256:41faecd6…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:e534d31d…`（原 `e1735466…`）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.12 canonical 真相。输入变更两处：`pyproject.toml`（version 0.12.0 + package-data + certifi 2026.10.19 CVE pin，PYSEC-2026-4320）——六条 pyproject-backed `config_digest` 重锚为 `sha256:a6ce9e71…`；`.tracks/projects/project.toml` 因 OOB 修复 e2e `collect` 的 marker 过滤（默认 addopts 排除 `ui` 节点，基线 §8 的 UI 绑定无法入册，phase0 报 node_missing）bytes 变更，`hooks-runner-ci-required` 的 `config_digest` 重锚为 `sha256:e534d31d…`（原 `e1735466…`）。`.flake8` digest（`f899995c…`）随文件 bytes 不变而继承。字段语义、八类强制、fail_closed、禁 `--exit-zero` 全部继承。
 
-> **质量基线（2026-10-22 更新）— 严格包络恢复**：v0.12 M-VERIFY 初期曾因 v0.11 遗留债以 CLI 覆盖锚定实测基线；该债务已 burn-down（`_task_progress` 与 FULL 选择/分阶段 argv 等重复块重构、新增模块拆分），严格包络已在当前树实测通过。故 registry 命令/阈值恢复严格：CCR001 15、C0302 1200、R0914 15 / R0915 50、coverage 89；八类、fail_closed、`config_digest`（pyproject/.flake8 bytes 未变）语义不变。
+> **质量基线（2026-10-22 更新）— 严格包络恢复**：v0.12 M-VERIFY 初期曾因 v0.11 遗留债以 CLI 覆盖锚定实测基线；该债务已 burn-down（`_task_progress` 与 FULL 选择/分阶段 argv 等重复块重构、新增模块拆分），严格包络已在当前树实测通过。故 registry 命令/阈值恢复严格：CCR001 15、C0302 1200、R0914 15 / R0915 50、coverage 89；八类与 fail_closed 语义不变；`config_digest` 中 pyproject-backed 六条随现行 pyproject bytes 重锚为 `sha256:a6ce9e71…`，`.flake8` 随 bytes 未变继承。
 
 ```toml
 [quality_registry]
@@ -260,7 +260,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -276,7 +276,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -308,7 +308,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -324,7 +324,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -340,7 +340,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=5 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
@@ -356,7 +356,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=89"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:41faecd62142fec0bfd1a1865ff4e15660df7890ccc26af51678aef44a0df605"
+config_digest = "sha256:a6ce9e71f581a53b0fb27b46390efee594f6c859a0cf9690d0f0184ed6c0a9b6"
 scope = ["tracks"]
 threshold = "line coverage >=89; by=collected; source omit=pure-I/O backends (opencode subprocess/session/pty, fake backends, evidence I/O — pyproject.toml [tool.coverage] omit)"
 timeout_seconds = 1800
