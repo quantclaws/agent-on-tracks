@@ -10,6 +10,7 @@ import pytest
 # Re-export shared fixtures so every Shield suite sees the same helpers.
 from tests._support.fixtures import (  # noqa: F401  re-export
     ci_echo_standin,
+    drop_inherited_real_github_env,
     event_log,
     host_repo,
     steps,
@@ -41,6 +42,7 @@ def v012_global(v012_wheels, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _force_fake_backend(monkeypatch):
+    drop_inherited_real_github_env(monkeypatch)
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
     # Env-identity parity with the `trac` fixture's subprocess env (P0-2b):
     # the fixture setdefaults TRAC_INFRA_RETRY_LIMIT=2 into every journey

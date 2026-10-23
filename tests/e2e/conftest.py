@@ -4,6 +4,7 @@ import pytest
 
 from tests._support.fixtures import (  # noqa: F401  re-export
     ci_echo_standin,
+    drop_inherited_real_github_env,
     event_log,
     host_repo,
     steps,
@@ -46,4 +47,5 @@ def v012_global(v012_wheels, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _force_fake_backend(monkeypatch):
+    drop_inherited_real_github_env(monkeypatch)
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")

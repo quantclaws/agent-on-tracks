@@ -17,6 +17,32 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SUBCOV_DIR = str(Path(__file__).resolve().parent.parent / "_subprocess_coverage")
 _UNDER_COVERAGE = "coverage" in sys.modules
 
+_REAL_GITHUB_ENV_VARS = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "TRAC_GITHUB_REPO",
+    "TRAC_GITHUB_CA_BUNDLE",
+    "GH_HOST",
+)
+_INHERITED_REAL_GITHUB_ENV = {
+    key: os.environ[key] for key in _REAL_GITHUB_ENV_VARS if key in os.environ
+}
+
+
+def _subprocess_env() -> dict[str, str]:
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
+        and _INHERITED_REAL_GITHUB_ENV.get(key) != value
+    }
+
+
+def drop_inherited_real_github_env(monkeypatch) -> None:
+    for key, value in _INHERITED_REAL_GITHUB_ENV.items():
+        if os.environ.get(key) == value:
+            monkeypatch.delenv(key, raising=False)
+
 
 def steps_dir() -> Path:
     override = os.environ.get("TRACKS_STEPS_DIR", "").strip()
@@ -137,9 +163,7 @@ def trac(host_repo, steps, tmp_path):
     coverage_file = _REPO_ROOT / f".coverage.subprocess.{os.getpid()}.{tmp_path.name}"
 
     def run(*args, stdin=None, simulate=None):
-        env = {
-            k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
-        }
+        env = _subprocess_env()
         env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
