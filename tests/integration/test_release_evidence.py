@@ -15,9 +15,14 @@ anti-fabrication negative; the satisfied text/JSON/exit-0 form is asserted in
 
 import json
 import os
+import shlex
 import subprocess
+import sys
+import textwrap
 
 import pytest
+
+from tracks.executor.quality_gate import execute_gate_command
 
 
 def _run_release_check(repo, *args):
@@ -469,3 +474,95 @@ def test_non_real_sources_neither_produce_nor_satisfy_evidence(host_repo, trac, 
         f"expected exit 1, got {proc.returncode}: {proc.stdout}"
     )
     assert "release-evidence: NOT satisfied" in proc.stdout
+
+
+@pytest.mark.integration
+def test_fake_source_release_evidence_is_hermetic_under_operator_env(
+    tmp_path, monkeypatch
+):
+    """A host test launched by testops must not inherit the serve shell.
+
+    The operator shell that sourced the serve environment carries
+    TRAC_GITHUB_REPO / TRAC_GITHUB_CA_BUNDLE / GITHUB_TOKEN; a fake-source
+    release-evidence test launched through the runtime's host-command
+    launcher must still see a sanitized environment and reject the fake
+    bundle as not_real.
+    """
+    operator_env = {
+        "TRAC_GITHUB_REPO": "acme/operator",
+        "TRAC_GITHUB_CA_BUNDLE": "/operator/ca.pem",
+        "GITHUB_TOKEN": "operator-token",
+        "GH_TOKEN": "operator-gh-token",
+        "GH_HOST": "github.operator.invalid",
+        "TRAC_AGENT_SESSION_REUSE": "0",
+    }
+    for key, value in operator_env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("TRAC_INFRA_RETRY_LIMIT", "2")
+
+    probe = tmp_path / "test_release_evidence_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import os
+
+            from tracks.checks.release_evidence import check_release_evidence
+            from tracks.executor.live_evidence import EVIDENCE_ROOT, SCHEMA_VERSION
+
+            OPERATOR_ENV = {
+                "TRAC_GITHUB_REPO",
+                "TRAC_GITHUB_CA_BUNDLE",
+                "GITHUB_TOKEN",
+                "GH_TOKEN",
+                "GH_HOST",
+                "TRAC_AGENT_SESSION_REUSE",
+            }
+
+
+            def test_fake_source_is_rejected_without_operator_controls():
+                leaked = sorted(OPERATOR_ENV & set(os.environ))
+                assert not leaked, f"operator controls leaked into host test: {leaked}"
+
+                head = "a" * 40
+                run_id = "run-fake"
+                path = f"{EVIDENCE_ROOT}/{head}/{run_id}/evidence.json"
+                bundle = {
+                    "schema_version": SCHEMA_VERSION,
+                    "status": "satisfied",
+                    "candidate_sha": head,
+                    "run_id": run_id,
+                    "backend": "fake",
+                    "provenance": {
+                        "backend_class": "FakeBackend",
+                        "fake_backend": True,
+                        "trac_fake_simulate": False,
+                        "assignment_overlay": False,
+                        "assignment_simulation": False,
+                        "event_origin": "runtime",
+                    },
+                }
+                report = check_release_evidence(
+                    current_head=head,
+                    branch="main",
+                    evidence_candidates=[
+                        (path, json.dumps(bundle).encode("utf-8"))
+                    ],
+                    blobs={},
+                    git_facts={},
+                )
+                assert report.status == "not_satisfied"
+                assert report.reason_code == "not_real"
+            """
+        ),
+        encoding="utf-8",
+    )
+    command = shlex.join(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(probe)]
+    )
+
+    obs = execute_gate_command(command, str(tmp_path), "full-integration")
+
+    assert obs.exit_code == 0, obs.stdout + obs.stderr
+    for key, value in operator_env.items():
+        assert os.environ[key] == value, "the runtime parent env must be unchanged"

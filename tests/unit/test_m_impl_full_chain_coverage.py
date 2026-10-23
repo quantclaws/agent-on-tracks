@@ -8,7 +8,10 @@ through a bare mixin host with the process/collect seams stubbed
 
 from __future__ import annotations
 
+import json
+import os
 import shlex
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -169,6 +172,58 @@ def test_run_full_layers_success(tmp_path: Path, monkeypatch):
     assert echo == {"unit": ["pytest", "x"]}
     assert codes == {"unit": 0}
     assert "unit" in result_paths
+
+
+def test_run_full_layer_launches_with_sanitized_host_env(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    observed = tmp_path / "full-env.json"
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import json, os, pathlib\n"
+        f"pathlib.Path({str(observed)!r}).write_text(json.dumps(dict(os.environ)))\n",
+        encoding="utf-8",
+    )
+    stage = SimpleNamespace(
+        argv=[sys.executable, str(probe)],
+        section_cwd=tmp_path,
+        result_path=tmp_path / "full.xml",
+        selected=["n"],
+        whole_layer=True,
+    )
+    monkeypatch.setattr(host, "_stage_full_layer", lambda *args: stage)
+    monkeypatch.setattr(host, "_full_layer_outcomes", lambda *args: [])
+    operator_env = {
+        "TRAC_GITHUB_REPO": "acme/operator",
+        "TRAC_GITHUB_CA_BUNDLE": "/operator/ca.pem",
+        "GITHUB_TOKEN": "operator-token",
+        "GH_TOKEN": "operator-gh-token",
+        "GH_HOST": "github.operator.invalid",
+        "TRAC_AGENT_SESSION_REUSE": "0",
+    }
+    for key, value in operator_env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("TRAC_INFRA_RETRY_LIMIT", "2")
+
+    result_path, obs, outcomes = host._run_full_layer(
+        _cmd(),
+        "FULL_1",
+        "unit",
+        SimpleNamespace(run="pytest {result}", cwd="."),
+        {"n": "unit"},
+        ["n"],
+        set(),
+        [],
+    )
+
+    assert obs.exit_code == 0, obs.stderr
+    child_env = json.loads(observed.read_text(encoding="utf-8"))
+    assert not set(operator_env) & set(child_env)
+    assert child_env["TRAC_INFRA_RETRY_LIMIT"] == "2"
+    assert child_env["PATH"] == os.environ["PATH"]
+    assert result_path == stage.result_path
+    assert outcomes == []
+    for key, value in operator_env.items():
+        assert os.environ[key] == value, "the runtime parent env must be unchanged"
 
 
 def test_run_full_layers_audit_divergence_raises(tmp_path: Path, monkeypatch):

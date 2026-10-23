@@ -32,6 +32,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tracks.executor.quality_gate import host_test_env
+
 VERIFICATION_MARKER = "verification-only"
 
 
@@ -114,7 +116,12 @@ def _run_with_argv(argv: list[str], cwd: Path) -> AnchorProbe:
     """执行单任务探测并分类（infra 失败 → skipped，B35 语义）。"""
     try:
         proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, timeout=600
+            argv,
+            cwd=cwd,
+            env=host_test_env(),
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         status = classify_probe_output(
             proc.returncode, proc.stdout or "", proc.stderr or ""

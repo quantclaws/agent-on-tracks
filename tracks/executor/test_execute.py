@@ -20,6 +20,7 @@ from tracks.executor.helpers import (
     emit_test_committed,
     git,
 )
+from tracks.executor.quality_gate import host_test_env
 from tracks.executor.test_collect import _R2_BASIS, _R2_SCOPE, _contract_sections
 from tracks.executor.test_select import (
     EmptyR2SelectionError,
@@ -695,7 +696,12 @@ class ExecTestRunMixin:
         timeout = _battery_timeout_seconds(len(nodes))
         try:
             proc = subprocess.run(
-                list(argv), cwd=cwd, capture_output=True, text=True, timeout=timeout
+                list(argv),
+                cwd=cwd,
+                env=host_test_env(),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
             def _tail(v) -> str:

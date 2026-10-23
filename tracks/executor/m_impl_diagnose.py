@@ -18,7 +18,7 @@ from tracks.executor.m_impl_anchor import (
     _combined_provenance,
     emit_devon_outcome_failure,
 )
-from tracks.executor.quality_gate import failed_summary_lines
+from tracks.executor.quality_gate import failed_summary_lines, host_test_env
 from tracks.executor.rgr import adopt_red_ref, create_red_ref
 from tracks.executor.test_select import TestSelectError, resolve_selected_command
 from tracks.project import ContractError, load_contract
@@ -371,7 +371,12 @@ class MImplDiagnoseMixin:
         """Run one engine-selected anchor suite; always consume the staging result."""
         try:
             proc = subprocess.run(
-                cmd_argv, cwd=run_cwd, capture_output=True, text=True, timeout=1800
+                cmd_argv,
+                cwd=run_cwd,
+                env=host_test_env(),
+                capture_output=True,
+                text=True,
+                timeout=1800,
             )
             return proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
@@ -654,6 +659,7 @@ class MImplDiagnoseMixin:
             proc = subprocess.run(
                 cmd_argv,
                 cwd=run_cwd,
+                env=host_test_env(),
                 capture_output=True,
                 text=True,
                 timeout=1800,
