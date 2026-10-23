@@ -21,6 +21,21 @@ from tracks.store import Store
 _CANDIDATE = "a" * 40
 _FOREIGN = "f" * 40
 
+_REAL_CI_ENV = (
+    "TRAC_GITHUB_REPO",
+    "TRAC_GITHUB_CA_BUNDLE",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GH_HOST",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_ci_env(monkeypatch):
+    # The runtime may launch tests with real CI env sourced; isolate these unit tests.
+    for key in _REAL_CI_ENV:
+        monkeypatch.delenv(key, raising=False)
+
 
 # AC-FR0270-01@v0.8 TRACKS-TRACE IF-VERIFY-004 missing API head is not candidate
 def test_readback_missing_api_head_is_not_verified_from_requested_candidate(monkeypatch):
