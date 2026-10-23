@@ -10,14 +10,14 @@ def walk_to_await_human(trac, stdin="构建一个事件溯源运行时", version
     r = trac("start", version, stdin=stdin)
     assert r.returncode == 0, r.stderr
     run_id = re.search(r"run (\S+) started", r.stdout).group(1)
-    assert trac("run").returncode == 0
+    assert trac("run", "--no-watch").returncode == 0
     assert trac("triage", "go").returncode == 0
     for _ in ("M-STORY", "M-SPEC", "M-ACC"):
-        r = trac("run")
+        r = trac("run", "--no-watch")
         assert r.returncode == 0, r.stderr
         assert "awaiting=review" in r.stdout
         assert trac("review", "no-comment").returncode == 0
-    r = trac("run")
+    r = trac("run", "--no-watch")
     assert r.returncode == 0, r.stderr
     assert "awaiting=approval" in r.stdout  # FR-0180: hard human gate
     return run_id
@@ -31,7 +31,7 @@ def walk_to_m_test_complete(trac, stdin="构建一个事件溯源运行时", ver
     terminal state (v0.4: boundary moved from M-DESIGN to M-TEST->M-IMPL)."""
     run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
-    r = trac("run")
+    r = trac("run", "--no-watch")
     assert r.returncode == 0, r.stderr
     assert "status=completed" in r.stdout
     assert "awaiting=-" in r.stdout
@@ -160,13 +160,13 @@ def walk_to_m_impl_parked(
     assert trac("approve", "--actor", "Aaron").returncode == 0
     if post_approve_hook is not None:
         post_approve_hook(trac, run_id)
-    r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+    r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
     repo = getattr(trac, "repo", None)
     if repo is not None:
         if pre_seed_hook is not None:
             pre_seed_hook(repo)
         _seed_phase0_premises(repo, version)
-        r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+        r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
     assert r.returncode == 0, r.stderr
     assert "stage=M-IMPL" in r.stdout
     assert "substate=DIAGNOSE" in r.stdout
@@ -221,7 +221,7 @@ def walk_to_awaiting_release(
         post_approve_hook=post_approve_hook,
     )
     for _ in range(max_drives):
-        r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+        r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
         assert r.returncode == 0, (
             f"trac run failed rc={r.returncode}\nstderr:\n{r.stderr[-800:]}\nstdout:\n{r.stdout[-1500:]}"
         )
