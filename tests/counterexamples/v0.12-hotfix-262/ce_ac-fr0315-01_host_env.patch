@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/host_env.py b/tracks/executor/host_env.py
+--- a/tracks/executor/host_env.py
++++ b/tracks/executor/host_env.py
+@@ -33,4 +33,9 @@
+     extra: Mapping[str, str] | None = None,
+     contract_allowlist: Iterable[str] = (),
+ ) -> dict:
+-    raise NotImplementedError("IF-HOSTENV-001")
++    # COUNTEREXAMPLE: hand the whole operator environment through.
++    import os
++    env = dict(os.environ)
++    if extra:
++        env.update(extra)
++    return env

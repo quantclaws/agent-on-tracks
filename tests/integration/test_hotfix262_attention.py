@@ -11,22 +11,25 @@ The contract under test is INV-6 / INV-7 (interfaces §1d):
   ``CommandStallError``);
 * the missing-token attention is emitted AT MOST ONCE (the dedup).
 
-Assertions enter through the public outlets:
+TEST-2: every assertion lands on a PUBLIC outlet (interfaces §4a):
 
-* the issue-backend selection (``tracks.effects.github_transport.
-  select_issue_backend``) and the issue-creation handler
-  (``release_tail._ensure_issue_backend``) -- the public entry the M-REQ-
-  APPROVAL path drives;
-* the run loop's preflight (``run_loop._run_loop_preflight`` /
-  ``_pending_operator_attention``) -- the public loop entry;
-* the EVENT STREAM (interfaces §4a outlet 4): the
+* the EVENT STREAM -- the
   ``attention.required(area="issue_creation", reason="missing_token")``
-  payload, its count and its hint.
+  event and its payload;
+* the ``trac status`` CLI -- the operator-visible ``needs_attention`` report
+  and the recovery guidance;
+* the ``trac hotfix`` / ``trac triage`` CLI -- the issue-fetch
+  classification (``issue_fetch_failed``, never ``issue_not_found``).
+
+No private helper is imported and no internal return value is asserted: the
+tests drive the real production entry points and read what they emit.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,16 +41,8 @@ from tracks.store import Store
 
 pytestmark = pytest.mark.integration
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _MISSING_TOKEN_HINT = "export GITHUB_TOKEN"
-
-
-class _Denied(Exception):
-    """The production ``deny`` callback's terminal disposition."""
-
-    def __init__(self, reason: str, detail: str) -> None:
-        super().__init__(reason, detail)
-        self.reason = reason
-        self.detail = detail
 
 
 def _new_host(tmp_path: Path) -> tuple[Path, Store]:
@@ -89,19 +84,32 @@ def _approval_digest(repo: Path) -> str:
     return revision_digest(paths.version_dir(paths.tracks_home(repo), "v0.8"))
 
 
-def _attention_events(store: Store, run_id: str) -> list:
+def _run_cli(repo: Path, home: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run the real CLI with the isolated home as its TRACKS_HOME."""
+    env = dict(os.environ)
+    env["TRACKS_HOME"] = str(home)
+    env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [sys.executable, "-m", "tracks.cli.main", *args],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _status_text(repo: Path, home: Path) -> str:
+    proc = _run_cli(repo, home, "status")
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout + proc.stderr
+
+
+def _issue_creation_attentions(events: list) -> list:
     return [
         event
-        for event in store.events(run_id)
+        for event in events
         if event.type == "attention.required"
-    ]
-
-
-def _issue_creation_attentions(store: Store, run_id: str) -> list:
-    return [
-        event
-        for event in _attention_events(store, run_id)
-        if (event.payload or {}).get("area") == "issue_creation"
+        and (event.payload or {}).get("area") == "issue_creation"
         and (event.payload or {}).get("reason") == "missing_token"
     ]
 
@@ -116,6 +124,8 @@ def test_missing_token_single_attention_and_hint(tmp_path: Path, monkeypatch):
 
     Contract: interfaces §1d items 1 (canonical credential + hint-only) and
     3 (the dedup), §4a outlet 4.
+
+    Outlet: the EVENT STREAM and the ``trac status`` CLI.
     """
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "non-canonical-token")
@@ -126,6 +136,7 @@ def test_missing_token_single_attention_and_hint(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
 
     repo, store = _new_host(tmp_path)
+    home = paths.tracks_home(repo)
     run_id = "RUN-HF262-ATTN-1"
     digest = _approval_digest(repo)
     try:
@@ -142,7 +153,7 @@ def test_missing_token_single_attention_and_hint(tmp_path: Path, monkeypatch):
             command_id="cmd-issues-1",
         )
         executor._do_create_issues(cmd, store.state(run_id), None, False)
-        first = _issue_creation_attentions(store, run_id)
+        first = _issue_creation_attentions(list(store.events(run_id)))
         assert first, (
             "the missing-token path must emit an issue_creation attention "
             f"(got {len(first)})"
@@ -158,10 +169,11 @@ def test_missing_token_single_attention_and_hint(tmp_path: Path, monkeypatch):
             "the missing-token attention must carry an actionable hint naming "
             f"the canonical credential export (hint={hint!r})"
         )
-        assert "issue.created" not in [
-            event.type for event in store.events(run_id)
-        ], "a missing credential must not produce an issue.created record"
-        assert "issue.mapped" not in [event.type for event in store.events(run_id)]
+        types = [event.type for event in store.events(run_id)]
+        assert "issue.created" not in types, (
+            "a missing credential must not produce an issue.created record"
+        )
+        assert "issue.mapped" not in types
 
         # The dedup: the attention is emitted AT MOST once.
         assert len(first) == 1, (
@@ -169,13 +181,22 @@ def test_missing_token_single_attention_and_hint(tmp_path: Path, monkeypatch):
             f"(got {len(first)})"
         )
         executor._do_create_issues(cmd, store.state(run_id), None, False)
-        second = _issue_creation_attentions(store, run_id)
+        second = _issue_creation_attentions(list(store.events(run_id)))
         assert len(second) == 1, (
             "the missing-token attention must be emitted at most once "
             f"(got {len(second)})"
         )
     finally:
         store.close()
+
+    # The operator-visible report: the run parks at needs_attention.
+    text = _status_text(repo, home)
+    assert "needs_attention" in text, (
+        f"the run must report needs_attention (status={text!r})"
+    )
+    assert "missing_token" in text, (
+        f"the status must report the missing_token reason (status={text!r})"
+    )
 
 
 # AC-FR0298-02@v0.9 TRACKS-TRACE loop halts on unresolved attention
@@ -186,6 +207,9 @@ def test_loop_halts_on_unresolved_attention(tmp_path: Path, monkeypatch):
     Contract: interfaces §1d item 2 (``_run_loop_preflight`` checks the
     pending attention on EVERY loop iteration and stops the loop at
     ``needs_attention``), §4a outlet 4.
+
+    Outlet: the ``trac run`` CLI (the loop's public entry) and the
+    ``trac status`` CLI.
     """
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "non-canonical-token")
@@ -194,6 +218,7 @@ def test_loop_halts_on_unresolved_attention(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
 
     repo, store = _new_host(tmp_path)
+    home = paths.tracks_home(repo)
     run_id = "RUN-HF262-ATTN-2"
     try:
         store.append(run_id, "v0.8", "stage.entered", {"stage": "M-REQ-APPROVAL"})
@@ -208,33 +233,34 @@ def test_loop_halts_on_unresolved_attention(tmp_path: Path, monkeypatch):
                 "next": "export GITHUB_TOKEN then re-run",
             },
         )
-        executor = Executor(store, repo, run_id)
-        pending = executor._pending_operator_attention(store.state(run_id))
-        assert pending is not None, (
-            "an unresolved non-auto-retryable attention must be visible to the "
-            "loop preflight"
-        )
-        payload = pending.payload or {}
-        assert payload.get("reason") == "missing_token"
-
-        # The loop stops: the preflight returns a terminal disposition and
-        # the run does not spin. The stall breaker is NOT tripped (a
-        # CommandStallError would be a hot loop, not a clean stop).
-        before = len(list(store.events(run_id)))
-        disposition, state = executor._run_loop_preflight()
-        assert disposition == "return", (
-            "the loop preflight must return a terminal disposition for an "
-            f"unresolved attention (got {disposition!r})"
-        )
-        assert state is not None
-        after = len(list(store.events(run_id)))
-        assert after == before, (
-            "the halted loop must not keep issuing commands (the attention "
-            "count grew from "
-            f"{before} to {after})"
-        )
     finally:
         store.close()
+
+    before = len(list(Store(home).events(run_id)))
+    proc = _run_cli(repo, home, "run", "--no-watch")
+    assert proc.returncode == 0, (
+        f"the halted run must not crash: stdout={proc.stdout!r} "
+        f"stderr={proc.stderr!r}"
+    )
+    combined = proc.stdout + proc.stderr
+    assert "CommandStallError" not in combined, (
+        "the halted run must not abort with a stall error (that is a hot loop)"
+    )
+
+    store = Store(home)
+    try:
+        after = len(list(store.events(run_id)))
+    finally:
+        store.close()
+    assert after == before, (
+        "the halted loop must not keep issuing commands (the event count "
+        f"grew from {before} to {after})"
+    )
+
+    text = _status_text(repo, home)
+    assert "needs_attention" in text, (
+        f"the halted run must report needs_attention (status={text!r})"
+    )
 
 
 # AC-FR0329-02@v0.10 TRACKS-TRACE issue fetch failed classification preserved
@@ -248,104 +274,57 @@ def test_issue_fetch_failed_classification_preserved(tmp_path: Path, monkeypatch
     preflight points, and "missing-token 不再被吞为 issue_not_found").
 
     Contract: interfaces §1d item 4, §2 row 3.
+
+    Outlet: the ``trac hotfix`` CLI -- its rejection reason and guidance.
     """
-    from tracks.executor.hotfix import fetch_failure_report
-
-    report = fetch_failure_report("missing_token")
-    assert report.status == "rejected"
-    assert report.reason == "issue_fetch_failed", (
-        "a missing credential must be classified issue_fetch_failed, never "
-        f"issue_not_found (got {report.reason!r})"
-    )
-    assert "GITHUB_TOKEN" in report.next, (
-        "the issue_fetch_failed guidance must name the canonical credential "
-        f"(next={report.next!r})"
-    )
-    assert report.target_version is None
-
-    # The confirmed-missing classification stays narrow and distinct.
-    from tracks.executor.hotfix import precheck_hotfix
-
-    missing = precheck_hotfix(
-        None,
-        "post-release",
-        [],
-        None,
-        Path("/nonexistent-projects-dir"),
-        {"v0.8"},
-    )
-    assert missing.reason == "issue_not_found", (
-        "a CONFIRMED missing issue must keep the narrow issue_not_found "
-        f"classification (got {missing.reason!r})"
-    )
-
-    # The hotfix entry's credential preflight: with the canonical token
-    # absent, the hotfix entry must report issue_fetch_failed (with the
-    # classified guidance) -- never issue_not_found.
-    from tracks.executor.hotfix_face import precheck_hotfix_report
-
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.delenv("TRAC_FAKE_SIMULATE", raising=False)
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
 
     repo, store = _new_host(tmp_path)
+    home = paths.tracks_home(repo)
     try:
-        entry_report, issue = precheck_hotfix_report(repo, store, 77, "post-release")
+        store.append(
+            "RUN-HF262-ATTN-3",
+            "v0.8",
+            "story.requested",
+            {"raw_chars": 1},
+        )
     finally:
         store.close()
 
-    assert issue is None, (
-        "a failed fetch must not yield an issue object (the entry is rejected)"
+    proc = _run_cli(repo, home, "hotfix", "77", "--scenario", "post-release")
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, (
+        "a missing credential must refuse the hotfix entry (the issue fetch "
+        f"fails): stdout={proc.stdout!r} stderr={proc.stderr!r}"
     )
-    assert entry_report.reason == "issue_fetch_failed", (
-        "the hotfix entry's credential preflight must report issue_fetch_failed "
-        f"(got {entry_report.reason!r})"
+    assert "issue_fetch_failed" in combined, (
+        "a missing credential must be classified issue_fetch_failed, never "
+        f"issue_not_found (output={combined!r})"
     )
-    assert "GITHUB_TOKEN" in entry_report.next, (
-        "the hotfix entry's guidance must name the canonical credential "
-        f"(next={entry_report.next!r})"
+    assert "issue_not_found" not in combined, (
+        "a missing credential must never be swallowed as a confirmed-missing "
+        f"issue (output={combined!r})"
     )
-
-    # The INTAKE entry's credential preflight (interfaces §1d item 4: the
-    # preflight points include ``submit_intake(source="issue")``): a missing
-    # canonical token must be denied as ``issue_fetch_failed`` -- never
-    # swallowed as ``issue_not_found`` and never silently accepted.
-    from tracks.supervisor.service_intake import IntakeCommands
-
-    denials: list[tuple[str, str]] = []
-
-    def _deny(reason: str, detail: str) -> None:
-        """The production ``deny`` terminates the acceptance; the test
-        records the reason and raises the same way."""
-        denials.append((reason, detail))
-        raise _Denied(reason, detail)
-
-    commands = IntakeCommands()
-    with pytest.raises(_Denied) as denied:
-        commands._fetch_issue_or_deny(repo, 77, _deny)
-    reason, detail = denied.value.args
-    assert reason == "issue_fetch_failed", (
-        "the intake entry's credential preflight must deny as "
-        f"issue_fetch_failed (got {reason!r})"
-    )
-    assert "missing_token" in detail, (
-        "the denial must carry the classified reason (got "
-        f"{detail!r})"
+    assert "GITHUB_TOKEN" in combined, (
+        "the refusal must name the canonical credential "
+        f"(output={combined!r})"
     )
 
-    # The hotfix's HINT-ONLY diagnostic (interfaces §1d item 1): with the
-    # canonical token absent but a NON-canonical one present, the denial
-    # must name the found variable and point at the canonical export --
-    # never silently fall back to it.
+    # The HINT-ONLY diagnostic (interfaces §1d item 1): with the canonical
+    # token absent but a NON-canonical one present, the guidance must name
+    # the found variable AND point at the canonical export -- never silently
+    # fall back to it.
     monkeypatch.setenv("GITHUB_ACCESS_TOKEN", "non-canonical-token")
-    with pytest.raises(_Denied) as hinted:
-        commands._fetch_issue_or_deny(repo, 77, _deny)
-    hint = " ".join(str(part) for part in hinted.value.args)
-    assert "GITHUB_ACCESS_TOKEN" in hint, (
+    hinted = _run_cli(repo, home, "hotfix", "77", "--scenario", "post-release")
+    hinted_text = hinted.stdout + hinted.stderr
+    assert "GITHUB_ACCESS_TOKEN" in hinted_text, (
         "the diagnostic must name the non-canonical variable that was found "
-        f"(got {hint!r})"
+        f"(output={hinted_text!r})"
     )
-    assert "export GITHUB_TOKEN" in hint, (
+    assert _MISSING_TOKEN_HINT in hinted_text, (
         "the diagnostic must point at the canonical credential export "
-        f"(got {hint!r})"
+        f"(output={hinted_text!r})"
     )

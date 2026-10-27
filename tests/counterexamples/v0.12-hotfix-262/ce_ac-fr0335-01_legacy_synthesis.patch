@@ -1,0 +1,11 @@
+diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
+--- a/tracks/server/projections_timeline.py
++++ b/tracks/server/projections_timeline.py
+@@ -79,6 +79,7 @@
+ 
+ 
+ def _track_timeline_rows(repo_path: str, run_id: str, *, slim: bool) -> list[dict]:
++    # COUNTEREXAMPLE: no legacy transition synthesis.
+     if slim:
+         return _slim_track_rows(repo_path, run_id)
+     return _full_track_rows(repo_path, run_id)

@@ -1,12 +1,11 @@
 diff --git a/tracks/server/projections_core.py b/tracks/server/projections_core.py
 --- a/tracks/server/projections_core.py
 +++ b/tracks/server/projections_core.py
-@@ -356,6 +356,8 @@
+@@ -356,6 +356,7 @@
  
  
  def _chain_rows(repo_path: str, version: str | None, run_id: str) -> list[dict]:
-+    if not _registry_acs(repo_path, version):
-+        pass
++    # COUNTEREXAMPLE: no empty-registry short circuit.
      events = _run_events(repo_path, run_id)
      state = project_state(events)
      tests = _plan_tests(repo_path, version)

@@ -1,0 +1,10 @@
+diff --git a/tracks/executor/full_f_authority.py b/tracks/executor/full_f_authority.py
+--- a/tracks/executor/full_f_authority.py
++++ b/tracks/executor/full_f_authority.py
+@@ -25,4 +25,5 @@
+     payload: Mapping,
+     candidate_sha: str | None = None,
+ ) -> bool:
+-    raise NotImplementedError("IF-FULLF-001")
++    # COUNTEREXAMPLE: trust the truthy serves_as_full_f alone.
++    return bool(payload.get("serves_as_full_f"))

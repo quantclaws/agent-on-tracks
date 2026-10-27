@@ -1,0 +1,12 @@
+diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
+--- a/tracks/cli/release_cmd.py
++++ b/tracks/cli/release_cmd.py
+@@ -402,6 +402,8 @@
+     if not final:
+         return "failed"
+     verdict = (final[-1].payload or {}).get("verdict")
++    if _payload_findings_blocking(events, final[-1]):
++        return "failed"
+     return "pass" if verdict == "pass" else "failed"
+ 
+ 

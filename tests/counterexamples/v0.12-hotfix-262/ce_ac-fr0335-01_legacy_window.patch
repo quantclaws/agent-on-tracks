@@ -1,0 +1,11 @@
+diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
+--- a/tracks/server/static/app/timeline.js
++++ b/tracks/server/static/app/timeline.js
+@@ -270,6 +270,7 @@
+  * Time-ordered input assumed (the timeline projection sorts by ts).
+  */
+ function stageWorkflowWindow(events, stage) {
++  // COUNTEREXAMPLE: the legacy transition synthesis is absent.
+   const list = Array.isArray(events) ? events : [];
+   if (!stage) return [];
+   let start = -1;

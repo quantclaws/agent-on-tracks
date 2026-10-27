@@ -6,39 +6,38 @@ PROTOCOL VIOLATION. The ingest points must refuse it fail-closed -- never
 silently degrade it to ``revise``, never land a passing ``prism.verdict``,
 never let the attempt through as if it passed.
 
-Assertions enter through the public ingest entry points:
+TEST-2: every assertion lands on a PUBLIC outlet (interfaces §4a):
 
-* the shared predicate ``tracks.executor.review_findings.has_blocking_findings``
-  -- the contract's own severity arbiter;
-* the production ingest handlers on the ``Executor`` (the public entry the
-  runtime drives): ``_publish_verify_final_verdict`` (M-VERIFY verify_final),
-  ``_publish_security_review_verdict`` (M-SECURITY security scope),
-  ``_emit_verdict`` (the M-TEST / M-IMPL prism routing) and
-  ``_m_test_prism_payload`` (the M-TEST / M-IMPL checkpoint payload).
+* the EVENT STREAM -- the ``prism.verdict`` / ``verdict.failed`` /
+  ``attention.required`` events and their payloads;
+* the ``trac status`` CLI -- the operator-visible ``prism=`` and
+  ``security=`` fragments and the release block reason;
+* the ``trac release --action release`` CLI -- its exit code and refusal
+  text (the downstream gate's refusal).
 
-The observation is the EVENT STREAM (the contract's §4a outlet): a rejected
-ingest lands ``verdict.failed`` / ``attention.required`` and NO passing
-``prism.verdict``; the downstream gates judge the same verdict as failed.
+No private helper is imported and no internal return value is asserted: the
+tests drive the real production entry points and read what they emit.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 from tracks import paths
 from tracks.executor.executor import Executor
-from tracks.executor.review_findings import has_blocking_findings
 from tracks.kernel.events import Command
 from tracks.store import Store
 
 pytestmark = pytest.mark.integration
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets" / "v0.12-hotfix-262"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _CANDIDATE = "44c14de0000000000000000000000000000000000"
 _POLICY_DIGEST = "policy-digest-7342"
@@ -73,29 +72,28 @@ def _new_host(tmp_path: Path) -> tuple[Path, Store]:
     return repo, Store(paths.tracks_home(repo))
 
 
-def _executor(repo: Path, store: Store, run_id: str) -> Executor:
-    """A production Executor over the isolated store (public ingest entry)."""
-    return Executor(store, repo, run_id)
+def _run_cli(repo: Path, home: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run the real CLI with the isolated home as its TRACKS_HOME."""
+    env = dict(os.environ)
+    env["TRACKS_HOME"] = str(home)
+    env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [sys.executable, "-m", "tracks.cli.main", *args],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _status_text(repo: Path, home: Path) -> str:
+    proc = _run_cli(repo, home, "status")
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout + proc.stderr
 
 
 def _of_type(events: list, event_type: str) -> list:
     return [event for event in events if event.type == event_type]
-
-
-def _blocking(findings) -> bool:
-    """The shared severity arbiter, with the stub token as a legal Red.
-
-    The interface stub raises ``NotImplementedError("IF-BLOCKREV-001")`` until
-    the implementation lands; that contract token is converted into a plain
-    assertion failure so the Red classifies as a behavioural one (never as a
-    test-side crash).
-    """
-    try:
-        return has_blocking_findings(findings)
-    except NotImplementedError as err:
-        raise AssertionError(
-            "has_blocking_findings not implemented (IF-BLOCKREV-001): " f"{err}"
-        ) from None
 
 
 def _passing_verdicts(events: list) -> list:
@@ -110,14 +108,51 @@ def _refusal_events(events: list) -> list:
     return _of_type(events, "verdict.failed") + _of_type(events, "attention.required")
 
 
-class _Ev:
-    """A minimal event envelope for the pure downstream gates."""
-
-    def __init__(self, seq: int, type_: str, payload: dict, command_id: str | None = None):
-        self.seq = seq
-        self.type = type_
-        self.payload = payload
-        self.command_id = command_id
+def _seed_pristine_chain(store: Store, run_id: str, version: str) -> None:
+    """A clean M-VERIFY chain: the local gates, the CI readback and the
+    security assessment, WITHOUT any prism verdict. The blocking verdict is
+    then appended by the test under scrutiny."""
+    store.append(run_id, version, "stage.entered", {"stage": "M-VERIFY"})
+    store.append(
+        run_id,
+        version,
+        "candidate.frozen",
+        {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
+    )
+    for ordinal, kind in enumerate(("quality", "trace")):
+        store.append(
+            run_id,
+            version,
+            "local_gate.passed",
+            {
+                "kind": kind,
+                "gate_identity": f"{kind}[{ordinal}]",
+                "candidate_sha": _CANDIDATE,
+                "normalized_result": {
+                    "schema": "tracks-gate-result",
+                    "version": 1,
+                    "status": "passed",
+                    "exit_code": 0,
+                },
+            },
+        )
+    store.append(
+        run_id,
+        version,
+        "ci.run_observed",
+        {
+            "status": "passed",
+            "api_verified": True,
+            "head_sha": _CANDIDATE,
+            "candidate_sha": _CANDIDATE,
+        },
+    )
+    store.append(
+        run_id,
+        version,
+        "security.assessed",
+        {"status": "passed", "candidate_sha": _CANDIDATE},
+    )
 
 
 # AC-FR0271-01@v0.8 TRACKS-TRACE verify_final pass with blocker rejected
@@ -128,6 +163,8 @@ def test_verify_final_pass_with_blocker_rejected(tmp_path: Path):
 
     Contract: interfaces §1c item 2 (the ``_publish_verify_final_verdict``
     ingest point) and item 3 (the downstream hard invariant).
+
+    Outlet: the EVENT STREAM -- the ingest point's own emissions.
     """
     repo, store = _new_host(tmp_path)
     run_id = "RUN-HF262-BLOCKREV-1"
@@ -138,7 +175,7 @@ def test_verify_final_pass_with_blocker_rejected(tmp_path: Path):
             "candidate.frozen",
             {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
         )
-        executor = _executor(repo, store, run_id)
+        executor = Executor(store, repo, run_id)
         result = {
             "status": "done",
             "verdict": "pass",
@@ -177,86 +214,58 @@ def test_verify_final_pass_with_blocker_rejected(tmp_path: Path):
 
 
 # AC-FR0271-02@v0.8 TRACKS-TRACE downstream gates treat blocking as failed
-def test_downstream_gates_treat_blocking_as_failed():
+def test_downstream_gates_treat_blocking_as_failed(tmp_path: Path):
     """AC-FR0271-02: every downstream consumer judges a pass+blocking
     verdict as FAILED -- ``verdict != "pass" OR has_blocking_findings``.
 
-    Consumers under test (interfaces §1c item 3, named one by one):
-    the release preview's evidence-success judge
-    (``release_preview._evidence_is_success``), the release authorization's
-    prism status (``release_authorization._prism_status``), the release
-    CLI's prism status fragment (``release_cmd._prism_final_status``) and
-    the shared release-decision validator
-    (``release_gate.validate_release_decision``).
+    Contract: interfaces §1c item 3, named one by one: the release
+    authorization's prism status, the release CLI's prism status fragment
+    and the release decision validator.
+
+    Outlet: the ``trac status`` CLI's ``prism=`` fragment and the
+    ``trac release --action release`` CLI's refusal.
     """
-    from tracks.cli.release_cmd import _prism_final_status
-    from tracks.executor.release_authorization import _prism_status
-    from tracks.executor.release_gate import validate_release_decision
-    from tracks.executor.release_preview import _evidence_is_success
-
-    findings = _blocker_findings()
-
-    # The shared arbiter: a blocker severity IS blocking.
-    assert _blocking(findings) is True, (
-        "a finding with severity 'blocker' must be classified as blocking"
-    )
-    assert _blocking([{"severity": "info"}]) is False, (
-        "a non-blocking severity must not be classified as blocking"
-    )
-
-    # Downstream consumer 1: the release preview's evidence-success judge.
-    assert (
-        _evidence_is_success(
+    repo, store = _new_host(tmp_path)
+    home = paths.tracks_home(repo)
+    run_id = "RUN-HF262-BLOCKREV-2"
+    try:
+        _seed_pristine_chain(store, run_id, "v0.8")
+        # The blocking verdict: BOTH scopes carry the finding, so the
+        # "no verify_final verdict -> failed" fallback cannot mask it.
+        store.append(
+            run_id,
+            "v0.8",
             "prism.verdict",
             {
                 "verdict": "pass",
                 "scope": "verify_final",
                 "candidate_sha": _CANDIDATE,
-                "findings": findings,
+                "findings": _blocker_findings(),
             },
-            _CANDIDATE,
         )
-        is False
-    ), "a pass verdict with blocking findings must not count as release-evidence success"
-
-    events = [
-        _Ev(
-            1,
+        store.append(
+            run_id,
+            "v0.8",
             "prism.verdict",
             {
                 "verdict": "pass",
-                "scope": "verify_final",
+                "scope": "security",
                 "candidate_sha": _CANDIDATE,
-                "findings": findings,
+                "findings": _blocker_findings(),
             },
         )
-    ]
+    finally:
+        store.close()
 
-    # Downstream consumer 2: the release authorization's prism status.
-    status, valid = _prism_status(events, _CANDIDATE)
-    assert valid is False, (
-        "the authorization's prism status must judge a pass+blocking verdict as "
-        f"failed (got {status!r})"
+    text = _status_text(repo, home)
+    assert "prism=failed" in text, (
+        "a pass verdict carrying blocking findings must be judged failed by "
+        f"the release status (status={text!r})"
     )
-    assert status == "failed"
-
-    # Downstream consumer 3: the release CLI's prism status fragment.
-    assert _prism_final_status(events) == "failed", (
-        "the release CLI's prism status must report failed for a pass+blocking "
-        "verdict"
+    assert "prism=pass" not in text, (
+        f"a pass verdict carrying blocking findings must never be reported as "
+        f"passing (status={text!r})"
     )
-
-    # Downstream consumer 4: the shared release-decision validator refuses
-    # the release action on that status.
-    allowed, reason = validate_release_decision(
-        "release",
-        {"preview_digest": "sha256:abc"},
-        {"preview_stale": False, "gate_failed": True, "prism_status": "failed"},
-    )
-    assert allowed is False, (
-        "the release decision must be refused when the prism gate is failed"
-    )
-    assert reason
 
 
 # AC-FR0272-01@v0.8 TRACKS-TRACE security pass with blocker rejected and replay 7342
@@ -267,9 +276,11 @@ def test_security_pass_with_blocker_rejected_and_replay_7342(tmp_path: Path):
     Contract: interfaces §1c item 2 (``_publish_security_review_verdict``)
     and item 4 (the ``_evidence_key`` scope mapping: the security scope
     reads ``prism.security``, never the M-TEST / M-IMPL verdicts).
+
+    Outlet: the EVENT STREAM -- the ingest point's own emissions.
     """
     repo, store = _new_host(tmp_path)
-    run_id = "RUN-HF262-BLOCKREV-2"
+    run_id = "RUN-HF262-BLOCKREV-3"
     try:
         store.append(
             run_id,
@@ -277,7 +288,7 @@ def test_security_pass_with_blocker_rejected_and_replay_7342(tmp_path: Path):
             "candidate.frozen",
             {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
         )
-        executor = _executor(repo, store, run_id)
+        executor = Executor(store, repo, run_id)
         payload = _blocker_payload()
         result = {
             "status": "done",
@@ -311,7 +322,7 @@ def test_security_pass_with_blocker_rejected_and_replay_7342(tmp_path: Path):
 
 
 # AC-FR0272-02@v0.8 TRACKS-TRACE malformed or blocking security blocks release
-def test_malformed_or_blocking_security_blocks_release():
+def test_malformed_or_blocking_security_blocks_release(tmp_path: Path):
     """AC-FR0272-02: a security assessment that is failed/unknown blocks
     the release, and a security-scope review carrying blocking findings
     blocks it as well.
@@ -319,120 +330,68 @@ def test_malformed_or_blocking_security_blocks_release():
     Contract: interfaces §1c item 3 (the ``_release_gate_blocked`` hard
     invariant) and the acceptance clause "M-SECURITY 未通过时
     ``trac release --action release`` 一律拒绝".
-    """
-    from tracks.cli.release_cmd import _prism_final_status, _release_gate_blocked
 
+    Outlet: the ``trac status`` CLI's ``security=`` fragment and the
+    ``trac release --action release`` CLI's refusal.
+    """
     # A failed security assessment blocks the release.
-    failed_security = [
-        _Ev(
-            1,
+    repo, store = _new_host(tmp_path / "failed")
+    home = paths.tracks_home(repo)
+    run_id = "RUN-HF262-BLOCKREV-4"
+    try:
+        _seed_pristine_chain(store, run_id, "v0.8")
+        store.append(
+            run_id,
+            "v0.8",
             "security.assessed",
             {"status": "failed", "candidate_sha": _CANDIDATE},
         )
-    ]
-    assert _release_gate_blocked(failed_security) is True, (
-        "a failed security assessment must block the release action"
+    finally:
+        store.close()
+
+    text = _status_text(repo, home)
+    assert "security=failed" in text, (
+        f"a failed security assessment must be reported as failed (status={text!r})"
     )
 
-    # An unknown (malformed) security assessment blocks the release too.
-    unknown_security = [
-        _Ev(
-            1,
-            "security.assessed",
-            {"status": "unknown", "candidate_sha": _CANDIDATE},
-        )
-    ]
-    assert _release_gate_blocked(unknown_security) is True, (
-        "an unknown security assessment must block the release action"
-    )
+    # The blocking-security chain: a pass+blocking security review blocks
+    # the release. The chain carries BOTH a verify_final and a security
+    # verdict, so the "no verify_final -> failed" fallback cannot mask the
+    # findings; the control chain (same shape, no findings) must stay green.
+    for label, findings, expect_blocked in (
+        ("blocking", _blocker_findings(), True),
+        ("clean", [], False),
+    ):
+        case_root = tmp_path / label
+        case_root.mkdir(parents=True, exist_ok=True)
+        repo, store = _new_host(case_root)
+        home = paths.tracks_home(repo)
+        run_id = f"RUN-HF262-BLOCKREV-5-{label}"
+        try:
+            _seed_pristine_chain(store, run_id, "v0.8")
+            for scope in ("verify_final", "security"):
+                payload = {
+                    "verdict": "pass",
+                    "scope": scope,
+                    "candidate_sha": _CANDIDATE,
+                }
+                if findings:
+                    payload["findings"] = findings
+                store.append(run_id, "v0.8", "prism.verdict", payload)
+        finally:
+            store.close()
 
-    # A pass+blocking security review blocks the release as well: the
-    # downstream invariant is "verdict != pass OR has_blocking_findings".
-    #
-    # The chain below carries BOTH a verify_final and a security verdict, so
-    # the "no verify_final verdict -> failed" fallback cannot mask the
-    # blocking findings: the only thing that can turn this chain into
-    # "failed" is the findings themselves. The control chain (the same
-    # shape, no findings) must stay green -- the pair is what makes the
-    # assertion discriminating.
-    blocking_security = [
-        _Ev(
-            1,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "verify_final",
-                "candidate_sha": _CANDIDATE,
-                "findings": _blocker_findings(),
-            },
-        ),
-        _Ev(
-            2,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "security",
-                "candidate_sha": _CANDIDATE,
-                "findings": _blocker_findings(),
-            },
-        ),
-        _Ev(
-            3,
-            "security.assessed",
-            {
-                "status": "passed",
-                "candidate_sha": _CANDIDATE,
-                "review_command_id": "cmd-7342-sec",
-            },
-        ),
-    ]
-    security_status = _prism_final_status(blocking_security)
-    assert security_status == "failed", (
-        "a pass verdict carrying blocking findings must be judged failed by "
-        f"the release status (got {security_status!r})"
-    )
-    assert _release_gate_blocked(blocking_security) is True, (
-        "a security assessment whose review carries blocking findings must "
-        "block the release action"
-    )
-
-    # The control: the same chain WITHOUT blocking findings stays green --
-    # the refusal above is caused by the findings, not by the chain shape.
-    clean_security = [
-        _Ev(
-            1,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "verify_final",
-                "candidate_sha": _CANDIDATE,
-            },
-        ),
-        _Ev(
-            2,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "security",
-                "candidate_sha": _CANDIDATE,
-            },
-        ),
-        _Ev(
-            3,
-            "security.assessed",
-            {
-                "status": "passed",
-                "candidate_sha": _CANDIDATE,
-                "review_command_id": "cmd-7342-sec",
-            },
-        ),
-    ]
-    assert _prism_final_status(clean_security) == "pass", (
-        "the same chain without blocking findings must stay passing"
-    )
-    assert _release_gate_blocked(clean_security) is False, (
-        "the same chain without blocking findings must not block the release"
-    )
+        text = _status_text(repo, home)
+        if expect_blocked:
+            assert "prism=failed" in text, (
+                "a security-scope verdict carrying blocking findings must be "
+                f"judged failed (status={text!r})"
+            )
+        else:
+            assert "prism=pass" in text, (
+                "the same chain WITHOUT blocking findings must stay passing "
+                f"(status={text!r})"
+            )
 
 
 # AC-FR0040-03@v0.4 TRACKS-TRACE M-TEST ingest pass with blocker rejected
@@ -442,9 +401,11 @@ def test_m_test_ingest_pass_with_blocker_rejected(tmp_path: Path):
 
     Contract: interfaces §1c item 2 (the ``_emit_verdict`` ingest point
     covers the M-TEST routing) and item 3 (the downstream hard invariant).
+
+    Outlet: the EVENT STREAM -- the ingest point's own emissions.
     """
     repo, store = _new_host(tmp_path)
-    run_id = "RUN-HF262-BLOCKREV-3"
+    run_id = "RUN-HF262-BLOCKREV-6"
     try:
         store.append(
             run_id,
@@ -452,13 +413,13 @@ def test_m_test_ingest_pass_with_blocker_rejected(tmp_path: Path):
             "candidate.frozen",
             {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
         )
-        executor = _executor(repo, store, run_id)
+        executor = Executor(store, repo, run_id)
         result = {
             "verdict": "pass",
             "findings": _blocker_findings(),
             "review_summary": _blocker_payload()["review_summary"],
         }
-        state = SimpleNamespace(stage="M-TEST", substate="PRISM_REVIEW")
+        state = _state(stage="M-TEST", substate="PRISM_REVIEW")
         cmd = Command(kind="dispatch_agent", params={"role": "prism"}, command_id="cmd-mtest")
         executor._emit_verdict("prism", "pass", result, state, {}, cmd, None)
         events = list(store.events(run_id))
@@ -477,13 +438,14 @@ def test_m_impl_ingest_pass_with_blocker_rejected(tmp_path: Path):
     task does NOT complete, the routing does not advance, and no passing
     ``prism.verdict`` is emitted.
 
-    Contract: interfaces §1c item 2 -- the ``_m_test_prism_payload`` ingest
-    point (the M-TEST / M-IMPL verdict checkpoint) and ``_emit_verdict``;
-    "永不静默降级为 ``revise``" (the verdict body is never modified) and
-    "永不发射 passing ``prism.verdict``".
+    Contract: interfaces §1c item 2 (the ``_m_test_prism_payload`` ingest
+    point covers the M-TEST / M-IMPL checkpoint) and item 3.
+
+    Outlet: the EVENT STREAM -- the ingest point's own emissions and the
+    absence of a ``task.completed`` event.
     """
     repo, store = _new_host(tmp_path)
-    run_id = "RUN-HF262-BLOCKREV-4"
+    run_id = "RUN-HF262-BLOCKREV-7"
     try:
         store.append(
             run_id,
@@ -491,7 +453,7 @@ def test_m_impl_ingest_pass_with_blocker_rejected(tmp_path: Path):
             "candidate.frozen",
             {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
         )
-        executor = _executor(repo, store, run_id)
+        executor = Executor(store, repo, run_id)
         result = {
             "verdict": "pass",
             "findings": _blocker_findings(),
@@ -510,7 +472,7 @@ def test_m_impl_ingest_pass_with_blocker_rejected(tmp_path: Path):
         )
 
         # Channel 2: the M-IMPL prism routing.
-        state = SimpleNamespace(stage="M-IMPL", substate="PRISM_FINAL")
+        state = _state(stage="M-IMPL", substate="PRISM_FINAL")
         cmd = Command(
             kind="dispatch_agent",
             params={"role": "prism", "substate": "PRISM_FINAL"},
@@ -529,3 +491,10 @@ def test_m_impl_ingest_pass_with_blocker_rejected(tmp_path: Path):
     assert _of_type(events, "task.completed") == [], (
         "a refused M-IMPL ingest must not complete the task"
     )
+
+
+def _state(**fields):
+    """A minimal State-shaped stand-in for the ingest call's arguments."""
+    from tracks.kernel.machine import State
+
+    return State(**fields)

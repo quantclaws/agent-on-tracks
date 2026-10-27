@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/run_loop.py b/tracks/executor/run_loop.py
+--- a/tracks/executor/run_loop.py
++++ b/tracks/executor/run_loop.py
+@@ -502,6 +502,8 @@
+         self._observe_oob()
+         state = self.store.state(self.run_id)
+         tripped = self._check_breaker(state)
++        if self._pending_operator_attention(state) is not None:
++            return "return", state
+         if tripped is not None:
+             return "return", tripped
+         if self._sm02_pre_decide(state):

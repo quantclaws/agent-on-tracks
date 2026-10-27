@@ -1,0 +1,12 @@
+diff --git a/tracks/cli/validate_cmd.py b/tracks/cli/validate_cmd.py
+--- a/tracks/cli/validate_cmd.py
++++ b/tracks/cli/validate_cmd.py
+@@ -314,7 +314,7 @@
+     ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
+     becomes each required AC's full-pass evidence for this candidate.
+     """
+-    if not payload.get("serves_as_full_f"):
++    if not payload.get("full_f_eligible"):
+         return
+     evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
+     evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")

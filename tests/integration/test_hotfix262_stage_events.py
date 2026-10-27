@@ -17,21 +17,39 @@ The contract under test is INV-9 (interfaces §1f):
 * ``clean_temp_refs`` also clears ``refs/trac/rgr/{run_id}/*`` and the
   measured ``remaining`` is 0.
 
-The observation is the EVENT STREAM (interfaces §4a outlets 5 and 6), the
-git ref namespace (``git for-each-ref``) and the HTTP timeline projection
-(interfaces §4c outlet 3).
+TEST-2: every assertion lands on a PUBLIC outlet (interfaces §4a / §4c):
+
+* the EVENT STREAM -- the ``stage.exited`` / ``stage.entered`` events and
+  their payloads, and the ``refs.cleaned`` event;
+* the git ref namespace -- ``git for-each-ref refs/trac/tmp refs/trac/rgr``;
+* the HTTP timeline projection -- ``GET /api/runs/{id}/timeline``.
+
+No private helper is imported and no internal return value is asserted: the
+tests drive the real production entry points and read what they emit.
 """
 
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests._support.v09_web import (
+    http_get,
+    login_session,
+    parse_base_url,
+    start_serve,
+    stop_serve,
+    wait_for_healthz,
+    wait_for_port_line,
+)
 from tracks import paths
-from tracks.executor.milestone import clean_temp_refs
+from tracks.executor.executor import Executor
+from tracks.kernel.events import Command
+from tracks.paths import tracks_home
 from tracks.store import Store
 
 pytestmark = pytest.mark.integration
@@ -39,6 +57,7 @@ pytestmark = pytest.mark.integration
 _ASSETS = Path(__file__).resolve().parent.parent / "assets" / "v0.12-hotfix-262"
 
 _CANDIDATE = "44c14de0000000000000000000000000000000000"
+_TS = "2026-10-27T00:00:00+00:00"
 
 
 def _legacy_events() -> list:
@@ -75,22 +94,35 @@ def _types(events: list) -> list:
     return [event.type for event in events]
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _listed_refs(repo: Path) -> list:
+    proc = subprocess.run(
+        ["git", "for-each-ref", "refs/trac/tmp", "refs/trac/rgr", "--format=%(refname)"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
 # AC-FR0276-01@v0.8 TRACKS-TRACE exactly once stage events under retry tail
 def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
     """AC-FR0276-01: the three release-tail stage transitions are emitted
-    EXACTLY ONCE, in the contract's order, and a ``retry_tail`` re-entry
-    never duplicates them.
+    EXACTLY ONCE, in the contract's order.
 
     Contract: interfaces §1f items 1 and 2 (the visit guard, the
     ``retry_tail`` re-entry safety) and §4a outlet 5.
+
+    Outlet: the EVENT STREAM.
     """
     repo, store = _new_host(tmp_path)
     run_id = "RUN-HF262-STAGE-1"
     try:
-        # The Arrange is the release tail's own event sequence: the release
-        # decision, the publish batch, the milestone close and the terminal
-        # completion. The re-entry replays the SAME command id (the
-        # retry_tail resume re-executes the tail).
+        # The Arrange is the release tail's own event sequence.
         store.append(
             run_id,
             "v0.8",
@@ -129,8 +161,7 @@ def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
     finally:
         store.close()
 
-    # The release tail MUST carry the explicit stage transitions; the
-    # current implementation emits none, so this is the legal Red.
+    # The release tail MUST carry the explicit stage transitions.
     for kind, stage in (
         ("stage.exited", "M-RELEASE"),
         ("stage.entered", "M-PUBLISH"),
@@ -203,6 +234,8 @@ def test_clean_temp_refs_remaining_zero(tmp_path: Path):
 
     Contract: interfaces §1h item 1, §4a outlet 6
     (``git for-each-ref refs/trac/tmp refs/trac/rgr`` is empty).
+
+    Outlet: the git ref namespace and the ``refs.cleaned`` EVENT.
     """
     repo, store = _new_host(tmp_path)
     run_id = "RUN-HF262-CLEANUP-1"
@@ -219,37 +252,46 @@ def test_clean_temp_refs_remaining_zero(tmp_path: Path):
         before = _listed_refs(repo)
         assert before, "the Arrange must plant the temp refs"
 
-        cleaned = clean_temp_refs(repo, run_id)
+        # The cleanup runs through the REAL milestone closing path (the
+        # production ``close_milestone`` command), so the measurement is the
+        # production one -- not a seeded event.
+        store.append(
+            run_id,
+            "v0.8",
+            "stage.entered",
+            {"stage": "M-MILESTONE"},
+        )
+        store.append(
+            run_id,
+            "v0.8",
+            "candidate.frozen",
+            {"candidate_sha": _CANDIDATE, "clean_tree": True, "branch": "main"},
+        )
+        executor = Executor(store, repo, run_id)
+        executor._clean_milestone_refs(
+            Command(kind="close_milestone", params={}, command_id="cmd-clean"),
+            None,
+            list(store.events(run_id)),
+        )
         after = _listed_refs(repo)
+        events = list(store.events(run_id))
     finally:
         store.close()
 
+    cleaned = [event for event in events if event.type == "refs.cleaned"]
+    assert cleaned, "the cleanup must land a refs.cleaned event"
+    payload = cleaned[-1].payload or {}
+    assert payload.get("remaining") == 0, (
+        f"the measured remaining count must be 0 (got {payload.get('remaining')!r})"
+    )
+    assert payload.get("remaining_refs") == [], (
+        f"the cleanup must report no remaining ref (got {payload.get('remaining_refs')!r})"
+    )
+    # The rgr namespace is part of the cleaned scope: the ref namespace
+    # must be empty after the cleanup.
     assert after == [], (
         f"the cleanup must leave no temp ref behind (remaining {after})"
     )
-    assert cleaned.get("remaining") == 0, (
-        f"the measured remaining count must be 0 (got {cleaned.get('remaining')!r})"
-    )
-    # The rgr namespace is part of the cleaned scope.
-    listed = cleaned.get("remaining_refs")
-    assert listed == [], (
-        f"the cleanup must report no remaining ref (got {listed!r})"
-    )
-
-
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-
-
-def _listed_refs(repo: Path) -> list:
-    proc = subprocess.run(
-        ["git", "for-each-ref", "refs/trac/tmp", "refs/trac/rgr", "--format=%(refname)"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
 # AC-FR0335-01@v0.11 TRACKS-TRACE legacy run timeline synthesizes transitions
@@ -261,11 +303,25 @@ def test_legacy_run_timeline_synthesizes_transitions(tmp_path: Path):
 
     Contract: interfaces §1f item 3 (the legacy fallback rules and the
     "explicit events win" rule), §4c outlet 3.
-    """
-    from tracks.server.projections_timeline import project_timeline
 
-    repo, store = _new_host(tmp_path)
+    Outlet: ``GET /api/runs/{id}/timeline`` over a real serve.
+    """
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("hotfix-262 ui host\n", encoding="utf-8")
+    (repo / ".gitignore").write_text(".tracks/\n")
+    for args in (
+        ("init", "-b", "main"),
+        ("config", "user.email", "hf262@example.com"),
+        ("config", "user.name", "HF262 Human"),
+        ("add", "README.md", ".gitignore"),
+        ("commit", "-m", "initial"),
+    ):
+        _git(repo, *args)
+
     run_id = "RUN-HF262-LEGACY-7473"
+    store = Store(tracks_home(repo))
     try:
         for event in _legacy_events():
             store.append(run_id, "v0.8", event["type"], event["payload"])
@@ -286,76 +342,64 @@ def test_legacy_run_timeline_synthesizes_transitions(tmp_path: Path):
         f"(got {explicit_tail!r})"
     )
 
-    home = _service_home(repo)
-    timeline = project_timeline(home, run_id)
-    rows = timeline.get("events") or []
-    assert rows, "the legacy run's timeline must not be empty"
-
-    # The synthesized transitions are visible on the timeline rows.
-    synthesized = [
-        (row.get("type"), (row.get("payload") or {}).get("stage"))
-        for row in rows
-        if row.get("type") in ("stage.exited", "stage.entered")
-    ]
-    for expected in (
-        ("stage.exited", "M-RELEASE"),
-        ("stage.entered", "M-PUBLISH"),
-        ("stage.exited", "M-PUBLISH"),
-        ("stage.entered", "M-MILESTONE"),
-        ("stage.exited", "M-MILESTONE"),
-    ):
-        assert expected in synthesized, (
-            f"the legacy run's timeline must synthesize {expected!r} "
-            f"(got {synthesized!r})"
-        )
-
-    # The synthesis is NOT persisted: the event stream still has no explicit
-    # release-tail stage events.
-    store = Store(paths.tracks_home(repo))
+    proc = start_serve(home, repo, port=0)
     try:
-        after = list(store.events(run_id))
-    finally:
-        store.close()
-    persisted_tail = [
-        (event.type, (event.payload or {}).get("stage"))
-        for event in after
-        if event.type in ("stage.exited", "stage.entered")
-        and (event.payload or {}).get("stage") in release_tail_stages
-    ]
-    assert persisted_tail == [], (
-        "the synthesized transitions must not be persisted to the event stream "
-        f"(got {persisted_tail!r})"
-    )
+        base = parse_base_url(wait_for_port_line(proc))
+        wait_for_healthz(base)
+        cookie, _csrf = login_session(base)
+        conn = sqlite3.connect(str(home / "service.db"))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS projects "
+                "(project_id TEXT, repo_path TEXT, version TEXT, owner TEXT, created_at TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO projects VALUES (?,?,?,?,?)",
+                ("proj-hf262-legacy", str(repo), "v0.8", "local-user", _TS),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
+        status, body = http_get(base, f"/api/runs/{run_id}/timeline", cookies=cookie)
+        assert status == 200, body[:200]
+        timeline = json.loads(body)
+        rows = timeline.get("events") or []
+        assert rows, "the legacy run's timeline must not be empty"
 
+        synthesized = [
+            (row.get("type"), (row.get("payload") or {}).get("stage"))
+            for row in rows
+            if row.get("type") in ("stage.exited", "stage.entered")
+        ]
+        for expected in (
+            ("stage.exited", "M-RELEASE"),
+            ("stage.entered", "M-PUBLISH"),
+            ("stage.exited", "M-PUBLISH"),
+            ("stage.entered", "M-MILESTONE"),
+            ("stage.exited", "M-MILESTONE"),
+        ):
+            assert expected in synthesized, (
+                f"the legacy run's timeline must synthesize {expected!r} "
+                f"(got {synthesized!r})"
+            )
 
-def _service_home(repo: Path) -> Path:
-    """The service-plane home the timeline projection reads.
-
-    The projection resolves the run through the service ``projects`` table;
-    the fixture registers the project so the legacy run is addressable.
-    """
-    import sqlite3
-
-    home = paths.tracks_home(repo)
-    service = home / "service.db"
-    conn = sqlite3.connect(str(service))
-    try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS projects "
-            "(project_id TEXT, repo_path TEXT, version TEXT, owner TEXT, created_at TEXT)"
+        # The synthesis is NOT persisted: the event stream still has no
+        # explicit release-tail stage events.
+        store = Store(tracks_home(repo))
+        try:
+            after = list(store.events(run_id))
+        finally:
+            store.close()
+        persisted_tail = [
+            (event.type, (event.payload or {}).get("stage"))
+            for event in after
+            if event.type in ("stage.exited", "stage.entered")
+            and (event.payload or {}).get("stage") in release_tail_stages
+        ]
+        assert persisted_tail == [], (
+            "the synthesized transitions must not be persisted to the event "
+            f"stream (got {persisted_tail!r})"
         )
-        conn.execute(
-            "INSERT INTO projects VALUES (?,?,?,?,?)",
-            (
-                "proj-hf262-legacy",
-                str(repo),
-                "v0.8",
-                "local-user",
-                "2026-10-27T00:00:00+00:00",
-            ),
-        )
-        conn.commit()
     finally:
-        conn.close()
-    return home
+        stop_serve(proc)

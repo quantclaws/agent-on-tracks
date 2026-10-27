@@ -1,0 +1,13 @@
+diff --git a/tracks/server/static/app/views.js b/tracks/server/static/app/views.js
+--- a/tracks/server/static/app/views.js
++++ b/tracks/server/static/app/views.js
+@@ -126,7 +126,8 @@
+         element("li", {
+           class: "todo-row",
+           "data-testid": `todo-${todo.run_id || "unknown"}`,
+-          text: `${todo.run_id || "unknown"}: ${todo.reason || todo.kind || "unknown"}`,
++          // COUNTEREXAMPLE: the card renders the bare run id.
++          text: `${todo.run_id || "unknown"}`,
+         })
+       );
+     }

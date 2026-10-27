@@ -1,0 +1,13 @@
+diff --git a/tracks/server/static/app/releases.js b/tracks/server/static/app/releases.js
+--- a/tracks/server/static/app/releases.js
++++ b/tracks/server/static/app/releases.js
+@@ -92,7 +92,8 @@
+     children: (backlog.entries || [])
+       .filter((entry) => !entry.disposition)
+       .map((entry) => ({
+-        label: entry.content || entry.entry_id || "entry",
++        // COUNTEREXAMPLE: the sidebar label is the entry ULID.
++        label: entry.entry_id || "entry",
+         testid: `sidebar-backlog-${entry.entry_id || "unknown"}`,
+         attrs: { "data-entry-id": entry.entry_id || "" },
+       })),

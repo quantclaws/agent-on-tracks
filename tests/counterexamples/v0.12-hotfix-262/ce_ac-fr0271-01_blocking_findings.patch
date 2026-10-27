@@ -1,0 +1,10 @@
+diff --git a/tracks/executor/review_findings.py b/tracks/executor/review_findings.py
+--- a/tracks/executor/review_findings.py
++++ b/tracks/executor/review_findings.py
+@@ -18,4 +18,5 @@
+ 
+ 
+ def has_blocking_findings(findings: Iterable[Mapping]) -> bool:
+-    raise NotImplementedError("IF-BLOCKREV-001")
++    # COUNTEREXAMPLE: no finding is ever blocking.
++    return False

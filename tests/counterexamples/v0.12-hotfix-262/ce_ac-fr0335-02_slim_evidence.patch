@@ -1,0 +1,11 @@
+diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
+--- a/tracks/server/projections_timeline.py
++++ b/tracks/server/projections_timeline.py
+@@ -165,6 +165,7 @@
+     # folds it into 技术详情 (never the default headline).
+     "evidence",
+     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
++    "evidence_payload",
+     "area", "next"})
+ 
+ # Slim-mode service-plane noise exclusion (read-face load shedding only; the

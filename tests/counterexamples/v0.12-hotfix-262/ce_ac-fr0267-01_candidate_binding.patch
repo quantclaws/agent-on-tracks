@@ -1,0 +1,12 @@
+diff --git a/tracks/cli/validate_cmd.py b/tracks/cli/validate_cmd.py
+--- a/tracks/cli/validate_cmd.py
++++ b/tracks/cli/validate_cmd.py
+@@ -331,7 +331,7 @@
+         base = _ac_base_ref(payload.get("ac")) or ""
+         _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
+         digest = payload.get("candidate_digest")
+-        if isinstance(digest, str) and digest:
++        if isinstance(digest, str) and digest and candidate_digest is None:
+             return digest
+     elif event.type == "phase0.baseline_repaired":
+         base = _ac_base_ref(payload.get("ac")) or ""

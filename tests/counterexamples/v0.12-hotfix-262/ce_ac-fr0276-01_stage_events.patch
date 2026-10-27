@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/verify_ci.py b/tracks/executor/verify_ci.py
+--- a/tracks/executor/verify_ci.py
++++ b/tracks/executor/verify_ci.py
+@@ -563,6 +563,8 @@
+         self._emit(
+             "stage.entered", {"stage": "M-RELEASE"}, command_id=cmd.command_id
+         )
++        # COUNTEREXAMPLE: the M-RELEASE -> M-PUBLISH transition is
++        # never emitted, so the release tail has no stage visit.
+         self._release_preview(cmd, candidate_sha)
+ 
+     def _release_preview(self, cmd, candidate_sha: str) -> None:
