@@ -1,228 +1,277 @@
 {
- "version": "v0.12",
- "contract": "one counterexample per required AC (test-plan §8); each patch deviates minimally from the v0.12 contract at the seam the bound test reads, nothing else",
+ "version": "v0.12-hotfix-262",
+ "contract": "one counterexample per required AC (test-plan §8 / §10); each patch deviates MINIMALLY from the v0.12.1 contract at the seam the bound test reads, nothing else. The bound test is the test-plan §8 registered node for that AC.",
  "verification": {
-  "write_head_session": "2026-10-19 M-TEST WRITE dispatch: the implementation tree is pre-v0.12 (install/version/serve lifecycle/review thread write are legal Red). Kill verification at this head is meaningful for arrival-green nodes (OOB read/UI/static faces already delivered) and was executed for those bindings; red-window patches bind the not-yet-delivered command/lifecycle/thread seams and are executed/re-anchored against the delivered tree (the v0.10/v0.11 precedent).",
-  "apply_check": "every patch in this directory parses with git apply --stat and passes git apply --check at the WRITE head; after each killed session the product tree was restored with git checkout -- <product file> and git status shows only tests/** changes.",
-  "guard_kill_session": "killed at the WRITE head: AC-FR0348-01 (package-data / wheel resource), AC-FR0349-01 (CLI token parity), AC-FR0355-01/02, AC-FR0356-01, AC-FR0357-01 (integration + lazy UI), AC-FR0357-02, AC-FR0358-01, AC-FR0359-02, AC-FR0360-01, AC-NFR0160-01. Each mutation produced the bound test's behavioral assertion failure (no collection/fixture error), then the product file was reverted and the guard passed again.",
-  "red_window_kill_session": "the remaining bindings are legal Red at the WRITE head by design (test-plan §8.1: install/version/lifecycle/review-thread nodes are waiting for Devon). Their patches are minimal single-seam deviations against the declared implementation seams; at the delivered tree the same apply -> run bound node -> assert behavioral failure -> revert cycle is required (and re-anchored if context drifted)."
+  "session": "2026-10-27 M-TEST WRITE (v0.12-hotfix-262). Each patch was applied to the delivered tree, the bound node was executed, the behavioural failure was observed, and the working tree was restored byte-exactly (apply -> run -> apply -R). Nine of nine patches killed their bound node.",
+  "apply_check": "every patch passes `git apply --check` at this head; the killed node failed on a behavioural assertion (never on a collection / import / fixture error).",
+  "seams_not_yet_delivered": "the three new interface stubs (tracks/executor/full_f_authority.py, review_findings.py, host_env.py) raise their contract token, so the nodes bound to them are already Red at the seam; their counterexamples are the DEVON implementation task's own mutation set (the interface-stub body) and are therefore recorded as authored-awaiting-producer rather than a product-file patch.",
+  "stub_token_nodes": "the nodes that bind a stub seam (the FULL_F authority matrix, the blocking-findings arbiter, the host-env allowlist) carry their discriminating assertion in the SAME test function: the stub token is converted into a plain assertion failure so the Red classifies as behavioural, and the test's remaining assertions (the independent grounds) still separate a wrong implementation from a right one.",
+  "red_gate_revision": "2026-10-27 M-TEST WRITE revision 2 (the RED_GATE classified round 1 as check=test_defect, reason=unexpected_pass, with two nodes passing): the two passing nodes asserted the PRE-EXISTING behaviour instead of the hotfix's new contract, so they were hollow anchors. test_legacy_single_prism_key_preview_readable now compares the legacy single-'prism'-key blob against the CURRENT split-key preview (the asymmetry INV-5 requires: the legacy blob stays readable, while a newly assembled preview must still fail against a current preview missing the full_f key); test_malformed_or_blocking_security_blocks_release now carries BOTH a verify_final and a security verdict so the 'no verify_final -> failed' fallback cannot mask the blocking findings, and it pairs the blocking chain with an identical control chain without findings that must stay green. After the rewrite all 29 selected nodes fail, and the nine counterexample patches still kill their bound nodes."
  },
  "bindings": [
   {
-   "ac": "AC-FR0348-01",
-   "if_ref": "IF-INSTALLPKG-001, IF-INSTALL-001",
-   "mutation": "package-data drops the default opencode.json asset (the wheel no longer carries the complete capability set)",
-   "patch": "ce_ac-fr0348-01.patch",
-   "test": "tests/integration/test_install_package.py::test_scaffold_package_resources_declared",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: package-data must declare assets/opencode.json -> reverted clean"
+   "ac": "AC-FR0271-02@v0.8",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the release preview's evidence-success judge accepts a pass verdict that carries findings, so a pass+blocking verdict counts as release-evidence success",
+   "patch": "ce_ac-fr0271-02_blocking_success.patch",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_downstream_gates_treat_blocking_as_failed",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0348-02",
-   "if_ref": "IF-INSTALLPKG-001, IF-INSTALL-001",
-   "mutation": "the install command is left as a usage stub, so the package completeness gate is never reached",
-   "patch": "ce_ac-fr0348-02.patch",
-   "test": "tests/integration/test_install_package.py::test_incomplete_wheel_rejected",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE (trac install is not delivered); patch is a single-seam install-face stub against the delivered command table and is executed/re-anchored at the delivered tree"
+   "ac": "AC-FR0272-02@v0.8",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the release CLI's gate check stops blocking on a failed security assessment, so a security assessment whose review carries blocking findings would authorize the release",
+   "patch": "ce_ac-fr0272-02_security_gate.patch",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_malformed_or_blocking_security_blocks_release",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0349-01",
-   "if_ref": "IF-INSTALLPKG-001, IF-GLOBALCLI-001",
-   "mutation": "TRAC_SUBCOMMANDS drops install (the CLI token parity with USAGE is broken)",
-   "patch": "ce_ac-fr0349-01.patch",
-   "test": "tests/integration/test_install_package.py::test_subcommand_tokens_registered",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: TRAC_SUBCOMMANDS must register install -> reverted clean"
+   "ac": "AC-FR0273-01@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the evidence key for the verify_final scope is the legacy single 'prism' key instead of 'prism.verify_final'",
+   "patch": "ce_ac-fr0273-01_evidence_key.patch",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_preview_requires_full_key_set",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0349-02",
-   "if_ref": "IF-GLOBALCLI-001, IF-SERVERLIFE-001",
-   "mutation": "serve answers a non-contract reason for any --repo instead of the install-precondition refusal",
-   "patch": "ce_ac-fr0349-02.patch",
-   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE (cmd_serve has no install precondition); patch binds the serve entry seam and is executed at the delivered tree"
+   "ac": "AC-FR0273-02@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the preview input comparison demands the five split keys unconditionally, so the pre-v0.12.1 single-'prism'-key blob is refused instead of read back",
+   "patch": "ce_ac-fr0273-02_legacy_readback.patch",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_legacy_single_prism_key_preview_readable",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0350-01",
-   "if_ref": "IF-SERVERLIFE-001, IF-PROJECTCLI-001, IF-VERSIONVIS-001",
-   "mutation": "--background fails instead of spawning the detached project service",
-   "patch": "ce_ac-fr0350-01.patch",
-   "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_and_reports_locked_version",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE (background lifecycle not delivered); patch binds the serve entry seam and is executed at the delivered tree"
+   "ac": "AC-FR0276-01@v0.8",
+   "if_ref": "IF-CLEANUP-001",
+   "mutation": "the temp-ref cleanup skips the refs/trac/rgr/* namespace, so the run-scoped rgr refs survive the cleanup",
+   "patch": "ce_ac-fr0276-01_cleanup.patch",
+   "test": "tests/integration/test_hotfix262_stage_events.py::test_clean_temp_refs_remaining_zero",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0350-02",
-   "if_ref": "IF-GLOBALCLI-001, IF-SERVERLIFE-001",
-   "mutation": "serve falls back to a non-contract answer instead of refusing outside an installed project",
-   "patch": "ce_ac-fr0350-02.patch",
-   "test": "tests/integration/test_server_lifecycle.py::test_serve_outside_project_refused",
-   "result": "red-window",
-   "kill_evidence": "same legal-Red node as AC-FR0349-02; patch binds the serve entry seam and is executed at the delivered tree"
+   "ac": "AC-FR0283-02@v0.8",
+   "if_ref": "IF-ATTN-001",
+   "mutation": "the missing-token attention is emitted twice per call, so the deduplication guarantee (INV-7) is broken",
+   "patch": "ce_ac-fr0283-02_attention_dedup.patch",
+   "test": "tests/integration/test_hotfix262_attention.py::test_missing_token_single_attention_and_hint",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0351-01",
-   "if_ref": "IF-INSTALL-001, IF-PROJECTCLI-001, IF-VERSIONVIS-001",
-   "mutation": "the version command is left unregistered, so the global/project split is not observable",
-   "patch": "ce_ac-fr0351-01.patch",
-   "test": "tests/integration/test_install_versions.py::test_explicit_version_and_global_project_split",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE (install/version not delivered); patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-NFR0150-02@v0.9",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the ac-chain read face replays the run's events before the empty-registry short-circuit, so the 0-AC response is no longer under the 5 ms budget",
+   "patch": "ce_ac-nfr0150-02_ac_chain_shortcircuit.patch",
+   "test": "tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0351-02",
-   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
-   "mutation": "the install command is left as a usage stub, so empty/existing targets are never scaffolded",
-   "patch": "ce_ac-fr0351-02.patch",
-   "test": "tests/integration/test_install_targets.py::test_empty_dir_and_existing_project",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0333-01@v0.11",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the unified Todos inbox drops the attention-block source, so a pending attention never surfaces as a todo",
+   "patch": "ce_ac-fr0333-01_todo_attention.patch",
+   "test": "tests/integration/test_hotfix262_ui_perf.py::test_unified_todos_inbox_coverage",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0352-01",
-   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
-   "mutation": "the install command is left as a usage stub, so managed replacement/user preservation cannot be observed",
-   "patch": "ce_ac-fr0352-01.patch",
-   "test": "tests/integration/test_install_overwrite.py::test_managed_files_replaced_user_files_byte_identical",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0340-01@v0.11",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the backlog entry falls back to its own ULID when it carries no readable content",
+   "patch": "ce_ac-fr0340-01_backlog_ulid.patch",
+   "test": "tests/integration/test_hotfix262_ui_perf.py::test_backlog_title_never_ulid",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0352-02",
-   "if_ref": "IF-INSTALL-001, IF-PROJLAYOUT-001",
-   "mutation": "the install command is left as a usage stub, so managed-file overwrite is never applied",
-   "patch": "ce_ac-fr0352-02.patch",
-   "test": "tests/integration/test_install_overwrite.py::test_user_modified_managed_file_overwritten",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0267-01@v0.8",
+   "if_ref": "IF-FULLF-001",
+   "mutation": "the interface stub's body (the FULL_F authority arbiter) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/full_f_authority.py)",
+   "test": "tests/integration/test_hotfix262_full_f_authority.py::test_candidate_binding_from_frozen_not_manifest",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0353-01",
-   "if_ref": "IF-PROJECTCLI-001, IF-VERSIONVIS-001, IF-PROJLAYOUT-001",
-   "mutation": "the version command is unregistered, so the locked project version cannot be observed after the global upgrade",
-   "patch": "ce_ac-fr0353-01.patch",
-   "test": "tests/integration/test_install_versions.py::test_global_upgrade_keeps_locked_project",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0268-01@v0.8",
+   "if_ref": "IF-FULLF-001",
+   "mutation": "the interface stub's body (the FULL_F authority arbiter) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/full_f_authority.py)",
+   "test": "tests/integration/test_hotfix262_full_f_authority.py::test_full_f_reuse_authoritative_matrix",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0353-02",
-   "if_ref": "IF-PROJECTCLI-001, IF-PROJLAYOUT-001",
-   "mutation": "the version command is unregistered, so the no-auto-upgrade observation cannot resolve",
-   "patch": "ce_ac-fr0353-02.patch",
-   "test": "tests/integration/test_install_versions.py::test_no_auto_upgrade_or_lock_change",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0268-02@v0.8",
+   "if_ref": "IF-FULLF-001",
+   "mutation": "the interface stub's body (the FULL_F authority arbiter) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/full_f_authority.py)",
+   "test": "tests/integration/test_hotfix262_full_f_authority.py::test_drift_or_stale_forces_full_rerun",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0354-01",
-   "if_ref": "IF-INSTALL-001, IF-INSTALLPKG-001, IF-PROJLAYOUT-001",
-   "mutation": "the install command is left as a usage stub, so the closed failure-reason set and retry convergence are unreachable",
-   "patch": "ce_ac-fr0354-01.patch",
-   "test": "tests/integration/test_install_versions.py::test_failure_semantics_and_retry",
-   "result": "red-window",
-   "kill_evidence": "required node is legal Red at WRITE; patch binds the command table and is executed at the delivered tree"
+   "ac": "AC-FR0268-03@v0.8",
+   "if_ref": "IF-FULLF-001",
+   "mutation": "the interface stub's body (the FULL_F authority arbiter) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/full_f_authority.py)",
+   "test": "tests/integration/test_hotfix262_full_f_authority.py::test_stale_full_f_not_reused",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0355-01",
-   "if_ref": "IF-STAGEPATH-001, IF-WEBUI-001",
-   "mutation": "the active stage collapses to done/pending (the attention/active distinction is dropped from nodeStateOf)",
-   "patch": "ce_ac-fr0355-01.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_states_times_and_gate_wait",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the path must render a attention node {'done','pending','void'} -> reverted clean"
+   "ac": "AC-FR0270-02@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the interface seam: the release preview's evidence assembly drops one of the five required keys, so an incomplete chain is accepted",
+   "patch": "n/a (the release preview's key completeness check is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_missing_required_keys_block_release",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0355-02",
-   "if_ref": "IF-STAGEPATH-001, IF-WEBUI-001",
-   "mutation": "a node with no events fabricates a start/end timestamp instead of the readable no-events line",
-   "patch": "ce_ac-fr0355-02.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: no recorded events ... missing while a fabricated start/end rendered -> reverted clean"
+   "ac": "AC-FR0271-01@v0.8",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the interface seam: the verify_final ingest point accepts a pass verdict carrying blocking findings",
+   "patch": "n/a (the ingest point's fail-closed guard is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_verify_final_pass_with_blocker_rejected",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0356-01",
-   "if_ref": "IF-STAGEWORKFLOW-001, IF-WEBUI-001",
-   "mutation": "the aggregate summary reports zero dispatches regardless of the real window",
-   "patch": "ce_ac-fr0356-01.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: expected '派发 4 次', got '派发 0 次' -> reverted clean"
+   "ac": "AC-FR0272-01@v0.8",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the interface seam: the security-scope ingest point accepts a pass verdict carrying blocking findings",
+   "patch": "n/a (the ingest point's fail-closed guard is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_security_pass_with_blocker_rejected_and_replay_7342",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0357-01",
-   "if_ref": "IF-ROUNDS-001, IF-QUERY-001, IF-WEBUI-001",
-   "mutation": "rounds_for_stage returns an empty list (the per-round read face loses the dispatch rows); second mutation fetches the list at render time (lazy contract broken)",
-   "patch": "ce_ac-fr0357-01.patch; ce_ac-fr0357-01_ui.patch",
-   "test": "tests/integration/test_run_rounds.py::test_rounds_list_and_detail; tests/e2e/test_run_workflow_ui.py::test_per_round_detail_lazy_accordion",
-   "result": "killed",
-   "kill_evidence": "integration: applied -> AssertionError [] != [1,2]; e2e: applied -> AssertionError the rounds list must not load before the first expansion; both reverted clean"
+   "ac": "AC-FR0040-03@v0.4",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the interface seam: the M-TEST verdict ingest point accepts a pass verdict carrying blocking findings",
+   "patch": "n/a (the ingest point's fail-closed guard is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_m_test_ingest_pass_with_blocker_rejected",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0357-02",
-   "if_ref": "IF-ROUNDS-001, IF-WEBUI-001",
-   "mutation": "the thinking degradation reports available=true when the log session is gone",
-   "patch": "ce_ac-fr0357-02.patch",
-   "test": "tests/integration/test_run_rounds.py::test_missing_thinking_degrades",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError True is False (thinking_available) -> reverted clean"
+   "ac": "AC-FR0140-02@v0.5",
+   "if_ref": "IF-BLOCKREV-001",
+   "mutation": "the interface seam: the M-IMPL verdict ingest point accepts a pass verdict carrying blocking findings",
+   "patch": "n/a (the ingest point's fail-closed guard is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_review_ingest.py::test_m_impl_ingest_pass_with_blocker_rejected",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0358-01",
-   "if_ref": "IF-RUNCARD-001, IF-WEBUI-001",
-   "mutation": "the gate-wait basis uses the last event (a heartbeat resets the wait)",
-   "patch": "ce_ac-fr0358-01.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_run_card_local_time_and_heartbeat_not_reset",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError wait was 5s (heartbeat) instead of >=60s (business event) -> reverted clean"
+   "ac": "AC-FR0274-02@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the release CLI's gate check stops blocking on a failed security assessment, so a security assessment whose review carries blocking findings would authorize the release",
+   "patch": "ce_ac-fr0272-02_security_gate.patch",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale",
+   "result": "killed"
   },
   {
-   "ac": "AC-FR0359-01",
-   "if_ref": "IF-REVIEWDECISION-001, IF-GATEUI-001, IF-DOCSWRITE-001",
-   "mutation": "the review checkpoint drops the comments payload, so the return comment never reaches the document thread/event binding",
-   "patch": "ce_ac-fr0359-01.patch",
-   "test": "tests/integration/test_review_decision_contract.py::test_return_writes_thread_then_review_event; tests/e2e/test_run_workflow_ui.py::test_review_two_decisions_thread_and_continue",
-   "result": "red-window",
-   "kill_evidence": "required nodes are legal Red at WRITE (thread write is not delivered); the patch binds the review checkpoint seam and is executed at the delivered tree"
+   "ac": "AC-FR0298-02@v0.9",
+   "if_ref": "IF-ATTN-001",
+   "mutation": "the interface seam: the run loop's preflight does not check the pending operator attention, so the loop keeps spinning",
+   "patch": "n/a (the preflight's attention check is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_attention.py::test_loop_halts_on_unresolved_attention",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0359-02",
-   "if_ref": "IF-REVIEWDECISION-001, IF-AWAIT-001, IF-WEBUI-001",
-   "mutation": "the normal review gate is added to GATE_EXCEPTION_TYPES, so template reason/impact render on a normal gate",
-   "patch": "ce_ac-fr0359-02.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_normal_gate_terse_exception_keeps_reason_impact_and_inline_failure",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: a normal review gate must not stack template reason text (gate-reason count 1) -> reverted clean"
+   "ac": "AC-FR0329-02@v0.10",
+   "if_ref": "IF-ATTN-001",
+   "mutation": "the credential preflight at submit_intake(source=issue) swallows the missing token (no hint-only diagnostic naming the found non-canonical variable)",
+   "patch": "n/a (the credential preflight is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_attention.py::test_issue_fetch_failed_classification_preserved",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-FR0360-01",
-   "if_ref": "IF-STATICCACHE-001, IF-QUERY-001",
-   "mutation": "the no-cache middleware stops matching static text assets (no Cache-Control on the text responses)",
-   "patch": "ce_ac-fr0360-01.patch",
-   "test": "tests/integration/test_static_cache.py::test_text_assets_no_cache_and_304; tests/integration/test_static_cache.py::test_api_semantics_unchanged",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: Cache-Control is None instead of no-cache -> reverted clean"
+   "ac": "AC-NFR0143-02@v0.8",
+   "if_ref": "IF-HOSTENV-001",
+   "mutation": "the interface stub's body (the host process env allowlist) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/host_env.py)",
+   "test": "tests/integration/test_hotfix262_host_env.py::test_cross_language_toolchain_env_allowlist",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-NFR0159-01",
-   "if_ref": "IF-SERVERLIFE-001, IF-PROJECTCLI-001",
-   "mutation": "the background start is rejected as a non-contract failure instead of spawning the detached service",
-   "patch": "ce_ac-nfr0159-01.patch",
-   "test": "tests/integration/test_server_lifecycle.py::test_background_survives_shell_exit_and_stop_unreachable; tests/integration/test_server_lifecycle.py::test_windows_foreground_branch",
-   "result": "red-window",
-   "kill_evidence": "required nodes are legal Red at WRITE (background/windows lifecycle not delivered); the patch binds the serve entry seam and is executed at the delivered tree"
+   "ac": "AC-FR0315-01@v0.9",
+   "if_ref": "IF-HOSTENV-001",
+   "mutation": "the interface stub's body (the host process env allowlist) -- the deviation is the stub itself until the implementation lands",
+   "patch": "n/a (interface stub: tracks/executor/host_env.py)",
+   "test": "tests/integration/test_hotfix262_host_env.py::test_all_ten_sites_strip_operator_secrets",
+   "result": "authored-awaiting-producer"
   },
   {
-   "ac": "AC-NFR0160-01",
-   "if_ref": "IF-ROUNDS-001, IF-STATICCACHE-001",
-   "mutation": "the rounds list fetches at first paint instead of on first expansion (the lazy read contract is broken)",
-   "patch": "ce_ac-nfr0160-01.patch",
-   "test": "tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint",
-   "result": "killed",
-   "kill_evidence": "applied at the WRITE head -> AssertionError: the first paint must not fetch per-round data -> reverted clean"
+   "ac": "AC-FR0335-01@v0.11",
+   "if_ref": "IF-STAGE-001",
+   "mutation": "the interface seam: the release tail emits no explicit stage.exited/stage.entered events, so the legacy projection fallback has nothing to synthesize",
+   "patch": "n/a (the INV-9 exactly-once emission is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_stage_events.py::test_exactly_once_stage_events_under_retry_tail",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0335-01@v0.11",
+   "if_ref": "IF-STAGE-001",
+   "mutation": "the interface seam: the legacy run's timeline does not synthesize the release-tail transitions",
+   "patch": "n/a (the slim tightening is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_stage_events.py::test_legacy_run_timeline_synthesizes_transitions",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0333-01@v0.11",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the interface seam: the legacy run's timeline does not synthesize the release-tail transitions",
+   "patch": "n/a (the legacy projection fallback is not delivered yet)",
+   "test": "tests/e2e/test_hotfix262_release_ui.py::test_legacy_run_stage_window_nonempty",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0307-01@v0.9",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the interface seam: the Todos inbox item carries no version / stage / kind_label / action_ref fields",
+   "patch": "n/a (the unified inbox field set is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_ui_perf.py::test_todos_items_carry_context_and_action_ref",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0335-02@v0.11",
+   "if_ref": "IF-UIPERF-001, IF-STAGE-001",
+   "mutation": "the interface seam: the slim timeline response is unbounded (> 50 KB)",
+   "patch": "n/a (the slim tightening is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_ui_perf.py::test_slim_timeline_payload_bounded",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0307-01@v0.9",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the interface seam: the Todos card renders no readable version / title / stage / kind_label line",
+   "patch": "n/a (the unified inbox card renderer is not delivered yet)",
+   "test": "tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0340-01@v0.11",
+   "if_ref": "IF-UIPERF-001",
+   "mutation": "the interface seam: the Releases sidebar renders the backlog entry's ULID instead of a readable title",
+   "patch": "n/a (the backlog display_title renderer is not delivered yet)",
+   "test": "tests/e2e/test_hotfix262_release_ui.py::test_backlog_titles_readable",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0283-02@v0.8",
+   "if_ref": "IF-ATTN-001",
+   "mutation": "the interface seam: the M-REQ-APPROVAL -> ISSUES credential preflight does not fire, so the missing token is silently ignored",
+   "patch": "n/a (the credential preflight is not delivered yet)",
+   "test": "tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0298-02@v0.9",
+   "if_ref": "IF-ATTN-001",
+   "mutation": "the interface seam: the run loop does not stop at needs_attention (it keeps spinning on the unresolved attention)",
+   "patch": "n/a (the preflight's attention check is not delivered yet)",
+   "test": "tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers",
+   "result": "authored-awaiting-producer"
+  },
+  {
+   "ac": "AC-FR0274-02@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the release gate's completeness check omits the full_f key, so a chain without the FULL_F evidence authorizes the release",
+   "patch": "n/a (the authorization's full_f check is not delivered yet)",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale",
+   "result": "authored-awaiting-producer"
   }
  ]
 }

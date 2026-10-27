@@ -203,40 +203,58 @@ def test_preview_requires_full_key_set(tmp_path: Path):
 # AC-FR0273-02@v0.8 TRACKS-TRACE legacy single prism key preview readable
 def test_legacy_single_prism_key_preview_readable():
     """AC-FR0273-02: the pre-v0.12.1 preview blob (a single ``"prism"`` key)
-    stays READABLE -- the legacy read-back succeeds and does NOT report
-    ``operation_plan_changed``.
+    stays READABLE -- its read-back against the CURRENT (split-key) preview
+    succeeds and does NOT report ``operation_plan_changed``.
 
     Contract: interfaces §1b item 4 (INV-5: the historical single-key blob
     remains readable; the split keys are enforced only for a NEWLY assembled
     preview and an unpublished authorization; no DB migration).
+
+    The discriminating seam is the ASYMMETRY: the legacy blob is compared
+    against the recomputed CURRENT preview (which carries the five split
+    keys), and the comparison must still succeed. A plain equality over the
+    whole payload would report the key-set difference as an operation-plan
+    change -- which is exactly what the legacy read-back must never do.
     """
+    from tracks.executor.release_preview import preview_inputs_match
+
     legacy = _legacy_blob()
     assert list(legacy["evidence_digests"]) == ["prism"], (
         "the legacy fixture must carry exactly the single 'prism' evidence key"
     )
 
-    # The legacy blob's key set is a READABLE schema: the preview's own
-    # recorded keys are compared against a recomputed current preview by
-    # key-set schema, and the legacy shape must not be reported as an
-    # operation-plan change.
-    from tracks.executor.release_preview import preview_inputs_match
+    # The CURRENT preview of the same candidate: the five split keys.
+    current = dict(legacy)
+    current["evidence_digests"] = {
+        "full_f": "sha256:current-full-f",
+        "ci": "sha256:current-ci",
+        "prism.verify_final": "sha256:current-verify-final",
+        "prism.security": "sha256:current-security-review",
+        "security": "sha256:current-security",
+    }
 
-    same_legacy = dict(legacy)
-    same_legacy["blob_ref"] = "blobs/" + ("a" * 64)
-    assert preview_inputs_match(legacy, same_legacy) is True, (
-        "a legacy single-key preview compared against the same legacy content "
-        "must match (the legacy blob is readable)"
+    # The legacy blob is READABLE: comparing it against the current
+    # split-key preview must NOT report an operation-plan change.
+    assert preview_inputs_match(legacy, current) is True, (
+        "the pre-v0.12.1 single-'prism'-key blob must stay readable against "
+        "the current split-key preview (INV-5: no operation_plan_changed, no "
+        "DB migration)"
     )
 
-    # The five required keys are what a NEW preview must carry; the legacy
-    # blob legitimately does not.
-    required = _legacy_blob()
-    expectations = json.loads(
-        (_ASSETS / "legacy_preview_blob.json").read_text(encoding="utf-8")
-    )["expectations"]
-    assert list(expectations["required_keys_for_new_preview"]) == list(_REQUIRED_KEYS)
-    assert sorted(required["evidence_digests"]) == ["prism"], (
-        "the legacy blob carries only the pre-split 'prism' key"
+    # The split keys ARE enforced for a NEWLY assembled preview: a new
+    # preview compared against a current preview that LACKS one required key
+    # must not match. This is the same comparison, the other direction, so
+    # the legacy tolerance can never widen into a general tolerance.
+    incomplete = dict(current)
+    incomplete["evidence_digests"] = {
+        key: value
+        for key, value in current["evidence_digests"].items()
+        if key != "full_f"
+    }
+    new_preview = dict(current)
+    assert preview_inputs_match(new_preview, incomplete) is False, (
+        "the split keys must be enforced for a newly assembled preview: a "
+        "current preview missing the full_f key must not match"
     )
 
 

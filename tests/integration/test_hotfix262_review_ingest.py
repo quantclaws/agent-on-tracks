@@ -348,12 +348,26 @@ def test_malformed_or_blocking_security_blocks_release():
 
     # A pass+blocking security review blocks the release as well: the
     # downstream invariant is "verdict != pass OR has_blocking_findings".
-    # The release-decision validator is the outlet that refuses the action.
-    from tracks.executor.release_gate import validate_release_decision
-
+    #
+    # The chain below carries BOTH a verify_final and a security verdict, so
+    # the "no verify_final verdict -> failed" fallback cannot mask the
+    # blocking findings: the only thing that can turn this chain into
+    # "failed" is the findings themselves. The control chain (the same
+    # shape, no findings) must stay green -- the pair is what makes the
+    # assertion discriminating.
     blocking_security = [
         _Ev(
             1,
+            "prism.verdict",
+            {
+                "verdict": "pass",
+                "scope": "verify_final",
+                "candidate_sha": _CANDIDATE,
+                "findings": _blocker_findings(),
+            },
+        ),
+        _Ev(
+            2,
             "prism.verdict",
             {
                 "verdict": "pass",
@@ -363,7 +377,7 @@ def test_malformed_or_blocking_security_blocks_release():
             },
         ),
         _Ev(
-            2,
+            3,
             "security.assessed",
             {
                 "status": "passed",
@@ -374,24 +388,51 @@ def test_malformed_or_blocking_security_blocks_release():
     ]
     security_status = _prism_final_status(blocking_security)
     assert security_status == "failed", (
-        "a security-scope verdict carrying blocking findings must be judged "
-        f"failed by the release status (got {security_status!r})"
+        "a pass verdict carrying blocking findings must be judged failed by "
+        f"the release status (got {security_status!r})"
     )
-    allowed, reason = validate_release_decision(
-        "release",
-        {"preview_digest": "sha256:abc"},
-        {
-            "preview_stale": False,
-            "gate_failed": True,
-            "security_status": "failed",
-            "prism_status": security_status,
-        },
-    )
-    assert allowed is False, (
+    assert _release_gate_blocked(blocking_security) is True, (
         "a security assessment whose review carries blocking findings must "
         "block the release action"
     )
-    assert reason
+
+    # The control: the same chain WITHOUT blocking findings stays green --
+    # the refusal above is caused by the findings, not by the chain shape.
+    clean_security = [
+        _Ev(
+            1,
+            "prism.verdict",
+            {
+                "verdict": "pass",
+                "scope": "verify_final",
+                "candidate_sha": _CANDIDATE,
+            },
+        ),
+        _Ev(
+            2,
+            "prism.verdict",
+            {
+                "verdict": "pass",
+                "scope": "security",
+                "candidate_sha": _CANDIDATE,
+            },
+        ),
+        _Ev(
+            3,
+            "security.assessed",
+            {
+                "status": "passed",
+                "candidate_sha": _CANDIDATE,
+                "review_command_id": "cmd-7342-sec",
+            },
+        ),
+    ]
+    assert _prism_final_status(clean_security) == "pass", (
+        "the same chain without blocking findings must stay passing"
+    )
+    assert _release_gate_blocked(clean_security) is False, (
+        "the same chain without blocking findings must not block the release"
+    )
 
 
 # AC-FR0040-03@v0.4 TRACKS-TRACE M-TEST ingest pass with blocker rejected
