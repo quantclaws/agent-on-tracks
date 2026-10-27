@@ -299,24 +299,49 @@ def test_unified_todos_inbox_coverage(tmp_path: Path):
 
 
 def _seed_evaluated_intake(home: Path, intake_id: str) -> None:
-    """A pending ``evaluated`` intake row in the service plane."""
+    """A pending ``evaluated`` intake row in the service plane.
+
+    The row is written with the PRODUCTION schema (tracks/supervisor/db.py
+    ``intakes``): the table is created by the serve process itself, so the
+    fixture only inserts -- it never declares its own table shape.
+    """
     conn = sqlite3.connect(str(home / "service.db"))
     try:
+        columns = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(intakes)").fetchall()
+        ]
+        if not columns:
+            conn.execute(
+                "CREATE TABLE intakes ("
+                " intake_id TEXT PRIMARY KEY, project_id TEXT, source TEXT, content TEXT,"
+                " issue INTEGER NULL, origin_entry TEXT NULL, status TEXT,"
+                " report_json TEXT NULL, decision TEXT NULL, decided_at TEXT NULL,"
+                " created_at TEXT, updated_at TEXT)"
+            )
+            columns = [
+                row[1]
+                for row in conn.execute("PRAGMA table_info(intakes)").fetchall()
+            ]
+        values = {
+            "intake_id": intake_id,
+            "project_id": "proj-hf262-todos",
+            "source": "issue",
+            "content": "fixture evaluated intake",
+            "issue": 4242,
+            "origin_entry": None,
+            "status": "evaluated",
+            "report_json": json.dumps({"title": "fixture evaluated intake"}),
+            "decision": None,
+            "decided_at": None,
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS intakes ("
-            "intake_id TEXT, source TEXT, status TEXT, version TEXT, "
-            "report_json TEXT, updated_at TEXT)"
-        )
-        conn.execute(
-            "INSERT INTO intakes VALUES (?,?,?,?,?,?)",
-            (
-                intake_id,
-                "issue",
-                "evaluated",
-                "v0.8",
-                json.dumps({"title": "fixture evaluated intake"}),
-                _TS,
+            "INSERT INTO intakes ({}) VALUES ({})".format(
+                ", ".join(columns), ", ".join("?" for _ in columns)
             ),
+            [values.get(column) for column in columns],
         )
         conn.commit()
     finally:

@@ -335,7 +335,9 @@ def test_malformed_or_blocking_security_blocks_release(tmp_path: Path):
     ``trac release --action release`` CLI's refusal.
     """
     # A failed security assessment blocks the release.
-    repo, store = _new_host(tmp_path / "failed")
+    failed_root = tmp_path / "failed"
+    failed_root.mkdir(parents=True, exist_ok=True)
+    repo, store = _new_host(failed_root)
     home = paths.tracks_home(repo)
     run_id = "RUN-HF262-BLOCKREV-4"
     try:
