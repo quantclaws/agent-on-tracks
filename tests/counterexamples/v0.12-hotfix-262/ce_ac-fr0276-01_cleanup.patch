@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -438,7 +438,7 @@
+     a hardcoded zero.
+     """
+     namespace = "refs/trac/tmp"
+-    listed = _list_refs(repo, namespace)
++    listed = [ref for ref in _list_refs(repo, namespace) if "refs/trac/rgr/" not in ref]
+     removed: list[str] = []
+     for ref in listed:
+         proc = _git_refs(repo, "update-ref", "-d", ref)

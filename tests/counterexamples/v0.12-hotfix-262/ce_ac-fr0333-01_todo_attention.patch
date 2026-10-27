@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections_core.py b/tracks/server/projections_core.py
+--- a/tracks/server/projections_core.py
++++ b/tracks/server/projections_core.py
+@@ -470,6 +470,8 @@
+ 
+ 
+ def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
++    if state.awaiting == "attention":
++        return None
+     if state.awaiting == "approval":
+         return {"run_id": run_id, "kind": "stage_approval", "object": state.stage or "approval",
+             "revision": _material_revision(project) or state.preview_digest,

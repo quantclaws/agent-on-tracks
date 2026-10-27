@@ -1,0 +1,21 @@
+diff --git a/tracks/executor/release_tail.py b/tracks/executor/release_tail.py
+--- a/tracks/executor/release_tail.py
++++ b/tracks/executor/release_tail.py
+@@ -247,6 +247,17 @@
+             self._issue_backend = select_issue_backend(self.repo, self.version)
+         except GithubIssuesError as exc:
+             if exc.classification == "missing_token":
++                self._emit(
++                    "attention.required",
++                    {
++                        "area": "issue_creation",
++                        "reason": "missing_token",
++                        "detail": str(exc),
++                        "next": _ISSUE_TOKEN_NEXT,
++                    },
++                    command_id=cmd.command_id,
++                    task_id=task_id,
++                )
+                 self._emit(
+                     "attention.required",
+                     {
