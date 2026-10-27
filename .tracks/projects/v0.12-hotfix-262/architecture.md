@@ -175,8 +175,8 @@ UI/perf
   2. 对每个**被引用版本** `vX.Y` 读取 `projects_dir/vX.Y/acceptance.md`，取 `_known_ac_ids` 并集作为 `known`（取代当前仅 baseline 的 `resolve_inherited_baseline_docs()` 单点读取）；
   3. §8 行 AC ∈ `known` 才算已知；不在任何被引用版本 acceptance 中（引用不实）或语法不合 IF-HOTFIX-004 才判 unknown/malformed；
   4. `required = known ∩ refs`，逐条执行 layer/IF 校验；`_hotfix_coverage_ref_issues`（行必须带精确版本后缀）不变；`allow_unit_only` 语义不变。
-- **失败语义**：修复前——全部 26 条锚定行被判 `unknown AC`，EXIT 恒失败；修复后——零 unknown，行级 layer/IF 校验照常 fail-closed。
-- **责任方**：`tracks/executor/test_tasks.py` 属 runtime 基础设施，不是本设计的 scaffold（scaffold 只含三份接口桩）；本设计只声明合同与可执行 delta，由 Runtime 按 ops-side 过渡修复流程落地（先例：commit 675cb1b 的 ops-side 过渡补丁曾解除同类 M-DESIGN EXIT 阻塞），随后由 Devon 在实现期补 unit 回归（`has_blocking` 无关；见 test-plan §11 邻近条目）。
+- **失败语义**：引用不实（AC 不在其所指版本的 acceptance 中）、语法不合 IF-HOTFIX-004、或版本目录缺失——逐行 fail-closed；行级 layer/IF 校验照常。
+- **落地状态**：`tracks/executor/test_tasks.py` 与 `tracks/executor/hotfix_test_sources.py` 的 per-version 解析已由 OOB 修复 commit `90e4879`（"resolve test tasks by anchor version"，含 `tests/unit/test_hotfix_cross_version_tasks.py`）落地，本 delta 继承该合同而非另行设计；该模块属 runtime 基础设施，不是本设计的 scaffold（scaffold 只含三份接口桩）。
 
 ## 5. 有意识简化与风险
 
@@ -193,4 +193,4 @@ UI/perf
 - **ingest 拒绝的兼容性**：历史 pass+blocking verdict 在回放中会被重新判拒；只影响消费端判定，不改写事件。
 - **阶段事件重复风险**：`retry_tail` 重入下由 visit 守卫保证 exactly-once；kernel reducer 语义不变（entered 在 publish.planned 之前，`_on_stage_entered` reset 一致）。
 - **legacy fallback 与显式事件并存**：投影合成必须先检查显式事件存在性，显式事件优先，合成只补缺；重复合成的风险由合成规则以 `current` 状态为前置控制。
-- **多版本锚定的 M-DESIGN EXIT 校验（已定级为阻塞项，§4.3）**：本 delta §8 的 26 条锚定 AC 分布于 v0.4～v0.11 六个版本的 acceptance.md；per-version 存在性解析是 IF-HOTFIX-004 既定语义（`validate_anchor_refs` / `check_hotfix_plan_closure` 均已实现）。当前 `check_test_tasks_contract_file` 只读 baseline acceptance，会把全部锚定行判为 `unknown AC`，使合法 delta plan 在 M-DESIGN EXIT 恒失败；合同修复内容与责任方见 §4.3。在该修复落地前，EXIT 的 test_tasks 结果不构成对 delta 内容的否定；template/trace/schema 三面已逐条通过（architecture/interfaces `trac validate --file` = valid）。
+- **多版本锚定（已闭环，§4.3）**：本 delta §8 的 26 条锚定 AC 分布于 v0.4～v0.11 六个版本的 acceptance.md。per-version 存在性解析是 IF-HOTFIX-004 既定语义；EXIT 期 `check_test_tasks_contract_file` 曾只读 baseline acceptance 而把全部锚定行判为 `unknown AC`，该缺口已由 OOB commit `90e4879` 按 §4.3 的合同修复（`_plan_acceptance` + `resolve_ac_sources`，含 unit 回归），本 delta 继承。残余风险仅在新增手写锚定引用语法错误——由 `_hotfix_coverage_ref_issues` 与引用不实判定 fail-closed 兜住。

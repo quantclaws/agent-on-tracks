@@ -207,7 +207,7 @@ Test assertions **may only** land on interfaces.md §4 的出口：事件流判�
 
 1. **真相来源**：26 条锚定 AC 分别登记于 `v0.4/v0.5/v0.8/v0.9/v0.10/v0.11` 的 `acceptance.md`；delta §8 行的每条 `AC-…@vX.Y` 引用以**其所指版本**的 `acceptance.md` 为存在性真相（IF-HOTFIX-004，与 `tracks/executor/hotfix.validate_anchor_refs`、`tracks/checks/trace.check_hotfix_plan_closure` 的既有 per-version 解析同语义）。baseline（v0.12）acceptance **不是**锚定集合的存在性真相。
 2. **覆盖要求**：`test_tasks` 合同对本 delta plan 的 required 集合 = §8 行内出现的全部 `AC-…@vX.Y` 引用；每行必须有 `layer ∈ {integration,e2e}` 与已注册 `IF-` 归属（本表全部满足）。
-3. **校验器行为要求（machine contract）**：hotfix delta plan 的 `unknown-AC` 判定必须先把每行的 `@vX.Y` 解析到 `projects_dir/<vX.Y>/acceptance.md`，再判定存在性；只读 `resolve_inherited_baseline_docs()` 的 baseline acceptance 会把全部锚定行误判为 unknown，属 fail-closed 方向错误（拒绝合法输入）。合法输入的判定序列必须是：extract refs → per-version `_known_ac_ids` 并集 → 行内 AC ∈ 并集 → 继续 layer/IF 校验。
+3. **校验器行为（machine contract，已实现）**：hotfix delta plan 的 `unknown-AC` 判定先把每行的 `@vX.Y` 解析到 `projects_dir/<vX.Y>/acceptance.md` 再判定存在性（`hotfix_test_sources.resolve_ac_sources`；`test_tasks._plan_acceptance` 供 EXIT 校验与 `parse_test_tasks` 共用，OOB commit `90e4879`）。只读 baseline acceptance 会把全部锚定行误判为 unknown，属 fail-closed 方向错误（拒绝合法输入）。判定序列：extract refs → per-version 存在性 → 行内 AC ∈ 并集 → 继续 layer/IF 校验。
 4. **失败语义**：仅当引用在**其所指版本**的 acceptance 中不存在（引用不实）或语法不合 IF-HOTFIX-004 时，该行才判无效；不得因引用版本 ≠ 目标版本而拒绝。
 
 上表每行的 AC id 逐字使用跨版本引用（IF-HOTFIX-004 语法）；`ui` 标记的 e2e 由 ui-e2e required check 承载；e2e 项为终态锚点。
