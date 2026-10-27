@@ -14,7 +14,7 @@ sha:
 
 ## 0. 延续性（什么不变）
 
-- IF-001～IF-012 全部合同逐字继承；既有 IF 标识不可重定义或复用；本文只追加 IF-HOTFIX262-* 新标识（§5）。
+- IF-001～IF-012 全部合同逐字继承；既有 IF 标识不可重定义或复用；本文只追加 8 个新标识 IF-FULLF-001 / IF-RELEV-001 / IF-BLOCKREV-001 / IF-ATTN-001 / IF-HOSTENV-001 / IF-STAGE-001 / IF-UIPERF-001 / IF-CLEANUP-001（§5）。
 - tracks.db EVENT_TYPES 封闭集不变（不新增事件类型）；CLI 子命令集合、参数面、退出码不变；HTTP 端点集合与响应 schema 不变（本 delta 修订投影行为/性能与 payload 内字段来源，不增删端点与字段形状）。
 - `.tracks/projects/project.toml` 测试执行合同逐字继承（零 bytes 变更）。
 - 既有事件的既有 payload 键语义不变；本 delta 只在既有事件上追加/修正**消费端判定**与新约束（如 `full.executed` 保留 `serves_as_full_f` 与 `full_f_eligible` 双键——两键在 v0.12.0 已存在，本 delta 不删键）。
@@ -34,7 +34,7 @@ sha:
 
 ## 1. 跨模块合同
 
-### 1a. FULL_F 权威谓词（IF-HOTFIX262-FULLF-001）
+### 1a. FULL_F 权威谓词（IF-FULLF-001）
 
 **modules**：`tracks/executor/full_f_authority.py`、`tracks/executor/m_impl_full_chain.py`、`tracks/executor/verify_gates.py`、`tracks/executor/release_preview.py`、`tracks/executor/release_authorization.py`、`tracks/cli/validate_cmd.py`。
 
@@ -43,7 +43,7 @@ sha:
 3. closure harvest 的 `candidate_digest` 只从 `candidate.frozen` / `milestone.trace_closed` 派生；`_merge_stream_event` 不得因任何 truthy `serves_as_full_f` 覆写既有绑定。
 4. 可观察：重放 v0.12.0 事件切片时，seq 7362（`44c14de`，FULL_F，eligible）被信用；seq 5896（`ee781bf`，ineligible，外 commit）被拒绝；每条 AC 的 `full_pass_evidence` 绑定到 7362。
 
-### 1b. 发布证据键完备性与 split prism 键（IF-HOTFIX262-RELEV-001）
+### 1b. 发布证据键完备性与 split prism 键（IF-RELEV-001）
 
 **modules**：`tracks/executor/release_preview.py`、`tracks/executor/release_authorization.py`、`tracks/cli/release_cmd.py`。
 
@@ -53,7 +53,7 @@ sha:
 4. legacy read-back（INV-5）：v0.12.1 之前持久化的 `release.previewed` blob 携带单一 `"prism"` 键仍可读；`preview_inputs_match` 按 blob 记录的键集 schema 比对；split 键只对新装配的 preview 与未发布的 authorization 强制；无 DB 迁移。
 5. 可观察：缺任一键 → preview invalid / release 命令 `error: release rejected — gate failed or preview stale`（exit≠0，不落 `release.decided`，状态保持 AWAITING_RELEASE）；legacy blob 读回不产生 `operation_plan_changed`。
 
-### 1c. 阻塞评审 fail-closed（IF-HOTFIX262-REVIEW-001）
+### 1c. 阻塞评审 fail-closed（IF-BLOCKREV-001）
 
 **modules**：`tracks/executor/review_findings.py`、`tracks/executor/publish_face.py`、`tracks/executor/verdict_face.py`、`tracks/executor/result_payload.py`、`tracks/executor/release_preview.py`、`tracks/executor/release_authorization.py`、`tracks/cli/release_cmd.py`、`tracks/executor/milestone_chain.py`。
 
@@ -62,7 +62,7 @@ sha:
 3. 下游硬不变量：`publish_face._assess_security_with_review`、`release_preview._evidence_is_success`、`release_authorization._prism_status/_security_status`、`release_cmd._release_gate_blocked/_prism_final_status`、`milestone_chain._do_close_milestone` 一律以 `verdict != "pass" ∨ has_blocking_findings(findings)` 判 failed。
 4. 可观察：注入 pass+blocker 后事件流无 passing `prism.verdict`；`trac status` 报告对应 failed/blocked；重放 seq 7342（SEC-001）后 security 门失败。
 
-### 1d. attention 停顿、去重与凭据 preflight（IF-HOTFIX262-ATTN-001）
+### 1d. attention 停顿、去重与凭据 preflight（IF-ATTN-001）
 
 **modules**：`tracks/executor/run_loop.py`、`tracks/executor/release_tail.py`、`tracks/supervisor/service_intake.py`、`tracks/supervisor/intake.py`。
 
@@ -72,7 +72,7 @@ sha:
 4. 凭据 preflight 点：M-REQ-APPROVAL→ISSUES 入口、`submit_intake(source="issue")`、`create_run(hotfix_*)`；missing-token 不再被吞为 `issue_not_found`（报告 `issue_fetch_failed` 携分类指引）。
 5. 可观察：缺 token 时恰好 ≤1 条 `attention.required`，status 报 `needs_attention: issue_creation missing_credentials ... reason=missing_token next="export GITHUB_TOKEN=…; trac run --resume"`；无 1,808 式紧循环。
 
-### 1e. 进程边界 env allowlist（IF-HOTFIX262-HOSTENV-001）
+### 1e. 进程边界 env allowlist（IF-HOSTENV-001）
 
 **modules**：`tracks/executor/host_env.py`、10 个既有 subprocess 站点（`quality_gate.execute_gate_command`/`_run_check`、`test_execute._run_layer_command`、`test_collect._run_contract_sections`、`helpers.run_collect_command`、`result_audit._collect_test_modules`、`host_contract._run_declared`、`security._run_command`、`closure_evidence._execute_selected_nodes`、`m_impl_dispatch._run_host_commit_hook`）。
 
@@ -82,7 +82,7 @@ sha:
 4. escape hatch：`project.toml` 的 `[host-contract].env_allowlist = [...]` 声明宿主非密钥变量。
 5. 可观察：跨语言探针（Python/uv、Node、cargo、go、java）经每个站点 spawn 的子进程只见到 allowlist 变量；工具链功能正常。
 
-### 1f. 阶段事件与 legacy 时间线回退（IF-HOTFIX262-STAGE-001）
+### 1f. 阶段事件与 legacy 时间线回退（IF-STAGE-001）
 
 **modules**：`tracks/executor/publish_runtime.py`、`tracks/executor/milestone_chain.py`、`tracks/kernel/release.py`、`tracks/server/projections_timeline.py`、`tracks/server/static/app/timeline.js`。
 
@@ -91,7 +91,7 @@ sha:
 3. legacy 回退（投影 + UI，合成不持久化）：`publish.planned` ∧ `current=="M-RELEASE"` ⇒ 合成关闭 M-RELEASE / 开启 M-PUBLISH；`milestone.trace_closed` ∧ `current=="M-PUBLISH"` ⇒ 合成关闭 M-PUBLISH / 开启 M-MILESTONE；`run.completed(terminal_state="released")` ∧ `current=="M-MILESTONE"` ⇒ 合成关闭 M-MILESTONE 为 `"done"`。显式事件优先于合成。
 4. 可观察：新 run 事件流含恰一次的转移序列；legacy run 的时间线/ac-chain 渲染同样的 visits 且 M-MILESTONE closed=done、`stageWorkflowWindow` 非空。
 
-### 1g. UI 性能与可读性（IF-HOTFIX262-UI-001）
+### 1g. UI 性能与可读性（IF-UIPERF-001）
 
 **modules**：`tracks/server/projections_core.py`、`tracks/server/projections_run.py`、`tracks/server/projections_timeline.py`、`tracks/server/static/styles.css`、`tracks/server/static/app/timeline.js`、`releases.js`、`views.js`。
 
@@ -101,7 +101,7 @@ sha:
 4. backlog 标题：`_backlog_group(conn, repo_path)` 以 `intake_id` join `intakes.report_json.title`；`service_intake` 此后在 `backlog.recorded` payload 存 `title`；fallback = 首行非空内容（strip `#`/`-`/`*`/`>`）截断；最终 fallback = 本地化 `待办条目 (<version/date>)`；**永不渲染 ULID**。`releases.js` 渲染 `display_title`。
 5. Todos inbox：`project_todos()` 统一覆盖 (a) `awaiting ∈ {triage, review, review_pending_threads, approval, escalation, rollback, hotfix_triage}` 且 `substate == "AWAITING_RELEASE"`；(b) 未决 `attention.required` blocks；(c) pending `evaluated` intakes。列表项 `{version, title, stage, kind_label, summary/context, updated_ts, action_ref}`；`views.js` 渲染可点击可读卡片（`<version> · <title> — <stage> · <kind_label>`）导航到 run timeline / decision modal；保留 `data-testid="todo-${todo.run_id}"`。
 
-### 1h. 临时引用清理（IF-HOTFIX262-CLEANUP-001）
+### 1h. 临时引用清理（IF-CLEANUP-001）
 
 **modules**：`tracks/executor/milestone.py`。
 
@@ -163,49 +163,49 @@ sha:
 
 ## 5. IF Registry
 
-### IF-HOTFIX262-FULLF-001 FULL_F 权威与 candidate 绑定合同
+### IF-FULLF-001 FULL_F 权威与 candidate 绑定合同
 
 - **合同**：§1a——`is_authoritative_full_f` 唯一仲裁；双键保留；candidate 只从 frozen/trace_closed 派生；replay 校正 7362/5896。
 - **modules**：tracks/executor/full_f_authority.py, tracks/executor/m_impl_full_chain.py, tracks/executor/verify_gates.py, tracks/executor/release_preview.py, tracks/executor/release_authorization.py, tracks/cli/validate_cmd.py。
 - **关联**：AC-FR0267-01@v0.8、AC-FR0268-01/02/03@v0.8、AC-FR0276-01@v0.8。
 
-### IF-HOTFIX262-RELEV-001 发布证据键完备性合同
+### IF-RELEV-001 发布证据键完备性合同
 
 - **合同**：§1b——五键必需；`_evidence_key` scope 映射；`_gate_status.full_f_ok`；legacy 单键 read-back。
 - **modules**：tracks/executor/release_preview.py, tracks/executor/release_authorization.py, tracks/cli/release_cmd.py。
 - **关联**：AC-FR0270-02@v0.8、AC-FR0273-01/02@v0.8、AC-FR0274-02@v0.8。
 
-### IF-HOTFIX262-REVIEW-001 阻塞评审 fail-closed 合同
+### IF-BLOCKREV-001 阻塞评审 fail-closed 合同
 
 - **合同**：§1c——pass+blocking 协议违规；四 ingest 点拒绝；下游硬不变量。
 - **modules**：tracks/executor/review_findings.py, tracks/executor/publish_face.py, tracks/executor/verdict_face.py, tracks/executor/result_payload.py, tracks/executor/release_preview.py, tracks/executor/release_authorization.py, tracks/cli/release_cmd.py, tracks/executor/milestone_chain.py。
 - **关联**：AC-FR0271-01/02@v0.8、AC-FR0272-01/02@v0.8、AC-FR0040-03@v0.4、AC-FR0140-02@v0.5。
 
-### IF-HOTFIX262-ATTN-001 attention 停顿与凭据合同
+### IF-ATTN-001 attention 停顿与凭据合同
 
 - **合同**：§1d——GITHUB_TOKEN canonical；hint-only；loop 停顿 ≤1 次；去重；issue_fetch_failed 分类。
 - **modules**：tracks/executor/run_loop.py, tracks/executor/release_tail.py, tracks/supervisor/service_intake.py, tracks/supervisor/intake.py。
 - **关联**：AC-FR0283-02@v0.8、AC-FR0298-02@v0.9、AC-FR0329-02@v0.10。
 
-### IF-HOTFIX262-HOSTENV-001 进程边界 env allowlist 合同
+### IF-HOSTENV-001 进程边界 env allowlist 合同
 
 - **合同**：§1e——唯一 allowlist；denylist 废止；strip 集封闭；escape hatch。
 - **modules**：tracks/executor/host_env.py + 10 个 subprocess 站点。
 - **关联**：AC-NFR0143-02@v0.8、AC-FR0315-01@v0.9。
 
-### IF-HOTFIX262-STAGE-001 阶段事件与 legacy 回退合同
+### IF-STAGE-001 阶段事件与 legacy 回退合同
 
 - **合同**：§1f——三点 exactly-once 发射；kernel reducer 权威；投影/UI 合成回退显式优先。
 - **modules**：tracks/executor/publish_runtime.py, tracks/executor/milestone_chain.py, tracks/kernel/release.py, tracks/server/projections_timeline.py, tracks/server/static/app/timeline.js。
 - **关联**：AC-FR0276-01@v0.8、AC-FR0335-01/02@v0.11、AC-FR0333-01@v0.11。
 
-### IF-HOTFIX262-UI-001 UI 性能与可读性合同
+### IF-UIPERF-001 UI 性能与可读性合同
 
 - **合同**：§1g——ac-chain 短路；slim 收紧；选中环；backlog 标题；统一 Todos inbox。
 - **modules**：tracks/server/projections_core.py, tracks/server/projections_run.py, tracks/server/projections_timeline.py, tracks/server/static/styles.css, tracks/server/static/app/timeline.js, tracks/server/static/app/releases.js, tracks/server/static/app/views.js。
 - **关联**：AC-FR0335-01/02@v0.11、AC-NFR0150-02@v0.9、AC-FR0333-01@v0.11、AC-FR0340-01@v0.11、AC-FR0307-01@v0.9。
 
-### IF-HOTFIX262-CLEANUP-001 临时引用清理合同
+### IF-CLEANUP-001 临时引用清理合同
 
 - **合同**：§1h——`refs/trac/rgr/{run_id}/*`、临时 worktree、staging 清理；`remaining == 0` 断言。
 - **modules**：tracks/executor/milestone.py。

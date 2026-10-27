@@ -139,9 +139,9 @@ tests/
 ## 5. Acceptance Criteria
 
 1. Unit test coverage：继承 registry 门禁（`--fail-under=89`）；新模块（full_f_authority/review_findings/host_env）由 Devon unit 义务覆盖。
-2. interfaces.md 每个 `modules` 2+ 的新合同（IF-HOTFIX262-FULLF/RELEV/REVIEW/ATTN/HOSTENV/STAGE/UI/CLEANUP 全部）至少一条 integration happy + 关键 error/edge。
+2. interfaces.md 每个 `modules` 2+ 的新合同（IF-FULLF-001 / IF-RELEV-001 / IF-BLOCKREV-001 / IF-ATTN-001 / IF-HOSTENV-001 / IF-STAGE-001 / IF-UIPERF-001 / IF-CLEANUP-001 全部）至少一条 integration happy + 关键 error/edge。
 3. e2e happy path：缺 token attention 停顿旅程（非 ui）与 UI 旅程（legacy 时间线/选中环/backlog/todos，`ui` marker）全绿。
-4. §8 的 26 条锚定 AC 全部有 integration/e2e layer 与已注册 IF-HOTFIX262-* 归属。
+4. §8 的 26 条锚定 AC 全部有 integration/e2e layer 与已注册 IF- 归属（上列 8 个本 delta 标识）。
 5. §6 外部依赖分层：L1/L2 默认 CI 全绿；L3（真实 POSIX detached 子进程/跨语言探针在本机 OS）在 CI 本地面默认跑；GitHub live 通道继承且不新增 AC 重叠。
 6. 性能门槛可观察：ac-chain 短路 <5ms、slim payload <50KB / p95 <500ms（在 CI 固定负载夹具下断言）。
 
@@ -203,38 +203,43 @@ Test assertions **may only** land on interfaces.md §4 的出口：事件流判�
 
 ## 8. AC Coverage
 
-锚点归属（task graph schema v2，两类纪律继承 IF-GREENGUARD-001）：§8 行的 integration 节点中除 §8.1 守卫外均为合法 Red 验收锚点；e2e 项为终态锚点；`ui` 标记的 e2e 由 ui-e2e required check 承载。本表 AC id 逐字使用跨版本引用（IF-HOTFIX-004 语法）。
+锚定集合解析合同（本 hotfix 的显式设计决定，M-DESIGN EXIT 判据）：
 
-锚定集合解析合同（本 hotfix 的显式设计决定）：26 条锚定 AC 分别登记于 v0.4/v0.5/v0.8/v0.9/v0.10/v0.11 的 acceptance.md；delta §8 行的每条 `AC-…@vX.Y` 引用以**其所指版本**的 acceptance.md 为存在性真相（IF-HOTFIX-004 / `validate_anchor_refs` 语义），不以 v0.12 baseline acceptance 为唯一集合。M-DESIGN EXIT 的 test_tasks 合同校验对 hotfix delta plan 的 unknown-AC 判定必须按同一 per-version 解析执行；当前 runtime 校验器若只读 baseline acceptance，则该过严判定属于本 hotfix 要修复的消费端合同缺口（与 anchor_invalid / 引用不实同一族），其 M-DESIGN EXIT 门禁语义由 Runtime 按本声明裁定，不构成对 delta 内容本身的否定。
+1. **真相来源**：26 条锚定 AC 分别登记于 `v0.4/v0.5/v0.8/v0.9/v0.10/v0.11` 的 `acceptance.md`；delta §8 行的每条 `AC-…@vX.Y` 引用以**其所指版本**的 `acceptance.md` 为存在性真相（IF-HOTFIX-004，与 `tracks/executor/hotfix.validate_anchor_refs`、`tracks/checks/trace.check_hotfix_plan_closure` 的既有 per-version 解析同语义）。baseline（v0.12）acceptance **不是**锚定集合的存在性真相。
+2. **覆盖要求**：`test_tasks` 合同对本 delta plan 的 required 集合 = §8 行内出现的全部 `AC-…@vX.Y` 引用；每行必须有 `layer ∈ {integration,e2e}` 与已注册 `IF-` 归属（本表全部满足）。
+3. **校验器行为要求（machine contract）**：hotfix delta plan 的 `unknown-AC` 判定必须先把每行的 `@vX.Y` 解析到 `projects_dir/<vX.Y>/acceptance.md`，再判定存在性；只读 `resolve_inherited_baseline_docs()` 的 baseline acceptance 会把全部锚定行误判为 unknown，属 fail-closed 方向错误（拒绝合法输入）。合法输入的判定序列必须是：extract refs → per-version `_known_ac_ids` 并集 → 行内 AC ∈ 并集 → 继续 layer/IF 校验。
+4. **失败语义**：仅当引用在**其所指版本**的 acceptance 中不存在（引用不实）或语法不合 IF-HOTFIX-004 时，该行才判无效；不得因引用版本 ≠ 目标版本而拒绝。
+
+上表每行的 AC id 逐字使用跨版本引用（IF-HOTFIX-004 语法）；`ui` 标记的 e2e 由 ui-e2e required check 承载；e2e 项为终态锚点。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0267-01@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_candidate_binding_from_frozen_not_manifest | IF-HOTFIX262-FULLF-001 |
-| AC-FR0268-01@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_full_f_reuse_authoritative_matrix | IF-HOTFIX262-FULLF-001 |
-| AC-FR0268-02@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_drift_or_stale_forces_full_rerun | IF-HOTFIX262-FULLF-001 |
-| AC-FR0268-03@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_stale_full_f_not_reused | IF-HOTFIX262-FULLF-001 |
-| AC-NFR0143-02@v0.8 | integration | tests/integration/test_hotfix262_host_env.py::test_cross_language_toolchain_env_allowlist | IF-HOTFIX262-HOSTENV-001 |
-| AC-FR0270-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_missing_required_keys_block_release | IF-HOTFIX262-RELEV-001 |
-| AC-FR0273-01@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_preview_requires_full_key_set | IF-HOTFIX262-RELEV-001 |
-| AC-FR0273-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_legacy_single_prism_key_preview_readable | IF-HOTFIX262-RELEV-001 |
-| AC-FR0271-01@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_verify_final_pass_with_blocker_rejected | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0271-02@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_downstream_gates_treat_blocking_as_failed | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0272-01@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_security_pass_with_blocker_rejected_and_replay_7342 | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0272-02@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_malformed_or_blocking_security_blocks_release | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0274-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale | IF-HOTFIX262-RELEV-001 |
-| AC-FR0040-03@v0.4 | integration | tests/integration/test_hotfix262_review_ingest.py::test_m_test_ingest_pass_with_blocker_rejected | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0140-02@v0.5 | integration | tests/integration/test_hotfix262_review_ingest.py::test_m_impl_ingest_pass_with_blocker_rejected | IF-HOTFIX262-REVIEW-001 |
-| AC-FR0283-02@v0.8 | integration + e2e | tests/integration/test_hotfix262_attention.py::test_missing_token_single_attention_and_hint + tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers | IF-HOTFIX262-ATTN-001 |
-| AC-FR0298-02@v0.9 | integration + e2e | tests/integration/test_hotfix262_attention.py::test_loop_halts_on_unresolved_attention + tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers | IF-HOTFIX262-ATTN-001 |
-| AC-FR0329-02@v0.10 | integration | tests/integration/test_hotfix262_attention.py::test_issue_fetch_failed_classification_preserved | IF-HOTFIX262-ATTN-001 |
-| AC-FR0315-01@v0.9 | integration | tests/integration/test_hotfix262_host_env.py::test_all_ten_sites_strip_operator_secrets | IF-HOTFIX262-HOSTENV-001 |
-| AC-FR0276-01@v0.8 | integration | tests/integration/test_hotfix262_stage_events.py::test_exactly_once_stage_events_under_retry_tail + tests/integration/test_hotfix262_stage_events.py::test_clean_temp_refs_remaining_zero | IF-HOTFIX262-STAGE-001, IF-HOTFIX262-CLEANUP-001 |
-| AC-FR0335-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_stage_events.py::test_legacy_run_timeline_synthesizes_transitions + tests/e2e/test_hotfix262_release_ui.py::test_legacy_run_stage_window_nonempty | IF-HOTFIX262-STAGE-001 |
-| AC-FR0335-02@v0.11 | integration | tests/integration/test_hotfix262_ui_perf.py::test_slim_timeline_payload_bounded | IF-HOTFIX262-UI-001, IF-HOTFIX262-STAGE-001 |
-| AC-NFR0150-02@v0.9 | integration | tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry | IF-HOTFIX262-UI-001 |
-| AC-FR0333-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_unified_todos_inbox_coverage + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-HOTFIX262-UI-001 |
-| AC-FR0340-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_backlog_title_never_ulid + tests/e2e/test_hotfix262_release_ui.py::test_backlog_titles_readable | IF-HOTFIX262-UI-001 |
-| AC-FR0307-01@v0.9 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_todos_items_carry_context_and_action_ref + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-HOTFIX262-UI-001 |
+| AC-FR0267-01@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_candidate_binding_from_frozen_not_manifest | IF-FULLF-001 |
+| AC-FR0268-01@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_full_f_reuse_authoritative_matrix | IF-FULLF-001 |
+| AC-FR0268-02@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_drift_or_stale_forces_full_rerun | IF-FULLF-001 |
+| AC-FR0268-03@v0.8 | integration | tests/integration/test_hotfix262_full_f_authority.py::test_stale_full_f_not_reused | IF-FULLF-001 |
+| AC-NFR0143-02@v0.8 | integration | tests/integration/test_hotfix262_host_env.py::test_cross_language_toolchain_env_allowlist | IF-HOSTENV-001 |
+| AC-FR0270-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_missing_required_keys_block_release | IF-RELEV-001 |
+| AC-FR0273-01@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_preview_requires_full_key_set | IF-RELEV-001 |
+| AC-FR0273-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_legacy_single_prism_key_preview_readable | IF-RELEV-001 |
+| AC-FR0271-01@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_verify_final_pass_with_blocker_rejected | IF-BLOCKREV-001 |
+| AC-FR0271-02@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_downstream_gates_treat_blocking_as_failed | IF-BLOCKREV-001 |
+| AC-FR0272-01@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_security_pass_with_blocker_rejected_and_replay_7342 | IF-BLOCKREV-001 |
+| AC-FR0272-02@v0.8 | integration | tests/integration/test_hotfix262_review_ingest.py::test_malformed_or_blocking_security_blocks_release | IF-BLOCKREV-001 |
+| AC-FR0274-02@v0.8 | integration | tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale | IF-RELEV-001 |
+| AC-FR0040-03@v0.4 | integration | tests/integration/test_hotfix262_review_ingest.py::test_m_test_ingest_pass_with_blocker_rejected | IF-BLOCKREV-001 |
+| AC-FR0140-02@v0.5 | integration | tests/integration/test_hotfix262_review_ingest.py::test_m_impl_ingest_pass_with_blocker_rejected | IF-BLOCKREV-001 |
+| AC-FR0283-02@v0.8 | integration + e2e | tests/integration/test_hotfix262_attention.py::test_missing_token_single_attention_and_hint + tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers | IF-ATTN-001 |
+| AC-FR0298-02@v0.9 | integration + e2e | tests/integration/test_hotfix262_attention.py::test_loop_halts_on_unresolved_attention + tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers | IF-ATTN-001 |
+| AC-FR0329-02@v0.10 | integration | tests/integration/test_hotfix262_attention.py::test_issue_fetch_failed_classification_preserved | IF-ATTN-001 |
+| AC-FR0315-01@v0.9 | integration | tests/integration/test_hotfix262_host_env.py::test_all_ten_sites_strip_operator_secrets | IF-HOSTENV-001 |
+| AC-FR0276-01@v0.8 | integration | tests/integration/test_hotfix262_stage_events.py::test_exactly_once_stage_events_under_retry_tail + tests/integration/test_hotfix262_stage_events.py::test_clean_temp_refs_remaining_zero | IF-STAGE-001, IF-CLEANUP-001 |
+| AC-FR0335-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_stage_events.py::test_legacy_run_timeline_synthesizes_transitions + tests/e2e/test_hotfix262_release_ui.py::test_legacy_run_stage_window_nonempty | IF-STAGE-001 |
+| AC-FR0335-02@v0.11 | integration | tests/integration/test_hotfix262_ui_perf.py::test_slim_timeline_payload_bounded | IF-UIPERF-001, IF-STAGE-001 |
+| AC-NFR0150-02@v0.9 | integration | tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry | IF-UIPERF-001 |
+| AC-FR0333-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_unified_todos_inbox_coverage + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-UIPERF-001 |
+| AC-FR0340-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_backlog_title_never_ulid + tests/e2e/test_hotfix262_release_ui.py::test_backlog_titles_readable | IF-UIPERF-001 |
+| AC-FR0307-01@v0.9 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_todos_items_carry_context_and_action_ref + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-UIPERF-001 |
 
 ### 8.1 Arrival-green guard nodes（到达即绿守卫清单）
 

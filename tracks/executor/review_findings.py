@@ -1,4 +1,4 @@
-"""IF-HOTFIX262-REVIEW-001 blocking-review-findings predicate (interface stub).
+"""IF-BLOCKREV-001 blocking-review-findings predicate (interface stub).
 
 `has_blocking_findings` returns True iff any finding carries
 severity in {"blocker", "high", "critical"} (design-delta INV-3).
@@ -18,4 +18,4 @@ BLOCKING_SEVERITIES = frozenset({"blocker", "high", "critical"})
 
 
 def has_blocking_findings(findings: Iterable[Mapping]) -> bool:
-    raise NotImplementedError("IF-HOTFIX262-REVIEW-001")
+    raise NotImplementedError("IF-BLOCKREV-001")

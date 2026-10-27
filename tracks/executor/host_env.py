@@ -1,4 +1,4 @@
-"""IF-HOTFIX262-HOSTENV-001 process-boundary env allowlist (interface stub).
+"""IF-HOSTENV-001 process-boundary env allowlist (interface stub).
 
 `host_process_env` is the single allowlist wrapper for every
 runtime-spawned host subprocess (design-delta INV-8). Denylist is
@@ -33,4 +33,4 @@ def host_process_env(
     extra: Mapping[str, str] | None = None,
     contract_allowlist: Iterable[str] = (),
 ) -> dict:
-    raise NotImplementedError("IF-HOTFIX262-HOSTENV-001")
+    raise NotImplementedError("IF-HOSTENV-001")

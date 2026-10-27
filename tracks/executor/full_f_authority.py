@@ -1,4 +1,4 @@
-"""IF-HOTFIX262-FULLF-001 FULL_F authority predicate (interface stub).
+"""IF-FULLF-001 FULL_F authority predicate (interface stub).
 
 `is_authoritative_full_f` is the single arbiter of whether a `full.executed`
 event payload is an authoritative FULL_F proof (design-delta INV-1):
@@ -25,4 +25,4 @@ def is_authoritative_full_f(
     payload: Mapping,
     candidate_sha: str | None = None,
 ) -> bool:
-    raise NotImplementedError("IF-HOTFIX262-FULLF-001")
+    raise NotImplementedError("IF-FULLF-001")
