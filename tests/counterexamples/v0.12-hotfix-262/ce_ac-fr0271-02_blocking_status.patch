@@ -1,12 +1,15 @@
 diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
 --- a/tracks/cli/release_cmd.py
 +++ b/tracks/cli/release_cmd.py
-@@ -402,6 +402,8 @@
+@@ -402,6 +402,11 @@
      if not final:
          return "failed"
      verdict = (final[-1].payload or {}).get("verdict")
-+    if _payload_findings_blocking(events, final[-1]):
-+        return "failed"
++    # COUNTEREXAMPLE: the release status judges the verdict alone and
++    # ignores the blocking findings the verdict carries, so a
++    # pass+blocking verdict renders as pass.
++    if verdict == "pass" and (final[-1].payload or {}).get("findings"):
++        return "pass"
      return "pass" if verdict == "pass" else "failed"
  
  
