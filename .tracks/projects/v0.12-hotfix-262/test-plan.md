@@ -191,6 +191,8 @@ Test assertions **may only** land on interfaces.md §4 的出口：事件流判�
 
 ### 6.6 Required-node counterexample contract（TEST-3）
 
+> **Prism:** [BLOCKER] TEST-3 contract mismatch: test-plan §6.6 (around lines 191-213) declares every counterexample binding must contain minimum fields ac, patch, test, kill, and restore, but the delivered tests/counterexamples/v0.12-hotfix-262/kill-manifest.json bindings contain ac, patch, test, and result only; no per-binding kill or restore fields. Either update the manifest to satisfy this declared schema with current-head evidence, or revise §6.6 to match the actual machine-readable artifact without weakening the required apply/run/restore proof.
+
 每个 §8 integration/e2e required node 必须在 Shield 交付中拥有至少一个 `kill-manifest.json` binding；共享一个 patch 的多个节点逐节点登记，不把“一个 patch 覆盖多个节点”当作缺失豁免。binding 的最小字段为：`ac`（完整 `AC-…@vX.Y`）、`patch`（相对 `tests/counterexamples/v0.12-hotfix-262/` 的 patch 路径）、`test`（§8 节点）、`kill`（行为断言失败而非 collection/import 失败）、`restore`（恢复成功）。Runtime/Prism 以当前 head 实际 apply 与单点运行核验，过时或 `n/a` binding fail-closed。
 
 本版 26 条 anchor AC 的 binding 归属如下（同一 AC 可有多个独立 failure mode；每个列出的 patch 都必须保留在 manifest 中）：
