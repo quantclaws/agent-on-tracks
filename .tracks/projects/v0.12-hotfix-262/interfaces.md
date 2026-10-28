@@ -143,6 +143,7 @@ sha:
 | 4 | `attention.required(area="issue_creation", reason="missing_token")` | ≤1 条；hint 含 `export GITHUB_TOKEN`；loop 停 `needs_attention` |
 | 5 | `stage.exited/entered`（M-RELEASE/M-PUBLISH/M-MILESTONE） | 恰好一次、INV-9 顺序、retry_tail 下不重复 |
 | 6 | `refs.cleaned` + `git for-each-ref refs/trac/tmp refs/trac/rgr` | 为空；`remaining == 0` |
+| 7 | `verdict.failed`（`check="collection"`）事件 payload | `evidence` 携带真实 collection 子进程捕获的 stdout；从该公开事件出口可重建 child-env 观察，不读取 collection face 的内部回调或返回值 |
 
 ### 4b. 子进程 env 出口
 

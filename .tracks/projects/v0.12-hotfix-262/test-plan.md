@@ -73,6 +73,7 @@ tests/
 ├── integration/   # Shield: test_hotfix262_*.py
 ├── e2e/           # Shield: test_hotfix262_attention_journey.py（非 ui）、test_hotfix262_release_ui.py（ui）
 ├── assets/v0.12-hotfix-262/  # Shield-owned: v0.12.0 事件切片、legacy preview blob、注入 payload
+├── counterexamples/v0.12-hotfix-262/  # Shield-owned: per-node minimal patches + kill-manifest.json
 └── ground_truth/  # Not applicable (§3)
 ```
 
@@ -111,6 +112,7 @@ tests/
 - **Source**：`tests/assets/v0.12-hotfix-262/`（Shield 写域）：v0.12.0 事件切片（含 seq 7342/7362/5896/7473 形状的重放样本，以合成方式复刻其 payload 特征：7362-shape=`serves_as_full_f=false, full_f_eligible=true, round=FULL_F, execution_commit=44c14de…`；5896-shape=`serves_as_full_f=true, full_f_eligible=false` 外 commit）、legacy `release.previewed` blob（单 `"prism"` 键）、pass+blocker 注入 payload（四个 ingest scope）、缺 token 环境样本、legacy run 事件种子（无显式阶段事件）。
 - **Reproducible**：重放断言以固定 payload 形状与固定 SHA 为准；性能断言以有界阈值（<5ms / <50KB / <500ms）为准。
 - **Sensitive data**：canary 密钥纪律继承；凭据测试只用 env 注入，不提交真实 token。
+- **Counterexample data**：`tests/counterexamples/v0.12-hotfix-262/kill-manifest.json` 是 Shield 交付的 required-node 绑定清单；每个 binding 指向一个最小 git patch，并记录该 patch 在当前 head 上经 apply → 目标节点失败 → restore 的 kill 证据。该清单不是产品接口，也不是 Archer scaffold。
 
 ### 2.5. Installation & Isolation
 
@@ -185,7 +187,38 @@ Spec 扫描：本 delta 涉及两类外部面——(a) GitHub API 凭据（atten
 
 ### 6.5. Assertion Basis — Closure with interfaces.md
 
-Test assertions **may only** land on interfaces.md §4 的出口：事件流判定（§4a）、子进程 env（§4b）、HTTP/UI（§4c）。AC 需要的状态若无出口，回修 interfaces/acceptance。
+Test assertions **may only** land on interfaces.md §4 的出口：事件流判定（§4a）、子进程 env（§4b）、HTTP/UI（§4c）。隔离 fixture 可以通过受控的仓库/事件/进程装配建立前置状态，但 fixture 装配本身不是断言；不得断言内部对象、私有方法、内部返回值或 mock 内核。AC 需要的状态若无出口，回修 interfaces/acceptance。
+
+### 6.6 Required-node counterexample contract（TEST-3）
+
+每个 §8 integration/e2e required node 必须在 Shield 交付中拥有至少一个 `kill-manifest.json` binding；共享一个 patch 的多个节点逐节点登记，不把“一个 patch 覆盖多个节点”当作缺失豁免。binding 的最小字段为：`ac`（完整 `AC-…@vX.Y`）、`patch`（相对 `tests/counterexamples/v0.12-hotfix-262/` 的 patch 路径）、`test`（§8 节点）、`kill`（行为断言失败而非 collection/import 失败）、`restore`（恢复成功）。Runtime/Prism 以当前 head 实际 apply 与单点运行核验，过时或 `n/a` binding fail-closed。
+
+本版 26 条 anchor AC 的 binding 归属如下（同一 AC 可有多个独立 failure mode；每个列出的 patch 都必须保留在 manifest 中）：
+
+| AC | counterexample patch(es) |
+|---|---|
+| AC-FR0267-01@v0.8 | `ce_ac-fr0267-01_candidate_binding.patch` |
+| AC-FR0268-01@v0.8 | `ce_ac-fr0268-01_full_f_authority.patch` |
+| AC-FR0268-02@v0.8 | `ce_ac-fr0268-02_drift_reuse.patch` |
+| AC-FR0268-03@v0.8 | `ce_ac-fr0268-02_stale_reuse.patch` |
+| AC-NFR0143-02@v0.8 | `ce_ac-fr0315-01_host_env.patch` |
+| AC-FR0270-02@v0.8 | `ce_ac-fr0270-02_full_f_credit.patch` |
+| AC-FR0273-01@v0.8 | `ce_ac-fr0273-01_evidence_key.patch` |
+| AC-FR0273-02@v0.8 | `ce_ac-fr0273-02_legacy_readback.patch` |
+| AC-FR0271-01@v0.8; AC-FR0272-01@v0.8; AC-FR0040-03@v0.4; AC-FR0140-02@v0.5 | `ce_ac-fr0271-01_blocking_findings.patch` |
+| AC-FR0271-02@v0.8; AC-FR0272-02@v0.8 | `ce_ac-fr0271-02_blocking_status.patch` |
+| AC-FR0274-02@v0.8; AC-FR0272-02@v0.8 | `ce_ac-fr0272-02_security_gate.patch` |
+| AC-FR0283-02@v0.8 | `ce_ac-fr0283-02_attention_dedup.patch` |
+| AC-FR0298-02@v0.9 | `ce_ac-fr0298-02_loop_preflight.patch` |
+| AC-FR0329-02@v0.10 | `ce_ac-fr0329-02_fetch_classification.patch` |
+| AC-FR0276-01@v0.8 | `ce_ac-fr0276-01_stage_events.patch`; `ce_ac-fr0276-01_cleanup.patch` |
+| AC-FR0335-01@v0.11 | `ce_ac-fr0335-01_legacy_synthesis.patch`; `ce_ac-fr0335-01_legacy_window.patch` |
+| AC-FR0335-02@v0.11 | `ce_ac-fr0335-02_slim_evidence.patch` |
+| AC-NFR0150-02@v0.9 | `ce_ac-nfr0150-02_ac_chain_shortcircuit.patch` |
+| AC-FR0333-01@v0.11 | `ce_ac-fr0333-01_todo_attention.patch` |
+| AC-FR0340-01@v0.11 | `ce_ac-fr0340-01_backlog_ulid.patch`; `ce_ac-fr0340-01_backlog_label.patch` |
+| AC-FR0307-01@v0.9 | `ce_ac-fr0307-01_todo_fields.patch`; `ce_ac-fr0307-01_todo_card_text.patch` |
+| AC-FR0315-01@v0.9 | `ce_ac-fr0315-01_host_env.patch`; `ce_ac-fr0315-01_host_env_sites.patch` |
 
 ---
 

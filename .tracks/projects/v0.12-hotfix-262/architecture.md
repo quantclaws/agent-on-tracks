@@ -178,6 +178,12 @@ UI/perf
 - **失败语义**：引用不实（AC 不在其所指版本的 acceptance 中）、语法不合 IF-HOTFIX-004、或版本目录缺失——逐行 fail-closed；行级 layer/IF 校验照常。
 - **落地状态**：`tracks/executor/test_tasks.py` 与 `tracks/executor/hotfix_test_sources.py` 的 per-version 解析已由 OOB 修复 commit `90e4879`（"resolve test tasks by anchor version"，含 `tests/unit/test_hotfix_cross_version_tasks.py`）落地，本 delta 继承该合同而非另行设计；该模块属 runtime 基础设施，不是本设计的 scaffold（scaffold 只含三份接口桩）。
 
+### 4.4 M-TEST public-observation / counterexample contract
+
+- Shield 的 required integration/e2e 测试可以使用隔离仓库、事件种子与真实 subprocess 建立前置状态；它们的**断言**必须落在 interfaces §4 的事件/CLI/文件/git/HTTP/UI 出口。`Store`、fixture builder 或 Executor 的内部装配若只用于建立前置状态，不得成为断言对象；私有返回值与内部中间状态不是测试证据。
+- `result_audit._collect_test_modules` 的 child-env 观察必须经真实 collection face 写入 `verdict.failed(check="collection")` 事件，再读取该事件 payload 的 child stdout；不得用 `object.__new__`、替换 `_emit` 或内部 callback 作为断言出口（IF-HOSTENV-001 / interfaces §4a#7）。
+- 每条 §8 required node 必须由 `tests/counterexamples/v0.12-hotfix-262/kill-manifest.json` 绑定一个或多个最小 patch，并在当前 head 上完成 apply → 目标行为断言失败 → restore；`n/a`、collection/import failure 或过时 patch 均为 fail-closed。Archer 只声明该合同，counterexample patch 与 kill 记录属于 Shield 写域。
+
 ## 5. 有意识简化与风险
 
 ### 5.1 有意识简化
