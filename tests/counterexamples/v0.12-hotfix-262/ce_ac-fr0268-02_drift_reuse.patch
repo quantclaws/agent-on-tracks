@@ -1,16 +1,12 @@
-diff --git a/tracks/executor/verify_gates.py b/tracks/executor/verify_gates.py
---- a/tracks/executor/verify_gates.py
-+++ b/tracks/executor/verify_gates.py
-@@ -276,9 +276,9 @@
-         producer, selected = self._full_f_producer(candidate_sha)
-         evidence = dict(producer.payload) if producer is not None else {}
-         try:
--            quadruple = (
--                self._current_full_f_identity(selected) if selected is not None else {}
--            )
-+            # COUNTEREXAMPLE: the recomputed identity quadruple is
-+            # dropped, so the identity comparison never sees a drift.
-+            quadruple = {}
-         except (ContractError, OSError, TestSelectError, UnicodeError, ValueError):
-             quadruple = {}
-         producer_seq = producer.seq if producer is not None else -1
+diff --git a/tracks/executor/m_verify.py b/tracks/executor/m_verify.py
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -95,7 +95,7 @@
+         identity_quadruple.get("selection_id"),
+     )
+     exp_tuple = tuple(_canonical(item) for item in expected)
+-    if exp_tuple != quad:
++    if False:  # COUNTEREXAMPLE: the identity drift is ignored.
+         return ReuseDecision(
+             decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
+         )

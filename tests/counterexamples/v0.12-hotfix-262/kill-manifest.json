@@ -5,7 +5,8 @@
   "session": "2026-10-27 M-TEST WRITE revision 3 (the PRISM_REVIEW verdict was revise with two blockers: TEST-2 (assertions must land on the interfaces §4 public outlets, not private helpers) and TEST-3 (every required node needs a real counterexample patch, not 'n/a')). Every one of the 32 rows below was verified with the apply -> run the bound node -> assert the behavioural failure -> restore cycle at this head; all 32 killed their bound node.",
   "apply_check": "every patch passes `git apply --check` at this head; the killed node failed on a behavioural assertion (never on a collection / import / fixture error).",
   "public_outlets": "the tests were rewritten onto the interfaces §4 public outlets: the `trac check trace --json` / `trac status` / `trac release` / `trac run` / `trac hotfix` CLIs, the `GET /api/runs/{id}/ac-chain` / `timeline` / `GET /api/todos` / `GET /api/projects/{pid}/releases` HTTP read face over a real serve subprocess, the EVENT STREAM, the git ref namespace and the browser DOM. No private helper is imported and no internal return value is asserted.",
-  "per_node_coverage": "one counterexample per required node: 25 integration nodes + 4 e2e nodes + 3 shared seams (a patch that covers two nodes is listed once per node)."
+  "per_node_coverage": "one counterexample per required node: 25 integration nodes + 4 e2e nodes + 3 shared seams (a patch that covers two nodes is listed once per node).",
+  "prism_review_revision": "2026-10-27 M-TEST WRITE revision 4 (the PRISM_REVIEW verdict was revise with three blockers: TEST-1 (the ten-site check only invoked one site and asserted callability on the other eight), TEST-2 (direct host_process_env / is_authoritative_full_f assertions), TEST-4 (the eight callable(...) checks are pseudo-tests). The host-env module was rewritten: every one of the ten declared sites is now really invoked and the environment ITS OWN child observed is read back and asserted (the strip set absent, the cross-language toolchain present), with the violations reported PER SITE. The FULL_F judgment nodes now observe the authority through the public closure read face (the authority's credit must be the rerun's evidence id, never the stale execution's) instead of the predicate's return value. All 33 kill rows were re-verified at this head."
  },
  "bindings": [
   {
@@ -27,7 +28,7 @@
   {
    "ac": "AC-FR0268-02@v0.8",
    "if_ref": "IF-FULLF-001",
-   "mutation": "the recomputed identity quadruple is dropped, so the identity comparison never sees a drift and the drifted FULL_F is reused",
+   "mutation": "the producer accepts an execution on the truthy serves_as_full_f alone instead of the shared authority's judgment, so an execution the authority refuses can still be reused",
    "patch": "ce_ac-fr0268-02_drift_reuse.patch",
    "test": "tests/integration/test_hotfix262_full_f_authority.py::test_drift_or_stale_forces_full_rerun",
    "result": "killed"
@@ -251,7 +252,7 @@
   {
    "ac": "AC-NFR0143-02@v0.8",
    "if_ref": "IF-HOSTENV-001",
-   "mutation": "the host process env wrapper hands the whole operator environment through, so the strip set reaches the child process",
+   "mutation": "the quality gate site hands the whole operator environment to its child instead of the allowlisted one, so the strip set is not applied at that site",
    "patch": "ce_ac-fr0315-01_host_env.patch",
    "test": "tests/integration/test_hotfix262_host_env.py::test_cross_language_toolchain_env_allowlist",
    "result": "killed"
@@ -259,8 +260,16 @@
   {
    "ac": "AC-FR0315-01@v0.9",
    "if_ref": "IF-HOSTENV-001",
-   "mutation": "the host process env wrapper hands the whole operator environment through, so every one of the ten subprocess sites leaks the operator secrets",
+   "mutation": "the quality gate site hands the whole operator environment to its child instead of the allowlisted one, so the strip set is not applied at that site",
    "patch": "ce_ac-fr0315-01_host_env.patch",
+   "test": "tests/integration/test_hotfix262_host_env.py::test_all_ten_sites_strip_operator_secrets",
+   "result": "killed"
+  },
+  {
+   "ac": "AC-FR0315-01@v0.9",
+   "if_ref": "IF-HOSTENV-001",
+   "mutation": "the layer site (test_execute) hands the whole operator environment to its child instead of the allowlisted one, so the strip set is not applied there",
+   "patch": "ce_ac-fr0315-01_host_env_sites.patch",
    "test": "tests/integration/test_hotfix262_host_env.py::test_all_ten_sites_strip_operator_secrets",
    "result": "killed"
   }

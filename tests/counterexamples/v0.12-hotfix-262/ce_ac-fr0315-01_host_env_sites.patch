@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/test_execute.py b/tracks/executor/test_execute.py
+--- a/tracks/executor/test_execute.py
++++ b/tracks/executor/test_execute.py
+@@ -698,7 +698,9 @@
+             proc = subprocess.run(
+                 list(argv),
+                 cwd=cwd,
+-                env=host_test_env(),
++                # COUNTEREXAMPLE: the layer site hands the whole operator
++                # environment to its child -- the strip set is not applied.
++                env=dict(__import__('os').environ),
+                 capture_output=True,
+                 text=True,
+                 timeout=timeout,

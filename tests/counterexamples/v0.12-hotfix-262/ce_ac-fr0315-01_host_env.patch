@@ -1,14 +1,14 @@
-diff --git a/tracks/executor/host_env.py b/tracks/executor/host_env.py
---- a/tracks/executor/host_env.py
-+++ b/tracks/executor/host_env.py
-@@ -33,4 +33,9 @@
-     extra: Mapping[str, str] | None = None,
-     contract_allowlist: Iterable[str] = (),
- ) -> dict:
--    raise NotImplementedError("IF-HOSTENV-001")
-+    # COUNTEREXAMPLE: hand the whole operator environment through.
-+    import os
-+    env = dict(os.environ)
-+    if extra:
-+        env.update(extra)
-+    return env
+diff --git a/tracks/executor/quality_gate.py b/tracks/executor/quality_gate.py
+--- a/tracks/executor/quality_gate.py
++++ b/tracks/executor/quality_gate.py
+@@ -257,7 +257,9 @@
+     serve shell cannot leak into host test commands."""
+     argv = shlex.split(command)
+     argv = _resolve_argv0(argv, cwd)
+-    run_env = host_test_env()
++    # COUNTEREXAMPLE: the gate hands the whole operator environment to
++    # its child -- the strip set is not applied at this site.
++    run_env = dict(os.environ)
+     if env_extra:
+         run_env.update(env_extra)
+     try:
