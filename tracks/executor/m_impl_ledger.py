@@ -116,6 +116,18 @@ def _taskgraph_coverage_errors(
     return errors
 
 
+def _merge_hotfix_if_registry(
+    vdir: Path, if_registry: set[str], anchor_acs: list[str] | None
+) -> set[str]:
+    if not anchor_acs:
+        return if_registry
+    delta_path = vdir / "interfaces.md"
+    if not delta_path.is_file():
+        return if_registry
+    delta_registry = _extract_if_registry(delta_path.read_text(encoding="utf-8"))
+    return if_registry | (delta_registry or set())
+
+
 # ARCH-006 §3.2 P-3: dev-scenario hotfix runs reconcile against the active
 # release branch (executor/hotfix.py resolves entry bases from the same
 # prefix; the BASELINE digest input reuses it, interfaces §1g).
@@ -636,14 +648,13 @@ class MImplLedgerMixin:
     ) -> list[str]:
         errors = _taskgraph_structure_errors(tasks)
         if_path = (requirements_dir or vdir) / "interfaces.md"
-        if anchor_acs and (vdir / "interfaces.md").is_file():
-            # Hotfix delta IFs are additive to the target-version baseline;
-            # the delta registry is the authoritative implementation surface.
-            if_path = vdir / "interfaces.md"
         ac_ids, if_registry, doc_errors = MImplLedgerMixin._taskgraph_docs(
             (requirements_dir or vdir) / "acceptance.md",
             if_path,
         )
+        # Hotfix delta IFs are additive to the target-version baseline;
+        # never replace inherited interfaces with the delta registry.
+        if_registry = _merge_hotfix_if_registry(vdir, if_registry, anchor_acs)
         errors.extend(doc_errors)
         if anchor_acs:
             anchored_ids = {ac.split("@", 1)[0] for ac in anchor_acs}
