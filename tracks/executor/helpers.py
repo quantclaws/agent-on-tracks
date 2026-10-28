@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from tracks.effects.devon_evidence import DEVON_EVIDENCE_FIELDS
+from tracks.executor.host_env import contract_env_allowlist, host_process_env
 from tracks.store import Store
 
 
@@ -316,12 +317,19 @@ def run_collect_command(argv: list[str], cwd) -> subprocess.CompletedProcess:
     every other outcome keeps the original process result, so failures still
     surface with the real runner error.
     """
-    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+    env = host_process_env(contract_allowlist=contract_env_allowlist(cwd))
+    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, env=env)
     if proc.returncode != 0 or parse_collected_nodes(proc.stdout):
         return proc
     if not is_per_file_collect_summary(proc.stdout):
         return proc
-    retry = subprocess.run(collect_node_ids_argv(argv), cwd=cwd, capture_output=True, text=True)
+    retry = subprocess.run(
+        collect_node_ids_argv(argv),
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     if retry.returncode == 0 and parse_collected_nodes(retry.stdout):
         return retry
     return proc

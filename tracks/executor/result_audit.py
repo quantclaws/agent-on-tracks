@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from tracks.executor.helpers import git
+from tracks.executor.host_env import contract_env_allowlist, host_process_env
 from tracks.executor.validate import (
     has_diff,
     is_discussion_diff,
@@ -258,6 +259,9 @@ class ResultAuditMixin:
                 cwd=self.repo,
                 capture_output=True,
                 text=True,
+                env=host_process_env(
+                    contract_allowlist=contract_env_allowlist(self.repo)
+                ),
             )
             if proc.returncode == 0:
                 continue

@@ -24,6 +24,7 @@ from .host_contract import (
     execute_gate,
     parse_json_report,
 )
+from .host_env import contract_env_allowlist, host_process_env
 
 
 def security_policy_digest(contract: HostContract) -> str:
@@ -104,6 +105,9 @@ def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, 
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=host_process_env(
+                contract_allowlist=contract_env_allowlist(repo)
+            ),
         )
         return proc.returncode, {
             "stdout_tail": (proc.stdout or "")[-500:],

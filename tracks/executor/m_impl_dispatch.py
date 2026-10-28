@@ -17,6 +17,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor.helpers import git
+from tracks.executor.host_env import contract_env_allowlist, host_process_env
 from tracks.executor.m_impl_anchor import (
     emit_devon_outcome_failure,
 )
@@ -74,9 +75,13 @@ def _run_host_commit_hook(cwd: Path, repo: Path, paths: list[str]) -> tuple[bool
     hook = _resolve_host_hook(cwd)
     if not hook.is_file() or not os.access(hook, os.X_OK):
         return True, ""
-    env = dict(os.environ)
-    env["TRACKS_HOOK_ROOT"] = str(repo)
-    env["TRACKS_HOOK_BIN"] = str(Path(sys.executable).parent)
+    env = host_process_env(
+        extra={
+            "TRACKS_HOOK_ROOT": str(repo),
+            "TRACKS_HOOK_BIN": str(Path(sys.executable).parent),
+        },
+        contract_allowlist=contract_env_allowlist(repo),
+    )
     try:
         proc = subprocess.run(
             [str(hook), *paths],

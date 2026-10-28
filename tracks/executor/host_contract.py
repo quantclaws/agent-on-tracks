@@ -30,6 +30,8 @@ from typing import Literal
 
 import tomllib
 
+from tracks.executor.host_env import contract_env_allowlist, host_process_env
+
 GATE_RESULT_PROTOCOL = "tracks-gate-result"
 GATE_RESULT_VERSION = 1
 
@@ -71,6 +73,7 @@ CONTRACT_TABLES = frozenset(
         "ci",
         "tracker",
         "operations",
+        "env_allowlist",
     }
 )
 OPERATION_JOURNEYS = frozenset({"feature", "post_release", "dev"})
@@ -182,6 +185,9 @@ class HostContract:
     build_timeout_seconds: int = 900
     smoke_result_channel: ResultChannel = "exit_code"
     smoke_timeout_seconds: int = 600
+    # IF-HOSTENV-001 escape hatch: host-declared non-secret variables that
+    # may cross the process boundary in addition to the base allowlist.
+    env_allowlist: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -275,6 +281,16 @@ def _load_version_bindings(scheme: dict) -> tuple[VersionBinding, ...]:
     return tuple(bindings)
 
 
+def _load_env_allowlist(table: dict) -> tuple[str, ...]:
+    """Parse the IF-HOSTENV-001 escape hatch (fail-closed on non-strings)."""
+    raw = table.get("env_allowlist")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        _fail_closed("[host-contract].env_allowlist must be an array of strings")
+    return tuple(raw)
+
+
 def load_host_contract(path: Path) -> HostContract:
     """Parse the ``[host-contract.*]`` tables of a project.toml (fail-closed)."""
     with open(path, "rb") as handle:
@@ -329,6 +345,7 @@ def load_host_contract(path: Path) -> HostContract:
         build_timeout_seconds=int(build.get("timeout_seconds", 900)),
         smoke_result_channel=_optional_channel(table.get("smoke", {}), "smoke"),
         smoke_timeout_seconds=int(table.get("smoke", {}).get("timeout_seconds", 600)),
+        env_allowlist=_load_env_allowlist(table),
     )
 
 
@@ -533,6 +550,9 @@ def _run_declared(decl: LocalGateDecl, argv: list[str], repo: Path):
             capture_output=True,
             timeout=decl.timeout_seconds,
             check=False,
+            env=host_process_env(
+                contract_allowlist=contract_env_allowlist(repo)
+            ),
         )
     except subprocess.TimeoutExpired:
         return None

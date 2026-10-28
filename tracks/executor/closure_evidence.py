@@ -32,6 +32,7 @@ from pathlib import Path
 from tracks.adapters.base import TestRunResult
 from tracks.executor import mutation as _mutation_facade  # facade-first (cycle-safe)
 from tracks.executor.helpers import git
+from tracks.executor.host_env import contract_env_allowlist, host_process_env
 from tracks.kernel.events import Command
 
 # Per-node execution budget: single nodes run in seconds; the bound keeps a
@@ -218,9 +219,16 @@ def _layer_of(node: str) -> str:
     return "integration"
 
 
-def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, nodes):
+def _execute_selected_nodes(
+    adapter, section, cwd: Path, result_path: Path, nodes, contract_repo=None
+):
     """Resolve + execute the host run_selected for *nodes*; returns the
-    subprocess CompletedProcess (never raises on command failure)."""
+    subprocess CompletedProcess (never raises on command failure).
+
+    ``contract_repo`` is the main project root when *cwd* is an isolated
+    candidate worktree: the escape hatch belongs to the host contract, not
+    to the temporary checkout.
+    """
     argv = adapter.run_selected(section.run_selected, list(nodes), result_path, cwd)
     # PYTHONPATH=worktree keeps the MUTATED tree authoritative for every
     # descendant process: the frozen web tests spawn a real serve subprocess
@@ -230,8 +238,12 @@ def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, node
     # serve-exercised SPA mutants survived against the candidate worktree).
     # PYTHONPATH entries precede site .pth additions, so the worktree
     # shadows the editable install in the runner AND its grandchildren.
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(cwd) + os.pathsep + env.get("PYTHONPATH", "")
+    env = host_process_env(
+        extra={
+            "PYTHONPATH": str(cwd) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        },
+        contract_allowlist=contract_env_allowlist(contract_repo or cwd),
+    )
     proc = subprocess.run(
         list(argv),
         cwd=cwd,
@@ -299,14 +311,22 @@ def _run_nodes_factory(repo: Path):  # noqa: CCR001 — fail-closed branches per
             with tempfile.TemporaryDirectory(prefix="closure-node-") as tmp:
                 result_path = Path(tmp) / "result.xml"
                 _run_node_group(
-                    adapter, section, cwd, result_path, layer_nodes, results
+                    adapter,
+                    section,
+                    cwd,
+                    result_path,
+                    layer_nodes,
+                    results,
+                    repo,
                 )
         return results
 
-    def _run_node_group(adapter, section, cwd, result_path, nodes, results):
+    def _run_node_group(
+        adapter, section, cwd, result_path, nodes, results, contract_repo=None
+    ):
         try:
             proc = _execute_selected_nodes(
-                adapter, section, cwd, result_path, nodes
+                adapter, section, cwd, result_path, nodes, contract_repo
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             results.update(_error_all(nodes, str(exc)))
