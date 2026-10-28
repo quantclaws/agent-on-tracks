@@ -452,39 +452,45 @@ def _hotfix_issue(repo: Path, issue_number: int | None) -> tuple[Any, Any]:
         return None, None
     from tracks.effects.github import GithubIssuesError, select_issue_backend
 
-    if _live_issue_channel() and not os.environ.get("GITHUB_TOKEN"):
-        return None, _missing_credential_error()
+    if issue_channel() == "live" and not os.environ.get("GITHUB_TOKEN"):
+        return None, missing_credential_error()
     try:
         return select_issue_backend(repo, "").fetch_issue(issue_number), None
     except GithubIssuesError as exc:
         return None, exc
 
 
-def _live_issue_channel() -> bool:
-    """True when the LIVE issue channel is selected.
+def issue_channel() -> str:
+    """The issue channel this run writes through: ``live`` or ``stand_in``.
 
     The AGENT channel (``TRAC_AGENT_BACKEND`` / ``TRAC_FAKE_SIMULATE``) and
     the ISSUE channel are separate concerns: the agent channel decides who
     produces the documents, the issue channel decides where the
     operator-facing issues live. ``TRAC_ISSUE_CHANNEL`` names the issue
     channel explicitly; without it the issue channel follows the agent
-    channel (the historical behaviour, so every existing journey keeps its
-    stand-in).
+    channel (the historical behaviour, so every existing journey keeps
+    its stand-in).
 
-    The LIVE channel needs the canonical token for every read and write; the
-    deterministic channel's read is the legitimate stand-in corpus (the L2
-    contract-sim read the intake accepts). The credential preflight
-    therefore applies to the live channel (IF-ATTN-001 §1d.1).
+    The explicit value is the seam the missing-token journey needs: it
+    selects the LIVE channel while the agent channel stays deterministic,
+    so the canonical-credential preflight is exercised for real.
     """
     explicit = os.environ.get("TRAC_ISSUE_CHANNEL", "").strip().lower()
     if explicit in ("live", "stand_in"):
-        return explicit == "live"
+        return explicit
     if os.environ.get("TRAC_FAKE_SIMULATE"):
-        return False
-    return os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() != "fake"
+        return "stand_in"
+    if os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake":
+        return "stand_in"
+    return "live"
 
 
-def _missing_credential_error() -> Any:
+def _live_issue_channel() -> bool:
+    """True when the LIVE issue channel is selected (service-intake gate)."""
+    return issue_channel() == "live"
+
+
+def missing_credential_error() -> Any:
     """The classified missing_token error for an absent canonical token."""
     from tracks.effects.github_transport import GithubIssuesError
 

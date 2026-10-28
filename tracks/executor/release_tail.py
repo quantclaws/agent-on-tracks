@@ -43,53 +43,18 @@ def _credential_hint() -> str:
     return canonical_credential_hint()
 
 
-def _missing_token_detail(error: Exception) -> str:
-    """Error detail plus the canonical hint when a legacy variable is set."""
-    hint = _credential_hint()
-    detail = str(error)
-    return f"{detail} ({hint})" if hint else detail
-
-
-def _missing_credential_detail() -> str:
-    """The preflight's own detail: the classification plus the hint.
-
-    IF-ATTN-001 §1d.1: when the canonical ``GITHUB_TOKEN`` is absent and a
-    legacy variable is exported, the diagnostic names the variable it found
-    together with the canonical export. The detail always carries the
-    ``missing_token`` classification so the operator (and the replay) can
-    tell an absent credential from an absent issue.
-    """
-    hint = _credential_hint()
+def _missing_token_detail(error: Exception | None = None) -> str:
+    """The missing_token detail with the canonical hint when one applies."""
     detail = (
-        "missing_token: GITHUB_TOKEN is not set; "
-        "the live issue channel is unauthenticated"
+        str(error)
+        if error is not None
+        else (
+            "missing_token: GITHUB_TOKEN is not set; "
+            "the live issue channel is unauthenticated"
+        )
     )
+    hint = _credential_hint()
     return f"{detail} ({hint})" if hint else detail
-
-
-def _issue_channel() -> str:
-    """The issue channel this run writes through: ``live`` or ``stand_in``.
-
-    The AGENT channel (``TRAC_AGENT_BACKEND`` / ``TRAC_FAKE_SIMULATE``)
-    and the ISSUE channel are separate concerns: the agent channel decides
-    who produces the documents, the issue channel decides where the
-    operator-facing issues live. ``TRAC_ISSUE_CHANNEL`` names the issue
-    channel explicitly; without it the issue channel follows the agent
-    channel (the historical behaviour, so every existing journey keeps
-    its stand-in).
-
-    The explicit value is the seam the missing-token journey needs: it
-    selects the LIVE channel while the agent channel stays deterministic,
-    so the canonical-credential preflight is exercised for real.
-    """
-    explicit = os.environ.get("TRAC_ISSUE_CHANNEL", "").strip().lower()
-    if explicit in ("live", "stand_in"):
-        return explicit
-    if os.environ.get("TRAC_FAKE_SIMULATE"):
-        return "stand_in"
-    if os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake":
-        return "stand_in"
-    return "live"
 
 
 def _select_issue_backend(repo: Path, version: str):
@@ -101,14 +66,14 @@ def _select_issue_backend(repo: Path, version: str):
     ``GITHUB_TOKEN`` and fails closed with the classified
     ``missing_token`` error when it is absent.
     """
-    if _issue_channel() == "live":
+    from tracks.supervisor.intake import (  # cycle-safe: channel contract
+        issue_channel,
+        missing_credential_error,
+    )
+
+    if issue_channel() == "live":
         if not os.environ.get("GITHUB_TOKEN"):
-            raise GithubIssuesError(
-                "missing_token",
-                "GITHUB_TOKEN not set - see the live GitHub journey "
-                "prerequisites section in docs/getting-started/installation.md "
-                "(GITHUB_TOKEN / TRAC_GITHUB_REPO / TLS & TRAC_GITHUB_CA_BUNDLE)",
-            )
+            raise missing_credential_error()
         from tracks.effects.github import GithubBackend
 
         return GithubBackend(repo, version)
@@ -367,11 +332,7 @@ class ExecReleaseTailMixin:
         """The classified missing_token attention, emitted at most once."""
         if _has_unresolved_missing_token(self.store.events(self.run_id)):
             return
-        detail = (
-            _missing_token_detail(error)
-            if error is not None
-            else _missing_credential_detail()
-        )
+        detail = _missing_token_detail(error)
         self._emit(
             "attention.required",
             {
