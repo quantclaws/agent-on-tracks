@@ -87,21 +87,89 @@ _PROBE = (
     "    'NODE_PATH', 'NVM_DIR', 'VOLTA_HOME', 'PLAYWRIGHT_BROWSERS_PATH',\n"
     "    'GOPATH', 'GOROOT', 'GOCACHE', 'GOMODCACHE', 'GOPROXY', 'JAVA_HOME',\n"
     "    'GRADLE_USER_HOME', 'TRAC_FORENSICS_DIR', 'TRAC_BATTERY_TIMEOUT'))\n"
-    "json.dump({'stripped': stripped, 'toolchain': toolchain}, sys.stdout)\n"
+    "report = json.dumps({'stripped': stripped, 'toolchain': toolchain})\n"
+    "sys.stdout.write(report)\n"
+    "sys.stderr.write(report)\n"
 )
 
 # The layer face also reads a JUnit result file; the probe writes a minimal
 # one so the site completes its own read path.
-_PROBE_WITH_RESULT = (
-    "import json, os, sys\n"
-    "out, node = sys.argv[1], sys.argv[2]\n"
-    "json.dump(dict(os.environ), sys.stdout)\n"
-    "cls, _, name = node.partition('::')\n"
-    "cls = cls.replace('/', '.').removesuffix('.py')\n"
-    "open(out, 'w').write("
-    "'<testsuite tests=\"1\"><testcase classname=\"%s\" name=\"%s\" />"
-    "</testsuite>' % (cls, name))\n"
+_PROBE_WITH_RESULT = """\
+import json, os, sys
+env = dict(os.environ)
+prefixes = ('GITHUB_', 'GH_', 'TRAC_GITHUB_', 'TRAC_SERVE_', 'TRAC_AGENT_', 'TRAC_FAKE_')
+exact = ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE')
+suffixes = ('_TOKEN', '_SECRET', '_API_KEY')
+stripped = sorted(n for n in env if n in exact or n.startswith(prefixes)
+                  or n.endswith(suffixes))
+toolchain = sorted(n for n in env if n in (
+    'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TEMP', 'TMP',
+    'LANG', 'LC_ALL', 'LC_CTYPE', 'SYSTEMROOT', 'SSL_CERT_FILE',
+    'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE', 'XDG_CACHE_HOME', 'CI',
+    'VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHASHSEED', 'PYTHONDONTWRITEBYTECODE',
+    'UV_CACHE_DIR', 'PIP_CACHE_DIR', 'CARGO_HOME', 'RUSTUP_HOME', 'RUSTFLAGS',
+    'NODE_PATH', 'NVM_DIR', 'VOLTA_HOME', 'PLAYWRIGHT_BROWSERS_PATH',
+    'GOPATH', 'GOROOT', 'GOCACHE', 'GOMODCACHE', 'GOPROXY', 'JAVA_HOME',
+    'GRADLE_USER_HOME', 'TRAC_FORENSICS_DIR', 'TRAC_BATTERY_TIMEOUT'))
+report = json.dumps({'stripped': stripped, 'toolchain': toolchain})
+sys.stdout.write(report)
+sys.stderr.write(report)
+out = sys.argv[1]
+node = sys.argv[2] if len(sys.argv) > 2 else "tests/probe.py::test_probe"
+cls, _, name = node.partition("::")
+cls = cls.replace("/", ".").removesuffix(".py")
+open(out, "w").write(
+    '<testsuite tests="1"><testcase classname="%s" name="%s" /></testsuite>'
+    % (cls, name)
 )
+"""
+
+
+def _write_host_contract(repo: Path) -> Path:
+    """A REAL host project contract whose collect command is the probe.
+
+    The probe source is written to a FILE in the repo and the contract's
+    collect command runs that file, so the declared command stays a plain
+    one-line argv (a TOML basic string) and the collect face / layer face
+    reach their own subprocess through the production contract loading.
+    """
+    contract = repo / ".tracks" / "projects" / "project.toml"
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    probe = repo / "probe_env.py"
+    probe.write_text(_PROBE, encoding="utf-8")
+    result_probe = repo / "probe_env_result.py"
+    result_probe.write_text(_PROBE_WITH_RESULT, encoding="utf-8")
+    command = shlex.join([sys.executable, str(probe)])
+    result_command = shlex.join([sys.executable, str(result_probe)])
+    # the run / run_selected templates must embed {result} exactly once (the
+    # contract loader's placeholder rule); the probe writes the JUnit file
+    # the layer face reads.
+    section = (
+        "[{name}]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/{name}/"]\n'
+        'collect = "{collect}"\n'
+        'run = "{result_command} {{result}}"\n'
+        'run_selected = "{result_command} {{result}} {{nodes}}"\n'
+        'cwd = "."\n\n'
+    )
+    parts = []
+    for name in ("unit", "integration", "e2e"):
+        parts.append(
+            section.format(
+                name=name, collect=command, result_command=result_command
+            )
+        )
+    parts.append(
+        "[nightly]\n"
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "current FULL suite; not a local gate"\n\n'
+    )
+    contract.write_text("".join(parts), encoding="utf-8")
+    return contract
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -304,6 +372,10 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     (repo / "README.md").write_text("hotfix-262 host\n", encoding="utf-8")
+    # The REAL host contract: the sites that read it (the collect face and
+    # the layer face) run through the production loader, so the wiring they
+    # depend on is exercised, not stubbed.
+    _write_host_contract(repo)
 
     # -- Site 1: quality_gate.execute_gate_command -----------------------
     observation = quality_gate.execute_gate_command(
@@ -322,16 +394,14 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     _violations.extend(_boundary_violations(_child_env_from(stdout), "quality_gate._run_check"))
 
     # -- Site 3: test_execute._run_layer_command --------------------------
-    class _Section:
-        cwd = "."
-        command_id = "cmd-hf262-hostenv"
-        result_channel = "exit_code"
-        # the layer face expands {nodes} / {result}; the probe prints its
-        # environment AND writes the minimal JUnit result the face reads
-        run_selected = (
-            f"{shlex.quote(sys.executable)} -c "
-            f"{shlex.quote(_PROBE_WITH_RESULT)} {{result}} {{nodes}}"
-        )
+    # The PRODUCTION path: the layer face runs the REAL integration section
+    # the contract declares (loaded by the production loader), so the
+    # wiring the face depends on is exercised, not stubbed.
+    from tracks.project import load_contract
+
+    contract = load_contract(repo)
+    section = contract.integration
+    assert section is not None, "the contract must declare the integration layer"
 
     executor = object.__new__(test_execute.ExecTestRunMixin)
     executor.repo = repo
@@ -340,15 +410,24 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
         tmp_path / f"{command_id}-{name}.xml"
     )
     logs: dict = {}
+    from tracks.kernel.events import Command
+
+    cmd = Command(
+        kind="run_tests",
+        params={"stage": "M-TEST"},
+        command_id="cmd-hf262-hostenv",
+    )
     executor._run_layer_command(
-        _Section(), "probe", _Section(), ["tests/probe.py::test_probe"], [], logs
+        cmd, "probe", section, ["tests/probe.py::test_probe"], [], logs
     )
     assert logs["probe"]["returncode"] == 0, (
         f"the layer command probe must run (got {logs['probe']['returncode']})"
     )
+    # The layer face records the child's stdout; the observation is the
+    # environment THAT child saw.
     _violations.extend(
         _boundary_violations(
-        _child_env_from(logs["probe"]["stdout"]), "test_execute._run_layer_command"
+            _child_env_from(logs["probe"]["stdout"]), "test_execute._run_layer_command"
         )
     )
 
@@ -356,27 +435,22 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     collector = object.__new__(test_collect.ExecTestCollectMixin)
     collector.repo = repo
 
-    class _Contract:
-        integration = _Section()
-        e2e = None
-
-    # the collect face reads the section's ``collect`` command
-    _Section.collect = _probe_command()
-
-    import tracks.executor.test_collect as collect_module
-
-    original_load = collect_module.load_contract
-    collect_module.load_contract = lambda repo: _Contract()
-    try:
-        results, error = collector._run_contract_sections(None, None, "collect")
-    finally:
-        collect_module.load_contract = original_load
+    # The PRODUCTION path: the collect face loads the REAL host contract
+    # the fixture wrote (no loader monkeypatching) and runs the declared
+    # collect command of the integration layer.
+    results, error = collector._run_contract_sections(None, None, "collect")
     assert error is None, f"the collect contract must run (got {error})"
-    section_name, rc, stdout, _stderr = results[0]
+    integration = next(
+        (row for row in results if row[0] == "integration"), None
+    )
+    assert integration is not None, (
+        f"the collect face must run the integration layer (got {results!r})"
+    )
+    _section_name, rc, stdout, _stderr = integration
     assert rc == 0, f"the collect probe must run (got {rc})"
     _violations.extend(
         _boundary_violations(
-        _child_env_from(stdout), "test_collect._run_contract_sections"
+            _child_env_from(stdout), "test_collect._run_contract_sections"
         )
     )
 
@@ -388,27 +462,28 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     _violations.extend(_boundary_violations(_child_env_from(proc.stdout), "helpers.run_collect_command"))
 
     # -- Site 6: result_audit._collect_test_modules ----------------------
+    # The observation is the site's OWN spawn: the module prints the
+    # environment it observes at import time, and the collection face
+    # carries the child's stdout into the verdict it emits. A module that
+    # makes the collection FAIL forces the face down that path, so the
+    # emitted evidence IS the child's captured output -- no second process.
     audit = object.__new__(result_audit.ResultAuditMixin)
     audit.repo = repo
     emitted: list[dict] = []
     audit._emit = lambda kind, payload, **kwargs: emitted.append(payload)
-    # The module is a real importable test module whose test prints the
-    # environment it observes.
     (repo / "probe_env_module.py").write_text(
-        _PROBE + "def test_probe():\n    pass\n", encoding="utf-8"
+        _PROBE + "import sys\nsys.exit(3)\n", encoding="utf-8"
     )
     failed = audit._collect_test_modules(["probe_env_module.py"], 1, "cmd-collect")
-    assert failed is False, (
-        "the per-module collection probe must succeed (the module collects); "
-        f"the site reported {emitted}"
+    assert failed is True, (
+        "the per-module collection probe must fail closed (the module's "
+        "collection fails)"
     )
-    # The site's own spawn is the observation: the collection face captured
-    # the child's stdout, so the env is read back from the SAME spawn.
+    assert emitted, "the collection face must emit its verdict"
+    evidence = str(emitted[-1].get("evidence") or "")
+    child = _child_env_from(evidence)
     _violations.extend(
-        _boundary_violations(
-            _child_env_from(_collection_child_env(repo)),
-            "result_audit._collect_test_modules",
-        )
+        _boundary_violations(child, "result_audit._collect_test_modules")
     )
 
     # -- Site 7: host_contract._run_declared -----------------------------
@@ -449,7 +524,7 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
             return [*_probe_argv()]
 
     executed = closure_evidence._execute_selected_nodes(
-        _Adapter(), _Section(), repo, tmp_path / "result.xml", ["probe"]
+        _Adapter(), section, repo, tmp_path / "result.xml", ["probe"]
     )
     assert executed.returncode == 0, (
         f"the closure node probe must run (got {executed.returncode})"
@@ -490,33 +565,3 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     )
 
 
-def _collection_child_env(repo: Path) -> str:
-    """The environment the per-module collection site's child observed.
-
-    The site runs the module as a pytest child and the module prints its own
-    environment; the collection face captures that stdout, so the observation
-    is read back from the SAME spawn the site performed.
-    """
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "--collect-only",
-            "-q",
-            "-o",
-            "addopts=",
-            "-s",
-            "probe_env_module.py",
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={
-            key: value
-            for key, value in os.environ.items()
-            if key not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-        },
-    )
-    return proc.stdout
