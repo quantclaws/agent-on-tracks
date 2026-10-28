@@ -46,6 +46,20 @@ def _version_sort_key(name: str) -> tuple[int, int, int, int, str] | None:
     return (-int(match.group(1)), -int(match.group(2)), 0, 0, name)
 
 
+def _registry_version_key(name: str) -> tuple:
+    """Release registry order: hotfix stream before its published baseline."""
+    match = _HOTFIX_VERSION_RE.match(name) or _VERSION_RE.match(name)
+    hotfix = _HOTFIX_VERSION_RE.match(name)
+    return (
+        -int(match.group(1)), -int(match.group(2)), 0 if hotfix else 1,
+        -int(match.group(3)) if hotfix else 0, name,
+    )
+
+
+def _registry_run_active(runs: list[dict]) -> bool:
+    return any(run["status"] not in {"completed", "backlog"} for run in runs)
+
+
 def _projects_root(project: dict) -> Path:
     return Path(project["repo_path"]) / ".tracks" / "projects"
 

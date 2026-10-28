@@ -955,10 +955,7 @@ def _registered_project(request: Any, pid: str) -> dict | None:
 
 
 def _registry_versions(repo_path: str) -> list[dict]:
-    """§1e.2 registry: runs grouped per version, numeric-descending order.
-
-    #224/#227 (NFR-0158-02): each run row carries its version's story.md
-    frontmatter title, falling back to the raw run id (the hotfix case)."""
+    """Build the release registry grouped by version."""
     import re
 
     groups: dict[str, list[dict]] = {}
@@ -981,9 +978,16 @@ def _registry_versions(repo_path: str) -> list[dict]:
             row["title"] = title or row["run_id"]
             row["version"] = version
     named = [name for name in groups if projections._version_sort_key(name)]
+    ordered = sorted(
+        named,
+        key=lambda v: (
+            not projections._registry_run_active(groups[v]),
+            projections._registry_version_key(v),
+        ),
+    )
     return [
-        {"version": version, "runs": groups[version]}
-        for version in sorted(named, key=projections._version_sort_key)
+        {"version": v, "runs": groups[v], "active": projections._registry_run_active(groups[v])}
+        for v in ordered
     ]
 
 
@@ -1050,7 +1054,6 @@ def _intake_json(row: dict, *, with_report: bool) -> dict:
     if with_report:
         report = _json_value(row.get("report_json"))
         payload["report"] = report if isinstance(report, dict) else None
-        payload["content"] = row.get("content")
     return payload
 
 
