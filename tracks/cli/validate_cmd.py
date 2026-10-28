@@ -325,11 +325,17 @@ def _apply_full_execution(
         per_ac.setdefault(ac, {})["full_pass_evidence"] = evidence_id
 
 
+def _event_payload(event) -> dict:
+    """The event payload when it is a mapping (harvest ignores anything else)."""
+    payload = event.payload
+    return payload if isinstance(payload, dict) else {}
+
+
 def _merge_stream_event(
     candidate_digest: str | None, per_ac: dict, acs: list[str], event
-) -> str | None:
-    """Fold one stream event into the harvest state; returns the current digest."""
-    payload = event.payload if isinstance(event.payload, dict) else {}
+) -> None:
+    """Fold one stream event into the harvest state under *candidate_digest*."""
+    payload = _event_payload(event)
     if event.type == "mutation.manifest":
         base = _ac_base_ref(payload.get("ac")) or ""
         _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
@@ -338,7 +344,6 @@ def _merge_stream_event(
         _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
     elif event.type == "full.executed":
         _apply_full_execution(per_ac, acs, payload, candidate_digest)
-    return candidate_digest
 
 
 def _binding_candidate_digest(events) -> str | None:
@@ -351,8 +356,7 @@ def _binding_candidate_digest(events) -> str | None:
     for event in events:
         if event.type not in ("candidate.frozen", "milestone.trace_closed"):
             continue
-        payload = event.payload if isinstance(event.payload, dict) else {}
-        candidate = payload.get("candidate_sha")
+        candidate = _event_payload(event).get("candidate_sha")
         if isinstance(candidate, str) and candidate:
             digest = candidate
     return digest
@@ -371,7 +375,7 @@ def _closure_evidence(store: Store, version: str, acs: list[str]) -> tuple[str |
     candidate_digest = _binding_candidate_digest(events)
     per_ac: dict[str, dict] = {}
     for event in events:
-        candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
+        _merge_stream_event(candidate_digest, per_ac, acs, event)
     return candidate_digest, per_ac
 
 

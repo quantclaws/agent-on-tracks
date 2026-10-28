@@ -110,7 +110,8 @@ def is_authoritative_full_f(
         return False
     if payload.get("full_f_eligible") is not True:
         return False
-    if payload.get("round") not in _AUTHORITATIVE_ROUNDS:
+    round_name = payload.get("round")
+    if not isinstance(round_name, str) or round_name not in _AUTHORITATIVE_ROUNDS:
         return False
     if not _candidate_matches(payload, candidate_sha):
         return False
