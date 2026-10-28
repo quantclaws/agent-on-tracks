@@ -355,7 +355,6 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
         host_contract,
         m_impl_dispatch,
         quality_gate,
-        result_audit,
         security,
         test_collect,
         test_execute,
@@ -462,25 +461,46 @@ def test_all_ten_sites_strip_operator_secrets(tmp_path: Path, monkeypatch):
     _violations.extend(_boundary_violations(_child_env_from(proc.stdout), "helpers.run_collect_command"))
 
     # -- Site 6: result_audit._collect_test_modules ----------------------
-    # The observation is the site's OWN spawn: the module prints the
-    # environment it observes at import time, and the collection face
-    # carries the child's stdout into the verdict it emits. A module that
-    # makes the collection FAIL forces the face down that path, so the
-    # emitted evidence IS the child's captured output -- no second process.
-    audit = object.__new__(result_audit.ResultAuditMixin)
-    audit.repo = repo
-    emitted: list[dict] = []
-    audit._emit = lambda kind, payload, **kwargs: emitted.append(payload)
+    # The PRODUCTION path: the collection face runs on the REAL executor,
+    # so its verdict lands in the EVENT STREAM (interfaces §4a) and the
+    # observation is that event's payload -- not an internal callback.
+    #
+    # The module prints the environment it observes at import time and makes
+    # the collection FAIL, so the face's verdict carries the child's own
+    # captured stdout.
+    from tracks import paths
+    from tracks.executor.executor import Executor
+    from tracks.kernel.events import Command
+    from tracks.store import Store
+
     (repo / "probe_env_module.py").write_text(
         _PROBE + "import sys\nsys.exit(3)\n", encoding="utf-8"
     )
-    failed = audit._collect_test_modules(["probe_env_module.py"], 1, "cmd-collect")
-    assert failed is True, (
-        "the per-module collection probe must fail closed (the module's "
-        "collection fails)"
-    )
-    assert emitted, "the collection face must emit its verdict"
-    evidence = str(emitted[-1].get("evidence") or "")
+    store = Store(paths.tracks_home(repo))
+    try:
+        store.append("RUN-HF262-HOSTENV", "v0.8", "story.requested", {"raw_chars": 1})
+        executor = Executor(store, repo, "RUN-HF262-HOSTENV")
+        failed = executor._collect_test_modules(
+            ["probe_env_module.py"], 1, "cmd-collect"
+        )
+        assert failed is True, (
+            "the per-module collection probe must fail closed (the module's "
+            "collection fails)"
+        )
+        # The verdict is read back from the EVENT STREAM.
+        verdicts = [
+            event
+            for event in store.events("RUN-HF262-HOSTENV")
+            if event.type == "verdict.failed"
+        ]
+        assert verdicts, "the collection face must land its verdict in the event stream"
+        payload = verdicts[-1].payload or {}
+        assert payload.get("check") == "collection", (
+            f"the verdict must be the collection check (got {payload!r})"
+        )
+        evidence = str(payload.get("evidence") or "")
+    finally:
+        store.close()
     child = _child_env_from(evidence)
     _violations.extend(
         _boundary_violations(child, "result_audit._collect_test_modules")
