@@ -635,15 +635,21 @@ class MImplLedgerMixin:
         anchor_acs: list[str] | None = None,
     ) -> list[str]:
         errors = _taskgraph_structure_errors(tasks)
+        if_path = (requirements_dir or vdir) / "interfaces.md"
+        if anchor_acs and (vdir / "interfaces.md").is_file():
+            # Hotfix delta IFs are additive to the target-version baseline;
+            # the delta registry is the authoritative implementation surface.
+            if_path = vdir / "interfaces.md"
         ac_ids, if_registry, doc_errors = MImplLedgerMixin._taskgraph_docs(
             (requirements_dir or vdir) / "acceptance.md",
-            (requirements_dir or vdir) / "interfaces.md",
+            if_path,
         )
         errors.extend(doc_errors)
         if anchor_acs:
             anchored_ids = {ac.split("@", 1)[0] for ac in anchor_acs}
             for task in tasks:
                 for ac_id in task.ac_refs:
+                    ac_id = str(ac_id).split("@", 1)[0]
                     if ac_id not in anchored_ids:
                         errors.append(f"{task.task_id} declares unanchored AC {ac_id}")
             ac_ids = sorted(anchored_ids)
