@@ -11,6 +11,7 @@ import tomllib
 
 from tracks import paths
 from tracks.executor import m_verify
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
@@ -154,9 +155,7 @@ the runtime-materialized default contract lives here."""
         self, event, payload, selections, latest_selection, candidate_sha
     ):
         """The matching selection when *event* is a valid producer, else None."""
-        if payload.get("execution_commit") != candidate_sha:
-            return None
-        if payload.get("passed") is not True or not payload.get("full_f_eligible"):
+        if not is_authoritative_full_f(payload, candidate_sha):
             return None
         selection_seq = payload.get("selection_event_seq")
         if not isinstance(selection_seq, int) or latest_selection is None:

@@ -19,6 +19,7 @@ from tracks.checks.release_evidence import check_release_evidence_file
 from tracks.checks.trace import approved_acs, check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.executor import version_extensions
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.taskgraph import (
     parse_tasks_json,
     validate_ac_coverage,
@@ -307,17 +308,19 @@ def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
         entry["mutation_evidence"] = patch
 
 
-def _apply_full_execution(per_ac: dict, acs: list[str], payload: dict) -> None:
+def _apply_full_execution(
+    per_ac: dict, acs: list[str], payload: dict, candidate_digest: str | None
+) -> None:
     """Credit a suite-level FULL execution to every required AC equally.
 
-    The FULL gate executes the whole suite, so its outcome (real emitted
-    ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
-    becomes each required AC's full-pass evidence for this candidate.
+    Only an authoritative FULL_F proof for the harvested candidate may be
+    credited (INV-1): ``serves_as_full_f`` alone is not authority.
     """
-    if not payload.get("serves_as_full_f"):
+    if not is_authoritative_full_f(payload, candidate_digest):
         return
-    evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
-    evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")
+    evidence_id = sorted(
+        e for e in payload.get("evidence_ids") or [] if isinstance(e, str)
+    )[0]
     for ac in acs:
         per_ac.setdefault(ac, {})["full_pass_evidence"] = evidence_id
 
@@ -330,30 +333,45 @@ def _merge_stream_event(
     if event.type == "mutation.manifest":
         base = _ac_base_ref(payload.get("ac")) or ""
         _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
-        digest = payload.get("candidate_digest")
-        if isinstance(digest, str) and digest:
-            return digest
     elif event.type == "phase0.baseline_repaired":
         base = _ac_base_ref(payload.get("ac")) or ""
         _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
     elif event.type == "full.executed":
-        _apply_full_execution(per_ac, acs, payload)
+        _apply_full_execution(per_ac, acs, payload, candidate_digest)
     return candidate_digest
+
+
+def _binding_candidate_digest(events) -> str | None:
+    """The candidate digest from ``candidate.frozen`` / ``milestone.trace_closed``.
+
+    INV-2: the last frozen/closed candidate of the version owns the closure
+    report; a ``mutation.manifest`` digest never rebinds it.
+    """
+    digest: str | None = None
+    for event in events:
+        if event.type not in ("candidate.frozen", "milestone.trace_closed"):
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        candidate = payload.get("candidate_sha")
+        if isinstance(candidate, str) and candidate:
+            digest = candidate
+    return digest
 
 
 def _closure_evidence(store: Store, version: str, acs: list[str]) -> tuple[str | None, dict]:
     """Harvest per-AC candidate-bound evidence from *version*'s event stream.
 
     Only contracted payloads feed the join: baseline repair (§3), mutation
-    manifest (§1g) and same-suite FULL executions. Absent elements stay
-    absent -- the pure join degrades those records to fail; evidence is
-    never invented, padded or suppressed.
+    manifest (§1g) and authoritative FULL executions bound to the candidate
+    from ``candidate.frozen`` / ``milestone.trace_closed`` (INV-2). Absent
+    elements stay absent -- the pure join degrades those records to fail;
+    evidence is never invented, padded or suppressed.
     """
-    candidate_digest: str | None = None
+    events = _version_events(store, version)
+    candidate_digest = _binding_candidate_digest(events)
     per_ac: dict[str, dict] = {}
-    for run_id in store.runs_for_version(version):
-        for event in store.events(run_id):
-            candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
+    for event in events:
+        candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
     return candidate_digest, per_ac
 
 
