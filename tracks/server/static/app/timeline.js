@@ -1086,7 +1086,13 @@ function currentCard(detail, events, state, stages = []) {
   // guidance gates already mount the owning-surface entry inside their
   // action face; every other face gets exactly one explicit entry here.
   if (gateAction !== "guidance") {
-    card.append(element("div", { class: "card-links" }, [owningSurfaceEntry()]));
+    card.append(element("div", { class: "card-links" }, [
+      owningSurfaceEntry({
+        projectId: detail && detail.project_id,
+        version: detail && detail.version,
+        doc: owningDocForStage(stage),
+      }),
+    ]));
   }
   return card;
 }
@@ -2757,24 +2763,33 @@ function nodeDetail(stage, detail, events) {
  * the node; the return restores the same run and node context. The frozen
  * face pins detail-owning-surface: the jump link carries it (the owning
  * surface entry), so exactly one exists per pane. */
-function owningSurfaceEntry() {
+function owningDocForStage(stage) {
+  if (stage === "M-DESIGN") return "architecture";
+  if (stage === "M-TEST") return "test-plan";
+  if (stage === "M-IMPL") return "interfaces";
+  return "architecture";
+}
+
+function owningSurfaceEntry({ projectId = null, version = null, doc = "architecture" } = {}) {
   const jump = element("a", {
     class: "owning-surface-link",
     "data-testid": "detail-owning-surface",
-    href: "#",
-    text: "查看所属文档",
+    href: version ? `#docs/${encodeURIComponent(version)}/${doc}` : "#docs",
+    text: `查看对应文档（${doc}.md）`,
   });
   jump.addEventListener("click", async (event) => {
     event.preventDefault();
-    // the owning surface entry opens the docs window in-page (same
-    // document — FR-0316) and the return restores the same run context:
-    // both legs ride the tab machine. The run id rides the operation-zone
-    // dataset so the return re-focuses the same run (run_id in the URL
-    // after).
+    // Open the exact version/document owning the current stage.
     const host = jump.closest("[data-run-id]");
     const runId = host ? host.getAttribute("data-run-id") : null;
     const { openTab } = await import("./tabs.js");
-    openTab("docs", { feature: "docs", title: "docs" });
+    openTab("docs", {
+      feature: "docs",
+      title: `${version || "docs"} · ${doc}.md`,
+      ...(projectId ? { projectId } : {}),
+      ...(version ? { version } : {}),
+      doc,
+    });
     globalThis.setTimeout(async () => {
       const { openTab: reopen } = await import("./tabs.js");
       const releases = reopen("releases", {
@@ -3210,7 +3225,10 @@ export function primaryActionFace(encoded, action, actionsEl, detail) {
     }
   } else {
     // guidance: no action endpoint — owning surface direction only (§1k.2).
-    mount.append(owningSurfaceEntry());
+    mount.append(owningSurfaceEntry({
+      version: detail && detail.version,
+      doc: owningDocForStage(detail && detail.stage),
+    }));
   }
   return wrap;
 }

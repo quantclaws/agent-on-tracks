@@ -204,7 +204,10 @@ export function renderDocsView(body, context = {}) {
     body.__beforeUnmount = workbench.prepareUnmount;
     // Within the session the window reopens on the last document (any
     // version); a fresh session starts blank until the sidebar selects one.
-    const last = lastOpenDoc.get(projectId);
+    const requested = context.version && context.doc
+      ? { version: context.version, doc: context.doc }
+      : null;
+    const last = requested || lastOpenDoc.get(projectId);
     if (
       last &&
       versions.some(
