@@ -192,7 +192,7 @@ the host Executor keeps construction and the command handlers."""
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
     ):
-        payload = self._attach_credential_hint(payload)
+        payload = self._attach_credential_hint(type, payload)
         ev = self.store.append(
             self.run_id, self.version, type, payload, command_id=command_id, task_id=task_id
         )

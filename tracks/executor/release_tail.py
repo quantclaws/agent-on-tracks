@@ -263,13 +263,15 @@ class ExecReleaseTailMixin:
         )
         return issue_id
 
-    def _attach_credential_hint(self, payload: dict) -> dict:
+    def _attach_credential_hint(self, event_type: str, payload: dict) -> dict:
         """Carry the canonical hint on a rejected hotfix precheck event.
 
         The precheck event is the operator's diagnostic outlet (CLI reads
         ``next``); attaching the hint here keeps the hotfix-entry path and
         the supervisor intake path on one credential contract.
         """
+        if event_type != "triage.prechecked":
+            return payload
         if (payload or {}).get("reason") != "issue_fetch_failed":
             return payload
         hint = _credential_hint()
