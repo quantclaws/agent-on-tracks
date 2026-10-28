@@ -27,6 +27,7 @@ from tracks.supervisor.intake import (
     _next_release_version,
     _now_iso,
     _preflight_develop_gates,
+    canonical_credential_hint,
 )
 
 # v0.11 closed enums (interfaces §1b #14-18 params columns).
@@ -90,8 +91,11 @@ class IntakeCommands:
             issue = select_issue_backend(repo, "").fetch_issue(number)
         except GithubIssuesError as exc:
             classification = getattr(exc, "classification", "") or "network"
-            deny("issue_fetch_failed",
-                f"issue {number} could not be fetched ({classification}): {exc}")
+            detail = f"issue {number} could not be fetched ({classification}): {exc}"
+            hint = canonical_credential_hint()
+            if hint:
+                detail = f"{detail} ({hint})"
+            deny("issue_fetch_failed", detail)
         if issue is None:
             deny("issue_fetch_failed",
                 f"issue {number} could not be fetched (not_found):"

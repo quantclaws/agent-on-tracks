@@ -19,11 +19,35 @@ from tracks.effects.github import (
     reject_fake_artifact,
     select_issue_backend,
 )
+from tracks.kernel.attention import unresolved_attentions
 
 _ISSUE_TOKEN_NEXT = (
     "export GITHUB_TOKEN (and TRAC_GITHUB_REPO) then re-run;"
     " no silent Fake fallback is consumed"
 )
+
+
+def _has_unresolved_missing_token(events) -> bool:
+    """True while an issue_creation/missing_token attention still blocks."""
+    return any(
+        (event.payload or {}).get("area") == "issue_creation"
+        and (event.payload or {}).get("reason") == "missing_token"
+        for event in unresolved_attentions(events)
+    )
+
+
+def _credential_hint() -> str:
+    """The canonical-credential hint when a legacy variable is present."""
+    from tracks.supervisor.intake import canonical_credential_hint  # cycle-safe
+
+    return canonical_credential_hint()
+
+
+def _missing_token_detail(error: Exception) -> str:
+    """Error detail plus the canonical hint when a legacy variable is set."""
+    hint = _credential_hint()
+    detail = str(error)
+    return f"{detail} ({hint})" if hint else detail
 
 
 class IssueCreationFailure(RuntimeError):
@@ -239,6 +263,20 @@ class ExecReleaseTailMixin:
         )
         return issue_id
 
+    def _attach_credential_hint(self, payload: dict) -> dict:
+        """Carry the canonical hint on a rejected hotfix precheck event.
+
+        The precheck event is the operator's diagnostic outlet (CLI reads
+        ``next``); attaching the hint here keeps the hotfix-entry path and
+        the supervisor intake path on one credential contract.
+        """
+        if (payload or {}).get("reason") != "issue_fetch_failed":
+            return payload
+        hint = _credential_hint()
+        if not hint:
+            return payload
+        return {**payload, "next": f"{hint}; {payload.get('next') or ''}".strip("; ")}
+
     def _ensure_issue_backend(self, cmd, task_id):
         """Select (once) and return the issue backend, failing closed."""
         if self._issue_backend is not None:
@@ -247,17 +285,19 @@ class ExecReleaseTailMixin:
             self._issue_backend = select_issue_backend(self.repo, self.version)
         except GithubIssuesError as exc:
             if exc.classification == "missing_token":
-                self._emit(
-                    "attention.required",
-                    {
-                        "area": "issue_creation",
-                        "reason": "missing_token",
-                        "detail": str(exc),
-                        "next": _ISSUE_TOKEN_NEXT,
-                    },
-                    command_id=cmd.command_id,
-                    task_id=task_id,
-                )
+                if not _has_unresolved_missing_token(self.store.events(self.run_id)):
+                    self._emit(
+                        "attention.required",
+                        {
+                            "area": "issue_creation",
+                            "reason": "missing_token",
+                            "stage": self.store.state(self.run_id).stage,
+                            "detail": _missing_token_detail(exc),
+                            "next": _ISSUE_TOKEN_NEXT,
+                        },
+                        command_id=cmd.command_id,
+                        task_id=task_id,
+                    )
                 return None
             raise
         return self._issue_backend
