@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,7 @@ from tracks.supervisor.intake import (
     _backlog_entry_exists,
     _entry_disposed,
     _issue_number,
+    _live_issue_channel,
     _next_release_version,
     _now_iso,
     _preflight_develop_gates,
@@ -84,9 +86,32 @@ class IntakeCommands:
                 request["content"] = f"#{number}: {issue.title}\n\n{issue.body}"
 
     def _fetch_issue_or_deny(self, repo: Path, number: int, deny: RejectFn) -> Any:
-        """Issue fetch with the IF-HOTFIX-011 classification mapping AC-FR0338-01 SM-01.5"""
+        """Issue fetch with the IF-HOTFIX-011 classification mapping AC-FR0338-01 SM-01.5
+
+        IF-ATTN-001 §1d.1 / §1d.4: the canonical-credential preflight
+        runs HERE, before the issue channel is selected, so the
+        deterministic (fake) channel cannot bypass it. A missing
+        canonical credential is denied as ``issue_fetch_failed`` (never
+        downgraded to ``issue_not_found``).
+
+        The deterministic channel's READ is the legitimate stand-in corpus
+        (the L2 contract-sim read the intake accepts), so the preflight
+        applies to the LIVE channel only: the stand-in read needs no
+        credential, while the live read and every issue WRITE do.
+        """
         from tracks.effects.github import GithubIssuesError, select_issue_backend
 
+        if _live_issue_channel() and not os.environ.get("GITHUB_TOKEN"):
+            detail = (
+                "missing_token: issue "
+                f"{number} could not be fetched (missing_token): "
+                "GITHUB_TOKEN is not set; the live issue channel is "
+                "unauthenticated"
+            )
+            hint = canonical_credential_hint()
+            if hint:
+                detail = f"{detail} ({hint})"
+            deny("issue_fetch_failed", detail)
         try:
             issue = select_issue_backend(repo, "").fetch_issue(number)
         except GithubIssuesError as exc:

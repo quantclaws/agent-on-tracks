@@ -50,6 +50,71 @@ def _missing_token_detail(error: Exception) -> str:
     return f"{detail} ({hint})" if hint else detail
 
 
+def _missing_credential_detail() -> str:
+    """The preflight's own detail: the classification plus the hint.
+
+    IF-ATTN-001 §1d.1: when the canonical ``GITHUB_TOKEN`` is absent and a
+    legacy variable is exported, the diagnostic names the variable it found
+    together with the canonical export. The detail always carries the
+    ``missing_token`` classification so the operator (and the replay) can
+    tell an absent credential from an absent issue.
+    """
+    hint = _credential_hint()
+    detail = (
+        "missing_token: GITHUB_TOKEN is not set; "
+        "the live issue channel is unauthenticated"
+    )
+    return f"{detail} ({hint})" if hint else detail
+
+
+def _issue_channel() -> str:
+    """The issue channel this run writes through: ``live`` or ``stand_in``.
+
+    The AGENT channel (``TRAC_AGENT_BACKEND`` / ``TRAC_FAKE_SIMULATE``)
+    and the ISSUE channel are separate concerns: the agent channel decides
+    who produces the documents, the issue channel decides where the
+    operator-facing issues live. ``TRAC_ISSUE_CHANNEL`` names the issue
+    channel explicitly; without it the issue channel follows the agent
+    channel (the historical behaviour, so every existing journey keeps
+    its stand-in).
+
+    The explicit value is the seam the missing-token journey needs: it
+    selects the LIVE channel while the agent channel stays deterministic,
+    so the canonical-credential preflight is exercised for real.
+    """
+    explicit = os.environ.get("TRAC_ISSUE_CHANNEL", "").strip().lower()
+    if explicit in ("live", "stand_in"):
+        return explicit
+    if os.environ.get("TRAC_FAKE_SIMULATE"):
+        return "stand_in"
+    if os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake":
+        return "stand_in"
+    return "live"
+
+
+def _select_issue_backend(repo: Path, version: str):
+    """The issue backend for the run's issue channel.
+
+    ``stand_in`` is the deterministic L2 contract-sim channel (the issue
+    is recorded locally and persisted ``api_verified=false``).
+    ``live`` is the real GitHub channel: it needs the canonical
+    ``GITHUB_TOKEN`` and fails closed with the classified
+    ``missing_token`` error when it is absent.
+    """
+    if _issue_channel() == "live":
+        if not os.environ.get("GITHUB_TOKEN"):
+            raise GithubIssuesError(
+                "missing_token",
+                "GITHUB_TOKEN not set - see the live GitHub journey "
+                "prerequisites section in docs/getting-started/installation.md "
+                "(GITHUB_TOKEN / TRAC_GITHUB_REPO / TLS & TRAC_GITHUB_CA_BUNDLE)",
+            )
+        from tracks.effects.github import GithubBackend
+
+        return GithubBackend(repo, version)
+    return select_issue_backend(repo, version)
+
+
 class IssueCreationFailure(RuntimeError):
     """Structured ``create_issues`` failure boundary for the drive layer.
 
@@ -280,29 +345,45 @@ class ExecReleaseTailMixin:
         return {**payload, "next": f"{hint}; {payload.get('next') or ''}".strip("; ")}
 
     def _ensure_issue_backend(self, cmd, task_id):
-        """Select (once) and return the issue backend, failing closed."""
+        """Select (once) and return the issue backend, failing closed.
+
+        IF-ATTN-001 §1d.1 / §1d.4: the canonical-credential preflight runs
+        at this entry BEFORE the channel is used, so no channel can bypass
+        it. The preflight fails closed with the classified missing_token
+        attention (deduplicated, §1d.3).
+        """
         if self._issue_backend is not None:
             return self._issue_backend
         try:
-            self._issue_backend = select_issue_backend(self.repo, self.version)
+            self._issue_backend = _select_issue_backend(self.repo, self.version)
         except GithubIssuesError as exc:
             if exc.classification == "missing_token":
-                if not _has_unresolved_missing_token(self.store.events(self.run_id)):
-                    self._emit(
-                        "attention.required",
-                        {
-                            "area": "issue_creation",
-                            "reason": "missing_token",
-                            "stage": self.store.state(self.run_id).stage,
-                            "detail": _missing_token_detail(exc),
-                            "next": _ISSUE_TOKEN_NEXT,
-                        },
-                        command_id=cmd.command_id,
-                        task_id=task_id,
-                    )
+                self._emit_missing_token_attention(cmd, task_id, exc)
                 return None
             raise
         return self._issue_backend
+
+    def _emit_missing_token_attention(self, cmd, task_id, error: Exception | None = None):
+        """The classified missing_token attention, emitted at most once."""
+        if _has_unresolved_missing_token(self.store.events(self.run_id)):
+            return
+        detail = (
+            _missing_token_detail(error)
+            if error is not None
+            else _missing_credential_detail()
+        )
+        self._emit(
+            "attention.required",
+            {
+                "area": "issue_creation",
+                "reason": "missing_token",
+                "stage": self.store.state(self.run_id).stage,
+                "detail": detail,
+                "next": _ISSUE_TOKEN_NEXT,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
     def _create_issue_items(self, backend, digest, done, cmd, task_id) -> bool:
         """Create every not-yet-logged item; False stops the command."""
