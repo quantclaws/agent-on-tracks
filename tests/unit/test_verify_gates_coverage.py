@@ -147,6 +147,9 @@ def _selection(seq=1, command_id="C1", commit="SHA", selection_id="SEL", nodes=N
     )
 
 
+_DEFAULT_IDENTITY_BASIS = object()
+
+
 def _execution(
     seq=2,
     command_id="C1",
@@ -156,23 +159,37 @@ def _execution(
     passed=True,
     eligible=True,
     outcomes_ref="out1",
-    identity_basis=("x",),
+    round_name="FULL_F",
+    evidence_ids=("e1",),
+    serves_as_full_f=False,
+    identity_basis=_DEFAULT_IDENTITY_BASIS,
 ):
-    return _ev(
-        seq,
-        "full.executed",
-        {
-            "execution_commit": commit,
-            "selection_event_seq": selection_seq,
-            "selection_id": selection_id,
-            "selection_command_id": command_id,
-            "passed": passed,
-            "full_f_eligible": eligible,
-            "outcomes_ref": outcomes_ref,
-            "identity_basis": list(identity_basis),
-        },
-        command_id=command_id,
+    basis = (
+        ["TREE", ["cmd"], "ENV", selection_id]
+        if identity_basis is _DEFAULT_IDENTITY_BASIS
+        else list(identity_basis)
     )
+    payload = {
+        "round": round_name,
+        "execution_commit": commit,
+        "selection_event_seq": selection_seq,
+        "selection_id": selection_id,
+        "selection_command_id": command_id,
+        "passed": passed,
+        "full_f_eligible": eligible,
+        "serves_as_full_f": serves_as_full_f,
+        "outcomes_ref": outcomes_ref,
+        "evidence_ids": None if evidence_ids is None else list(evidence_ids),
+        "identity_basis": basis,
+    }
+    if identity_basis is _DEFAULT_IDENTITY_BASIS:
+        payload["identity"] = {
+            "tree": "TREE",
+            "command": ["cmd"],
+            "env": "ENV",
+            "selection_id": selection_id,
+        }
+    return _ev(seq, "full.executed", payload, command_id=command_id)
 
 
 def test_full_f_producer_accepts_complete_passed_execution(tmp_path: Path):
@@ -192,6 +209,8 @@ def test_full_f_producer_accepts_complete_passed_execution(tmp_path: Path):
         lambda evs: [evs[0], _execution(commit="OTHER")],
         lambda evs: [evs[0], _execution(passed=False)],
         lambda evs: [evs[0], _execution(eligible=False)],
+        # 5896 shape: serves_as_full_f=true, full_f_eligible=false.
+        lambda evs: [evs[0], _execution(eligible=False, serves_as_full_f=True)],
         lambda evs: [evs[0], _execution(selection_seq="1")],
         lambda evs: [evs[0], _execution(selection_seq=9)],
         lambda evs: [evs[0], _execution(seq=1)],
@@ -204,6 +223,37 @@ def test_full_f_producer_rejects_invalid_producers(tmp_path: Path, mutate):
     events = mutate([_selection(), _execution()])
     host.store = _FakeStore(events)
     host.blobs["out1"] = [{"node": NODE, "status": "passed", "evidence_id": "e1"}]
+    assert host._full_f_producer("SHA") == (None, None)
+
+
+# AC-FR0268-01@v0.8 TRACKS-TRACE IF-FULLF-001 7362 shape accepted by the producer
+def test_full_f_producer_accepts_7362_shape_with_serves_false(tmp_path: Path):
+    host = _Host(tmp_path)
+    host.store = _FakeStore(
+        [_selection(), _execution(serves_as_full_f=False, eligible=True)]
+    )
+    host.blobs["out1"] = [{"node": NODE, "status": "passed", "evidence_id": "e1"}]
+
+    producer, selection = host._full_f_producer("SHA")
+
+    assert producer is not None and producer.type == "full.executed"
+    assert selection is not None and selection.seq == 1
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda evs: [evs[0], _execution(round_name="FULL_2")],
+        lambda evs: [evs[0], _execution(evidence_ids=())],
+        lambda evs: [evs[0], _execution(evidence_ids=None)],
+    ],
+)
+def test_full_f_producer_uses_the_shared_authority_predicate(tmp_path: Path, mutate):
+    """The producer must reject payloads the shared INV-1 predicate rejects."""
+    host = _Host(tmp_path)
+    host.store = _FakeStore(mutate([_selection(), _execution()]))
+    host.blobs["out1"] = [{"node": NODE, "status": "passed", "evidence_id": "e1"}]
+
     assert host._full_f_producer("SHA") == (None, None)
 
 

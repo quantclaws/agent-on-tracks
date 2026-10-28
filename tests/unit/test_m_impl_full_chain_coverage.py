@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.unit.full_f_authority_support import authority
 from tracks.executor import m_impl_full_chain as full_chain
 from tracks.executor import verify_gates
 from tracks.executor.m_impl_full_chain import MImplFullChainMixin
@@ -749,6 +750,9 @@ def test_finalize_full_round_payload(tmp_path: Path):
     payload = host._finalize_full_round(header, run, evidence)
     assert payload["passed"] is True
     assert payload["serves_as_full_f"] is True
+    # IF-FULLF-001: the double-key payload is itself the authoritative proof.
+    assert payload["full_f_eligible"] is True
+    assert authority(payload, payload["execution_commit"]) is True
     assert payload["candidate_sha"] == "SHA"
     assert payload["reason"] == "stale"
     event, event_payload, kwargs = host.emitted[0]

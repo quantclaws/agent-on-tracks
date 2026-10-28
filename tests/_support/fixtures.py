@@ -20,6 +20,7 @@ _UNDER_COVERAGE = "coverage" in sys.modules
 _REAL_GITHUB_ENV_VARS = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    "GITHUB_ACCESS_TOKEN",
     "TRAC_GITHUB_REPO",
     "TRAC_GITHUB_CA_BUNDLE",
     "GH_HOST",
@@ -165,6 +166,25 @@ def trac(host_repo, steps, tmp_path):
     def run(*args, stdin=None, simulate=None):
         env = _subprocess_env()
         env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
+        # The ISSUE channel is separate from the AGENT channel (IF-ATTN-001
+        # §1d.1): the agent channel decides who produces the documents, the
+        # issue channel decides where the operator-facing issues live. When
+        # the caller names it explicitly it travels with the run, so a
+        # journey can drive the live channel (and its canonical-credential
+        # preflight) while the agent channel stays deterministic.
+        issue_channel = os.environ.get("TRAC_ISSUE_CHANNEL", "").strip()
+        if not issue_channel and not env.get("GITHUB_TOKEN") and any(
+            env.get(legacy) for legacy in ("GITHUB_ACCESS_TOKEN", "GH_TOKEN")
+        ):
+            # The canonical-credential scenario (IF-ATTN-001 §1d.1): the
+            # canonical token is absent and a LEGACY variable the JOURNEY
+            # exported is present. The live issue channel is the one that
+            # needs the canonical token, so the run drives it and the
+            # credential preflight is exercised for real; the agent channel
+            # stays deterministic.
+            issue_channel = "live"
+        if issue_channel:
+            env["TRAC_ISSUE_CHANNEL"] = issue_channel
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
         if _UNDER_COVERAGE:
