@@ -658,6 +658,9 @@ def test_intakes_list_serves_rows_with_status_filter(tmp_path: Path):
         "in-eval",
         "in-sub",
     }, "the list serves the project's intake rows"
+    assert next(row for row in rows if row["intake_id"] == "in-sub")["content"] == (
+        "issue input"
+    ), "the intake list exposes human-readable source content"
 
     status, payload = _call(
         "/api/projects/{pid}/intakes",
@@ -695,6 +698,7 @@ def test_intake_detail_serves_report_and_fails_closed(tmp_path: Path):
         "created_ts",
     }, "the detail row carries the §1f.3 schema"
     assert payload["status"] == "evaluated"
+    assert payload["content"] == "evaluated input"
     assert isinstance(payload["report"], dict) and payload["report"]["title"] == (
         "seed story"
     ), "report arrives as the parsed §1f.2 object"
@@ -825,6 +829,24 @@ def test_releases_module_backlog_promotion_uses_intake_channel():
     )
 
 
+# AC-FR0340-01@v0.11 TRACKS-TRACE IF-RELEASES-001 pending intake is a human
+# decision inbox, not a raw supervisor queue.
+def test_releases_pending_intakes_are_human_readable_and_evaluated_only():
+    releases = _module("releases.js")
+    assert 'new Set(["evaluated"])' in releases
+    assert "未命名需求" in releases
+    assert "content" in releases
+    assert "查看建议并决策" in releases
+    assert "return String(row.intake_id || \"\")" not in releases
+
+
+def test_releases_marks_active_hotfix_before_published_baseline():
+    releases = _module("releases.js")
+    assert "当前进行中" in releases
+    assert "基于 v" in releases
+    assert "Number(active(b)) - Number(active(a))" in releases
+
+
 # AC-FR0341-01@v0.11 TRACKS-TRACE IF-HOTFIXUI-001 hotfix entry: scenario + preview + anchoring
 def test_releases_module_hotfix_entry_shows_preview_and_anchoring():
     wizard = _module("wizard.js")
@@ -879,6 +901,15 @@ def test_timeline_fixed_detail_pane_replaces_the_overlay():
         "the v0.10 floating overlay is replaced by the fixed pane — no overlay"
         " remains (§0.1 #13 破坏性变更)"
     )
+
+
+def test_timeline_current_card_does_not_render_legacy_run_chrome():
+    timeline = _module("timeline.js")
+    assert "监管进程" not in timeline
+    assert "card-owner" not in timeline
+    assert "card-attempt" not in timeline
+    assert "card-duration" not in timeline
+    assert "owning-surface-return" not in timeline
     assert "selected" in timeline and "active" in timeline, (
         "the pane distinguishes the selected node from the currently active"
         " node with two separate markers (§1l.2 双标记)"

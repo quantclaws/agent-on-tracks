@@ -1042,6 +1042,7 @@ def _intake_json(row: dict, *, with_report: bool) -> dict:
     payload = {
         "intake_id": row.get("intake_id"),
         "source": row.get("source"),
+        "content": row.get("content"),
         "status": row.get("status"),
         "decision": row.get("decision"),
         "created_ts": row.get("created_at"),
@@ -1049,6 +1050,7 @@ def _intake_json(row: dict, *, with_report: bool) -> dict:
     if with_report:
         report = _json_value(row.get("report_json"))
         payload["report"] = report if isinstance(report, dict) else None
+        payload["content"] = row.get("content")
     return payload
 
 
