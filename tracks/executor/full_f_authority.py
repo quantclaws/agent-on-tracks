@@ -45,17 +45,34 @@ def _evidence_ids_present(payload: Mapping) -> bool:
     )
 
 
+def _non_empty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _command_identity(value: object) -> bool:
+    """A command identity is a non-empty sequence of non-empty argv strings."""
+    return (
+        isinstance(value, (list, tuple))
+        and bool(value)
+        and all(_non_empty_text(part) for part in value)
+    )
+
+
 def _selection_id(payload: Mapping) -> str | None:
     selection_id = payload.get("selection_id")
-    if isinstance(selection_id, str) and selection_id.strip():
-        return selection_id
-    return None
+    return selection_id if _non_empty_text(selection_id) else None
 
 
 def _identity_mapping_matches(identity: object, selection_id: str) -> bool:
+    """Every quadruple component must be present, not just the selection id."""
     if not isinstance(identity, Mapping):
         return False
-    return identity.get("selection_id") == selection_id
+    return (
+        identity.get("selection_id") == selection_id
+        and _non_empty_text(identity.get("tree"))
+        and _command_identity(identity.get("command"))
+        and _non_empty_text(identity.get("env"))
+    )
 
 
 def _identity_basis_matches(
@@ -65,16 +82,15 @@ def _identity_basis_matches(
         return False
     if basis[3] != selection_id:
         return False
+    if not _non_empty_text(basis[0]) or not _non_empty_text(basis[2]):
+        return False
+    if not _command_identity(basis[1]):
+        return False
     if identity is None:
         return True
-    command = identity.get("command")
-    if not isinstance(command, (list, tuple)):
-        return False
-    if not isinstance(basis[1], (list, tuple)):
-        return False
     return (
         basis[0] == identity.get("tree")
-        and list(basis[1]) == list(command)
+        and list(basis[1]) == list(identity.get("command"))
         and basis[2] == identity.get("env")
     )
 
