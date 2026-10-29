@@ -16,8 +16,8 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from tracks.executor.helpers import git, parse_collected_nodes, run_collect_command
-from tracks.executor.host_contract import declared_install_interpreter
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist, declared_install_interpreter
+from tracks.executor.host_env import host_process_env
 from tracks.executor.test_select import (
     BaselineAssets,
     TestSelectError,

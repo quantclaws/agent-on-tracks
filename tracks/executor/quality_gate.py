@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Literal
 
 from tracks.executor.helpers import _ILLEGIT_KEYWORDS as _COLLECTION_KEYWORDS
-from tracks.executor.host_contract import declared_install_interpreter
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist, declared_install_interpreter
+from tracks.executor.host_env import host_process_env
 
 
 def host_test_env() -> dict[str, str]:
@@ -236,7 +236,10 @@ def execute_gate_command(
     serve shell cannot leak into host test commands."""
     argv = shlex.split(command)
     argv = _resolve_argv0(argv, cwd)
-    run_env = host_process_env(env_extra, contract_env_allowlist(cwd))
+    run_env = host_process_env(
+        extra=env_extra,
+        contract_allowlist=contract_env_allowlist(cwd),
+    )
     try:
         proc = subprocess.run(
             argv,

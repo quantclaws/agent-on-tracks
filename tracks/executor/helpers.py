@@ -10,7 +10,8 @@ import subprocess
 from pathlib import Path
 
 from tracks.effects.devon_evidence import DEVON_EVIDENCE_FIELDS
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.store import Store
 
 

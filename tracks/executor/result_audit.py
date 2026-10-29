@@ -12,7 +12,8 @@ import subprocess
 import sys
 
 from tracks.executor.helpers import git
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.executor.validate import (
     has_diff,
     is_discussion_diff,

@@ -21,10 +21,11 @@ from .host_contract import (
     LocalGateDecl,
     NormalizedGateResult,
     SecurityScanDecl,
+    contract_env_allowlist,
     execute_gate,
     parse_json_report,
 )
-from .host_env import contract_env_allowlist, host_process_env
+from .host_env import host_process_env
 
 
 def security_policy_digest(contract: HostContract) -> str:

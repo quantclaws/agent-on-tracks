@@ -17,7 +17,8 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor.helpers import git
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.executor.m_impl_anchor import (
     emit_devon_outcome_failure,
 )

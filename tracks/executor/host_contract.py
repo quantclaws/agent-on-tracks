@@ -4,8 +4,8 @@ The ``[host-contract.*]`` namespaced sections of the host's
 ``.tracks/projects/project.toml`` are the machine truth Archer materializes
 per host (architecture §1.0.3/§3.1): language/toolchain declaration,
 dependency install, local gates for M-VERIFY, build/artifact, post-install
-smoke, version scheme, M-SECURITY scan policy, required-CI binding and
-M-PUBLISH operation plans.
+smoke, version scheme, M-SECURITY scan policy, required-CI binding,
+process-boundary env escape hatch and M-PUBLISH operation plans.
 
 The Runtime only executes declared commands and consumes versioned
 ``tracks-gate-result`` normalized results; it never interprets host language
@@ -30,7 +30,8 @@ from typing import Literal
 
 import tomllib
 
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks import paths
+from tracks.executor.host_env import host_process_env
 
 GATE_RESULT_PROTOCOL = "tracks-gate-result"
 GATE_RESULT_VERSION = 1
@@ -347,6 +348,37 @@ def load_host_contract(path: Path) -> HostContract:
         smoke_timeout_seconds=int(table.get("smoke", {}).get("timeout_seconds", 600)),
         env_allowlist=_load_env_allowlist(table),
     )
+
+
+def contract_env_allowlist(repo: str | Path | None) -> tuple[str, ...]:
+    """Resolve ``[host-contract].env_allowlist`` for the host project *repo*.
+
+    Walks up from *repo* to the project root so sites whose cwd is a nested
+    section still see the single contract. A missing/unreadable/malformed
+    contract returns the empty tuple: the escape hatch can only widen what
+    the host explicitly declared, never fail open.
+    """
+    if repo is None:
+        return ()
+    root = Path(repo)
+    candidates = [
+        base.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        for base in (root, *root.parents)
+    ]
+    try:
+        relocated = paths.project_toml_path(paths.tracks_home(root))
+    except (OSError, ValueError):
+        relocated = None
+    if relocated is not None and relocated not in candidates:
+        candidates.append(relocated)
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            return tuple(load_host_contract(path).env_allowlist)
+        except (OSError, ValueError):
+            return ()
+    return ()
 
 
 def _optional_channel(table: dict, label: str) -> ResultChannel:
@@ -722,8 +754,9 @@ def declared_install_interpreter(repo: Path | str) -> str:
     canonical ``[host-contract]`` table and returns its declared install
     interpreter; the reference-contract default on a missing/malformed
     contract, so construction never hardcodes the spelling (NFR-0147).
-    Lives on this leaf module (no internal imports) so every executor
-    consumer can import it without import-order hazards.
+    Lives on this module, whose only executor dependency is the leaf
+    ``host_env`` module, so every consumer can import it without
+    import-order hazards.
     """
     try:
         contract = load_host_contract(

@@ -32,7 +32,8 @@ from pathlib import Path
 from tracks.adapters.base import TestRunResult
 from tracks.executor import mutation as _mutation_facade  # facade-first (cycle-safe)
 from tracks.executor.helpers import git
-from tracks.executor.host_env import contract_env_allowlist, host_process_env
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.kernel.events import Command
 
 # Per-node execution budget: single nodes run in seconds; the bound keeps a

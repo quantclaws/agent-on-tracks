@@ -21,16 +21,15 @@ Strip set (always wins, including over ``extra`` and the escape hatch):
   GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE *_TOKEN *_SECRET *_API_KEY
 
 Escape hatch: ``[host-contract].env_allowlist`` in project.toml names
-host-declared non-secret variables. ``contract_env_allowlist`` resolves it
-for a repo; a missing or malformed contract yields the empty tuple (the
-strictly more restrictive choice), never a wider environment.
+host-declared non-secret variables. ``tracks.executor.host_contract`` owns
+that contract and resolves the declared names for a repo; this module stays
+a leaf and only applies the allowlist/strip rules.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Iterable, Mapping
-from pathlib import Path
 
 BASE_ALLOWLIST = frozenset(
     {
@@ -119,37 +118,3 @@ def host_process_env(
         if not _stripped(name):
             env[name] = value
     return env
-
-
-def contract_env_allowlist(repo: str | Path | None) -> tuple[str, ...]:
-    """Resolve ``[host-contract].env_allowlist`` for the host project *repo*.
-
-    Walks up from *repo* to the project root so sites whose cwd is a nested
-    section still see the single contract. A missing/unreadable/malformed
-    contract returns the empty tuple: the escape hatch can only widen what
-    the host explicitly declared, never fail open.
-    """
-    if repo is None:
-        return ()
-    from tracks import paths
-    from tracks.executor.host_contract import load_host_contract
-
-    root = Path(repo)
-    candidates = [
-        base / ".tracks" / "projects" / "project.toml"
-        for base in (root, *root.parents)
-    ]
-    try:
-        relocated = paths.project_toml_path(paths.tracks_home(root))
-    except (OSError, ValueError):
-        relocated = None
-    if relocated is not None and relocated not in candidates:
-        candidates.append(relocated)
-    for path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            return tuple(load_host_contract(path).env_allowlist)
-        except (OSError, ValueError):
-            return ()
-    return ()
