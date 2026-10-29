@@ -452,6 +452,33 @@ def test_prism_final_revise_no_classification_keeps_default_green():
     assert s.substate == "GREEN"
 
 
+def test_prism_final_revise_mixed_blocking_findings_route_diagnose():
+    """Live defect (hotfix #262 T-003, 2026-10-29): PRISM_FINAL revise
+    carried two blocker findings with different defect classifications
+    (red_defect + plan_defect) and no top-level field. The sole-voice
+    derivation returns None, and the historical GREEN default dispatches an
+    agent that can touch neither the frozen RED test nor the out-of-scope
+    test file. Mixed blocking voices must go to DIAGNOSE for one owner."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {"id": "F1", "severity": "blocker", "summary": "red test defect",
+                 "defect_classification": "red_defect"},
+                {"id": "F2", "severity": "blocker", "summary": "scope defect",
+                 "defect_classification": "plan_defect"},
+            ],
+        },
+    )
+    s = state_of(*m_impl.prism_final_done(), revise)
+    assert s.substate == "DIAGNOSE"
+    assert s.diagnose_classification is None
+    assert s.current_attempt == 0, "attribution must not consume a writer attempt"
+    assert [f["id"] for f in s.last_failure["evidence"]] == ["F1", "F2"]
+
+
 def test_prism_red_revise_sole_voice_plan_defect_routes_replan():
     """Live defect (run 01M2QTJB T-017, 2026-09-21 14:28-14:30): both findings
     carried defect_classification=plan_defect (no-legitimate-Red retype
