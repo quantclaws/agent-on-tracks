@@ -359,7 +359,11 @@ def _bind_retry(
     """FR-0311: retry only from the legal position (v0.8 repair/escape gate)."""
     del project  # the retry position is a run-plane fact only
     _events, state = _run_plane(str(repo), run_id)
-    gate_error = _retry_gate_error(state, bool(request.get("clear_evidence")))
+    gate_error = _retry_gate_error(
+        state,
+        bool(request.get("clear_evidence")),
+        reset_dispatch=bool(request.get("reset_dispatch")),
+    )
     if gate_error is not None:
         deny("validation_failed", f"retry rejected: {gate_error}")
 
@@ -861,6 +865,7 @@ class CommandService(IntakeCommands):
                     {
                         "actor": actor,
                         "clear_evidence": bool(request.get("clear_evidence")),
+                        "reset_dispatch": bool(request.get("reset_dispatch")),
                     },
                     command_id=command_id,
                 )

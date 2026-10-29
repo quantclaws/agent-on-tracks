@@ -300,6 +300,45 @@ def test_human_retry_clear_evidence_recovers_active_killed_dispatch():
     assert "evidence" not in cmd.params
 
 
+def test_human_retry_reset_dispatch_preserves_evidence_after_killed_dispatch():
+    """A killed Archer/Prism dispatch must be retryable without discarding the
+    still-valid finding. `reset_dispatch=true` clears the dispatch flags so
+    decide() issues a fresh attempt, but keeps last_failure on the assignment."""
+    reset = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+        ("human.retry", {}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {
+                        "role": "scribe",
+                        "substate": "DRAFT",
+                        "attempt": 1,
+                        "evidence": {"check": "schema"},
+                    },
+                    "command_id": "C1",
+                }
+            },
+        ),
+        ("human.retry", {"reset_dispatch": True}),
+    )
+    assert reset.status == "active"
+    assert reset.current_attempt == 0
+    assert reset.last_failure["check"] == "schema"
+    assert reset.doc_dispatched is False
+    assert reset.pending is None
+    cmd = decide(reset)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["attempt"] == 1
+    assert cmd.params["evidence"]["check"] == "schema"
+
+
 def test_human_retry_ordinary_preserves_evidence_after_escalation():
     """Ordinary `human.retry` (no clear_evidence) preserves last_failure so the
     re-dispatch prompt carries the failure evidence (FR-11). Backward compat:

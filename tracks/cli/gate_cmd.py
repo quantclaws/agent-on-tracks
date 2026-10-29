@@ -74,14 +74,15 @@ def _retryable_gate_evidence_block(state, events) -> bool:
 
 
 def _retry_gate_error(
-    state, clear_evidence: bool, attention=None, events=None
+    state, clear_evidence: bool, attention=None, events=None, *, reset_dispatch: bool = False
 ) -> str | None:
-    if clear_evidence:
+    if clear_evidence or reset_dispatch:
         if state.awaiting != "escalation" and not (
             state.status == "active" and state.awaiting is None
         ):
             return (
-                "retry --clear-evidence requires escalation or a clean "
+                "retry --clear-evidence/--reset-dispatch requires escalation "
+                "or a clean "
                 f"active state (status={state.status} "
                 f"awaiting={state.awaiting or 'nothing'})"
             )
@@ -106,9 +107,13 @@ def _retry_gate_error(
 
 
 def cmd_retry(repo: Path, *args: str) -> int:
-    usage = "usage: trac retry [--actor NAME] [--clear-evidence]"
+    usage = (
+        "usage: trac retry [--actor NAME] [--clear-evidence] "
+        "[--reset-dispatch]"
+    )
     actor = None
     clear_evidence = False
+    reset_dispatch = False
     args = list(args)
     i = 0
     while i < len(args):
@@ -117,6 +122,9 @@ def cmd_retry(repo: Path, *args: str) -> int:
             i += 2
         elif args[i] == "--clear-evidence":
             clear_evidence = True
+            i += 1
+        elif args[i] == "--reset-dispatch":
+            reset_dispatch = True
             i += 1
         else:
             return _err(usage)
@@ -127,14 +135,24 @@ def cmd_retry(repo: Path, *args: str) -> int:
         state = store.state(run_id)
         events = list(store.events(run_id))
         attention = latest_unresolved_attention(events)
-        gate_err = _retry_gate_error(state, clear_evidence, attention, events)
+        gate_err = _retry_gate_error(
+            state,
+            clear_evidence,
+            attention,
+            events,
+            reset_dispatch=reset_dispatch,
+        )
         if gate_err is not None:
             return _err(gate_err)
         store.append(
             run_id,
             state.version,
             "human.retry",
-            {"actor": actor or _human_actor(repo), "clear_evidence": clear_evidence},
+            {
+                "actor": actor or _human_actor(repo),
+                "clear_evidence": clear_evidence,
+                "reset_dispatch": reset_dispatch,
+            },
         )
         state = store.state(run_id)
     print("human.retry event appended; escalation gate cleared; attempt budget reset")

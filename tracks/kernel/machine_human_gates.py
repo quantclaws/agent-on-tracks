@@ -78,6 +78,12 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     # flags too, not just the doc flag.
     if p.get("clear_evidence"):
         s.last_failure = None
+    # --reset-dispatch: the agent was killed before producing a result, so
+    # the dispatch flags must be cleared for decide() to issue a fresh
+    # attempt -- but the failure evidence is still valid and must ride into
+    # the re-dispatch (Prism plan finding / gate diagnostic). --clear-evidence
+    # additionally drops that evidence when the underlying issue is fixed.
+    if p.get("clear_evidence") or p.get("reset_dispatch"):
         _reset_doc(s)
         _reset_review(s)
     s.awaiting = None
