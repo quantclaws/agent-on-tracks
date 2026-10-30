@@ -182,26 +182,31 @@ class ExecMilestoneMixin:
         attention is idempotent per candidate so a retry re-entry does not
         duplicate the operator block.
         """
-        failed = []
         for scope in ("verify_final", "security"):
-            latest = next(
-                (
-                    event
-                    for event in reversed(events)
-                    if event.type == "prism.verdict"
-                    and (event.payload or {}).get("scope") == scope
-                    and self._verdict_bound_to(event, candidate_sha)
-                ),
-                None,
-            )
-            if latest is not None and verdict_failed(latest.payload or {}):
-                failed.append((scope, latest))
-        if not failed:
-            return False
-        if self._review_attention_landed(events, candidate_sha):
+            verdict = self._latest_scope_verdict(events, scope, candidate_sha)
+            if verdict is None or not verdict_failed(_event_payload(verdict)):
+                continue
+            if self._review_attention_landed(events, candidate_sha):
+                return True
+            self._emit_failed_review_attention(cmd, task_id, candidate_sha, scope, verdict)
             return True
-        scope, event = failed[0]
-        payload = event.payload or {}
+        return False
+
+    def _latest_scope_verdict(self, events, scope: str, candidate_sha: str):
+        """Latest candidate-bound ``prism.verdict`` for one review scope."""
+        for event in reversed(events):
+            if (
+                _event_type(event) == "prism.verdict"
+                and _event_payload(event).get("scope") == scope
+                and self._verdict_bound_to(event, candidate_sha)
+            ):
+                return event
+        return None
+
+    def _emit_failed_review_attention(
+        self, cmd, task_id, candidate_sha, scope, event
+    ) -> None:
+        payload = _event_payload(event)
         self._emit(
             "attention.required",
             {
@@ -224,22 +229,21 @@ class ExecMilestoneMixin:
             command_id=cmd.command_id,
             task_id=task_id,
         )
-        return True
 
     @staticmethod
     def _verdict_bound_to(event, candidate_sha: str) -> bool:
-        bound = str((event.payload or {}).get("candidate_sha") or "")
+        bound = str(_event_payload(event).get("candidate_sha") or "")
         return not candidate_sha or not bound or bound == candidate_sha
 
     @staticmethod
     def _review_attention_landed(events, candidate_sha: str) -> bool:
         return any(
-            event.type == "attention.required"
-            and (event.payload or {}).get("area") == "release_evidence"
-            and (event.payload or {}).get("reason") == "blocking_findings"
+            _event_type(event) == "attention.required"
+            and _event_payload(event).get("area") == "release_evidence"
+            and _event_payload(event).get("reason") == "blocking_findings"
             and (
                 not candidate_sha
-                or (event.payload or {}).get("candidate_sha") == candidate_sha
+                or _event_payload(event).get("candidate_sha") == candidate_sha
             )
             for event in events
         )
