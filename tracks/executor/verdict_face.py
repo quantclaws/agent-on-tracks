@@ -19,6 +19,7 @@ from tracks.executor.helpers import (
     git,
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
+from tracks.executor.review_findings import has_blocking_findings
 from tracks.kernel.machine import State
 from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
@@ -52,6 +53,28 @@ def _is_process_crash(result: dict) -> bool:
         if isinstance(code, int) and not isinstance(code, bool) and code != 0:
             return True
     return result.get("failure_class") in _INFRA_FAILURE_CLASSES
+
+
+def blocking_verdict_failure_payload(
+    result: dict, stage: str, candidate_sha: str | None = None
+) -> dict:
+    """IF-BLOCKREV-001 §1c.2 fail-closed record for a contradictory verdict.
+
+    A ``pass`` carrying blocker/high/critical findings is a protocol
+    violation. The ingest point emits ``verdict.failed`` instead of a
+    passing ``prism.verdict``; the reviewer's verdict body is left untouched.
+    """
+    payload = {
+        "check": "blocking_findings",
+        "reason": "pass verdict carries blocking findings (protocol violation)",
+        "stage": stage,
+    }
+    if candidate_sha:
+        payload["candidate_sha"] = candidate_sha
+    findings = result.get("findings")
+    if isinstance(findings, list) and findings:
+        payload["findings"] = findings
+    return payload
 
 
 # D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
@@ -665,6 +688,18 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
 
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
+        if (
+            role == "prism"
+            and verdict == "pass"
+            and has_blocking_findings(result.get("findings"))
+        ):
+            self._emit(
+                "verdict.failed",
+                blocking_verdict_failure_payload(result, state.stage),
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
         ev = _VERDICT_EVENT[role]
         payload = {"verdict": verdict, "diff_ref": result.get("diff_ref")}
         if role == "prism" and state.stage in ("M-TEST", "M-IMPL"):
@@ -748,6 +783,16 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         identity = self._verify_final_identity(verdict, result, assignment, cmd)
         if identity.error:
             self._emit_verify_final_identity_error(cmd, verdict, identity)
+            return
+        if verdict == "pass" and has_blocking_findings(result.get("findings")):
+            self._emit(
+                "verdict.failed",
+                blocking_verdict_failure_payload(
+                    result, "M-VERIFY", identity.candidate_sha
+                ),
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return
         payload = self._verify_final_payload(
             result, verdict, commit_sha, created_commit, result_id, identity.candidate_sha
