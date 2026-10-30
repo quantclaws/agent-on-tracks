@@ -19,9 +19,11 @@ from tracks import paths
 from tracks.executor.escape import STALE_EVIDENCE_BUCKETS as _STALE_EVIDENCE_BUCKETS
 from tracks.executor.release_authorization import (
     assess_release,
+    full_f_evidence_ok,
     validate_authorization,
 )
 from tracks.executor.repair import registered_known_issues
+from tracks.executor.review_findings import has_blocking_findings
 from tracks.kernel.attention import RECOVERY_EVENTS, unresolved_attentions
 from tracks.kernel.attention import (
     attention_resolved as _shared_attention_resolved,
@@ -239,6 +241,37 @@ def _latest_gate_results(events: list) -> dict[str, object]:
     return latest
 
 
+def _verdict_failed(payload: dict) -> bool:
+    """Downstream hard invariant: pass is only success without blockers."""
+    return payload.get("verdict") != "pass" or has_blocking_findings(
+        payload.get("findings")
+    )
+
+
+def _release_window_blocked(window: list) -> bool:
+    """The negative evidence checks of the current verify window."""
+    security = [e for e in window if e.type == "security.assessed"]
+    if security and (security[-1].payload or {}).get("status") != "passed":
+        return True
+    final = [
+        e
+        for e in window
+        if e.type == "prism.verdict"
+        and (e.payload or {}).get("scope") == "verify_final"
+    ]
+    if final and _verdict_failed(final[-1].payload or {}):
+        return True
+    security_review = [
+        e
+        for e in window
+        if e.type == "prism.verdict"
+        and (e.payload or {}).get("scope") == "security"
+    ]
+    if security_review and _verdict_failed(security_review[-1].payload or {}):
+        return True
+    return not full_f_evidence_ok(window)
+
+
 def _release_gate_blocked(events: list) -> bool:
     """Fail-closed M-VERIFY/M-SECURITY authorization check (FR-0274-2): the
     release action requires every observed gate green AND evidence that the
@@ -246,21 +279,17 @@ def _release_gate_blocked(events: list) -> bool:
     Only the current verify window counts -- a repaired candidate re-walk
     clears its predecessor's failures."""
     window = _verify_events_window(events)
-    security = [e for e in window if e.type == "security.assessed"]
-    if security and (security[-1].payload or {}).get("status") != "passed":
-        return True
-    final = [
-        e for e in window
-        if e.type == "prism.verdict"
-        and (e.payload or {}).get("scope") == "verify_final"
-    ]
-    if final and (final[-1].payload or {}).get("verdict") != "pass":
+    if _release_window_blocked(window):
         return True
     gates = _latest_gate_results(window)
     failed = any(e.type == "local_gate.failed" for e in gates.values())
     gate_evidence = (
-        bool(security)
-        or bool(final)
+        any(e.type == "security.assessed" for e in window)
+        or any(
+            e.type == "prism.verdict"
+            and (e.payload or {}).get("scope") == "verify_final"
+            for e in window
+        )
         or any(e.type == "local_gate.passed" for e in gates.values())
     )
     return not gate_evidence or failed
@@ -401,8 +430,7 @@ def _prism_final_status(events: list) -> str | None:
     ]
     if not final:
         return "failed"
-    verdict = (final[-1].payload or {}).get("verdict")
-    return "pass" if verdict == "pass" else "failed"
+    return "failed" if _verdict_failed(final[-1].payload or {}) else "pass"
 
 
 def _full_reuse_status(events: list) -> str | None:

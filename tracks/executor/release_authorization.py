@@ -14,6 +14,7 @@ from pathlib import Path
 import tomllib
 
 from tracks import paths
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
@@ -30,6 +31,7 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
+from tracks.executor.review_findings import has_blocking_findings
 from tracks.executor.security import security_policy_digest, security_scan_evidence_complete
 from tracks.executor.sync_product import remote_branch_tip
 
@@ -212,7 +214,10 @@ def _prism_status(events: list, candidate: str) -> tuple[str, bool]:
     )
     if event is None:
         return "unknown", False
-    valid = _payload(event).get("verdict") == "pass"
+    payload = _payload(event)
+    valid = payload.get("verdict") == "pass" and not has_blocking_findings(
+        payload.get("findings")
+    )
     return ("pass" if valid else "failed"), valid
 
 
@@ -235,10 +240,49 @@ def _security_status(
         and bool(payload.get("review_command_id")) and review is not None
         and review.command_id == payload["review_command_id"] and review.seq < event.seq
         and review_payload.get("verdict") == "pass"
+        and not has_blocking_findings(review_payload.get("findings"))
         and review_payload.get("policy_digest") == policy_digest
         and security_scan_evidence_complete(contract, payload.get("scans", payload.get("findings")))
     )
     return ("passed" if valid else "failed"), valid
+
+
+def _full_f_proof_bound(event, candidate: str | None) -> bool:
+    """Whether *event* is a full_f proof bound to *candidate* (if given)."""
+    payload = _payload(event)
+    if event.type == "full.executed":
+        declared = payload.get("candidate_sha")
+        return candidate is None or declared is None or declared == candidate
+    if event.type == "evidence.reused" and payload.get("kind") == "full_f":
+        declared = payload.get("candidate_sha")
+        if not isinstance(declared, str) or not declared:
+            return False
+        return candidate is None or declared == candidate
+    return False
+
+
+def _latest_full_f_event(events: list, candidate: str | None):
+    latest = None
+    for event in events:
+        if _full_f_proof_bound(event, candidate):
+            latest = event
+    return latest
+
+
+def full_f_evidence_ok(events: list, candidate: str | None = None) -> bool:
+    """Whether the candidate has a current authoritative FULL_F proof.
+
+    ``full.executed`` is judged by the single authority predicate; a
+    same-candidate bound ``evidence.reused(kind="full_f")`` is an equally
+    valid proof (interfaces §1b item 1).
+    """
+    event = _latest_full_f_event(events, candidate)
+    if event is None:
+        return False
+    payload = _payload(event)
+    if event.type == "full.executed":
+        return is_authoritative_full_f(payload, candidate)
+    return bool(payload.get("candidate_sha"))
 
 
 def _stale_authorization(reason: str, detail: str) -> ReleaseAuthorization:
@@ -275,12 +319,16 @@ def _gate_status(events: list, candidate: str, contract, digest: str) -> dict:
     ci_status, ci_ok = _ci_status(events, candidate, contract)
     prism_status, prism_ok = _prism_status(events, candidate)
     security_status, security_ok = _security_status(events, candidate, digest, contract)
+    full_f_ok = full_f_evidence_ok(events, candidate)
     return {
         "preview_stale": False,
-        "gate_failed": not (local_ok and ci_ok and prism_ok and security_ok),
+        "gate_failed": not (
+            local_ok and ci_ok and prism_ok and security_ok and full_f_ok
+        ),
         "security_status": security_status,
         "prism_status": prism_status,
         "ci_status": ci_status,
+        "full_f_ok": full_f_ok,
     }
 
 

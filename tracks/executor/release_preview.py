@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from tracks import paths
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.host_contract import resolve_artifact_identity
 from tracks.executor.release_gate import (
     active_release_branch,
@@ -16,7 +17,14 @@ from tracks.executor.release_gate import (
     generate_preview,
     operation_plan_needs_n,
 )
+from tracks.executor.review_findings import has_blocking_findings
 from tracks.executor.sync_product import validate_record, verified_records
+
+# interfaces §1b item 1: a new preview/authorization is invalid unless every
+# one of these keys carries successful evidence.
+REQUIRED_EVIDENCE_KEYS = frozenset(
+    {"full_f", "ci", "prism.verify_final", "prism.security", "security"}
+)
 
 
 def canonical_digest(value: object) -> str:
@@ -75,10 +83,19 @@ def _evidence_key(event, payload: dict) -> str | None:
         return str(payload.get("gate_identity") or payload.get("kind") or "local")
     if event.type == "full.executed":
         return "full_f"
+    if event.type == "evidence.reused":
+        return "full_f" if payload.get("kind") == "full_f" else None
     if event.type == "ci.run_observed":
         return "ci"
     if event.type == "prism.verdict":
-        return "prism"
+        # interfaces §1b item 2: only the two release scopes are evidence;
+        # M-DESIGN/M-TEST/M-IMPL verdicts never enter the release set.
+        scope = payload.get("scope")
+        if scope == "verify_final":
+            return "prism.verify_final"
+        if scope == "security":
+            return "prism.security"
+        return None
     if event.type == "security.assessed":
         return "security"
     return None
@@ -90,6 +107,11 @@ def _evidence_bound(event, payload: dict, candidate_sha: str) -> bool:
         if declared is not None:
             return declared == candidate_sha
         return payload.get("execution_commit") == candidate_sha
+    if event.type == "evidence.reused":
+        return (
+            payload.get("kind") == "full_f"
+            and payload.get("candidate_sha") == candidate_sha
+        )
     return payload.get("candidate_sha") == candidate_sha
 
 
@@ -105,26 +127,21 @@ def _evidence_is_success(
             and result.get("exit_code") == 0
         )
     if event_type == "full.executed":
-        identity = payload.get("identity")
-        return (
-            payload.get("passed") is True
-            and payload.get("full_f_eligible") is True
-            and (
-                candidate_sha is None
-                or payload.get("execution_commit") == candidate_sha
-            )
-            and payload.get("selection_id") == (identity or {}).get("selection_id")
-            and all(
-                isinstance(identity.get(key), (str, list))
-                for key in ("tree", "command", "env")
-            )
-            and bool(payload.get("execution_commit"))
-            and bool(payload.get("evidence_ids"))
-        ) if isinstance(identity, dict) else False
+        # interfaces §1a/§1b: FULL_F credit comes from the single authority
+        # predicate, never from ``serves_as_full_f`` alone.
+        return is_authoritative_full_f(payload, candidate_sha)
+    if event_type == "evidence.reused":
+        # A bound reuse is a valid full_f proof; _evidence_bound owns the
+        # candidate binding, this predicate owns the kind.
+        return payload.get("kind") == "full_f" and bool(payload.get("candidate_sha"))
     if event_type == "ci.run_observed":
         return payload.get("status") == "passed" and payload.get("api_verified") is True
     if event_type == "prism.verdict":
-        return payload.get("verdict") == "pass"
+        # interfaces §1c: pass with blocking findings is a contradictory
+        # verdict and never counts as success.
+        return payload.get("verdict") == "pass" and not has_blocking_findings(
+            payload.get("findings")
+        )
     if event_type == "security.assessed":
         return payload.get("status") == "passed"
     return False
@@ -161,27 +178,29 @@ def _collect_evidence(events, candidate_sha: str, barrier: int):
 def evidence_digests(events, candidate_sha: str) -> dict | None:
     barrier = _stale_barrier(events, candidate_sha)
     before, latest = _collect_evidence(events, candidate_sha, barrier)
-    if barrier >= 0 and before:
-        # A stale barrier requires the PRE-barrier evidence set to be
-        # re-established after it. When the pre-barrier set is EMPTY the
-        # candidate's entire evidence landed AFTER the barrier (a full
-        # re-walk -- exactly the escape/return disposition): there is
-        # nothing stale to re-verify and the current set stands as-is.
-        required = set(before)
-        current_success = {
-            key
-            for key, (_seq, event_type, payload) in latest.items()
-            if _evidence_is_success(event_type, payload, candidate_sha)
-        }
-        if not required.issubset(current_success):
-            return None
-    return {
+    successful = {
         key: canonical_digest(
-            {field: value for field, value in payload.items() if field != "contract_digest"}
+            {
+                field: value
+                for field, value in payload.items()
+                if field != "contract_digest"
+            }
         )
         for key, (_seq, event_type, payload) in sorted(latest.items())
         if _evidence_is_success(event_type, payload, candidate_sha)
     }
+    # A stale barrier requires the PRE-barrier evidence set to be
+    # re-established after it. When the pre-barrier set is EMPTY the
+    # candidate's entire evidence landed AFTER the barrier (a full re-walk --
+    # exactly the escape/return disposition): there is nothing stale to
+    # re-verify and the current set stands as-is.
+    if barrier >= 0 and before and not set(before).issubset(successful):
+        return None
+    # interfaces §1b item 1: completeness is unconditional -- a stale barrier
+    # never skips the five-key requirement.
+    if not REQUIRED_EVIDENCE_KEYS.issubset(successful):
+        return None
+    return successful
 
 
 def _journey(contract, requested: str | None) -> str | None:
@@ -323,7 +342,53 @@ def preview_blob_matches(home: Path, preview: dict) -> bool:
     return payload == expected
 
 
+def _legacy_prism_evidence_matches(old_evidence: dict, current_evidence: dict) -> bool:
+    """A v0.12.0 blob recorded one ``"prism"`` digest for the latest verdict.
+
+    It stays readable by matching that key against either split prism key
+    (INV-5); every other recorded key still compares exactly.
+    """
+    split_prism = (
+        current_evidence.get("prism.security"),
+        current_evidence.get("prism.verify_final"),
+    )
+    for key, value in old_evidence.items():
+        if key == "prism":
+            if value not in split_prism:
+                return False
+        elif current_evidence.get(key) != value:
+            return False
+    return True
+
+
 def preview_inputs_match(old: dict, current: dict) -> bool:
+    """Whether *current* reproduces every input recorded by *old*.
+
+    Split-schema previews compare exactly. A legacy blob's recorded key set
+    is compared against the current preview with the single ``"prism"``
+    digest mapped onto the split prism keys -- no DB migration (INV-5).
+    """
     old_inputs = {key: value for key, value in old.items() if key != "blob_ref"}
     current_inputs = {key: value for key, value in current.items() if key != "blob_ref"}
+    old_evidence = old_inputs.get("evidence_digests")
+    current_evidence = current_inputs.get("evidence_digests")
+    if (
+        isinstance(old_evidence, dict)
+        and "prism" in old_evidence
+        and "prism.security" not in old_evidence
+        and isinstance(current_evidence, dict)
+    ):
+        old_rest = {
+            key: value
+            for key, value in old_inputs.items()
+            if key not in ("evidence_digests", "preview_digest")
+        }
+        current_rest = {
+            key: value
+            for key, value in current_inputs.items()
+            if key not in ("evidence_digests", "preview_digest")
+        }
+        if old_rest != current_rest:
+            return False
+        return _legacy_prism_evidence_matches(old_evidence, current_evidence)
     return old_inputs == current_inputs
