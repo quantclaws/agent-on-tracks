@@ -1,12 +1,16 @@
-diff --git a/tracks/cli/validate_cmd.py b/tracks/cli/validate_cmd.py
---- a/tracks/cli/validate_cmd.py
-+++ b/tracks/cli/validate_cmd.py
-@@ -314,7 +314,7 @@
-     ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
-     becomes each required AC's full-pass evidence for this candidate.
-     """
--    if not payload.get("serves_as_full_f"):
-+    if not payload.get("full_f_eligible"):
-         return
-     evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
-     evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")
+diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
+--- a/tracks/executor/release_preview.py
++++ b/tracks/executor/release_preview.py
+@@ -86,11 +86,11 @@ def _evidence_key(event, payload: dict) -> str | None:
+     if event.type == "evidence.reused" and payload.get("kind") == "full_f":
+         return "full_f"
+     if event.type == "ci.run_observed":
+-        return "ci"
++        return "ci_legacy"
+     if event.type == "prism.verdict":
+         scope = payload.get("scope")
+         if scope == "verify_final":
+             return "prism.verify_final"
+         if scope == "security":
+             return "prism.security"
+         return None

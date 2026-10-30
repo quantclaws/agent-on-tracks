@@ -1,12 +1,14 @@
 diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
 --- a/tracks/executor/release_preview.py
 +++ b/tracks/executor/release_preview.py
-@@ -78,7 +78,7 @@
+@@ -88,7 +88,7 @@ def _evidence_key(event, payload: dict) -> str | None:
      if event.type == "ci.run_observed":
          return "ci"
      if event.type == "prism.verdict":
--        return "prism"
-+        return "prism.verify_final" if payload.get("scope") == "verify_final" else "prism"
-     if event.type == "security.assessed":
-         return "security"
-     return None
+         scope = payload.get("scope")
+         if scope == "verify_final":
+-            return "prism.verify_final"
++            return "prism"
+         if scope == "security":
+             return "prism.security"
+         return None

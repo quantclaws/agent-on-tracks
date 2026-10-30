@@ -46,6 +46,8 @@ from tests._support.v09_web import (
     wait_for_healthz,
     wait_for_port_line,
 )
+from tests.e2e.helpers import init_bare_remote, push_ancestor_main, walk_to_awaiting_release
+from tests.integration.test_journey_versioning import _declare_journey_contract
 from tracks import paths
 from tracks.executor.executor import Executor
 from tracks.kernel.events import Command
@@ -82,18 +84,6 @@ def _new_host(tmp_path: Path) -> tuple[Path, Store]:
     return repo, Store(paths.tracks_home(repo))
 
 
-def _stage_events(events: list, kind: str, stage: str) -> list:
-    return [
-        event
-        for event in events
-        if event.type == kind and (event.payload or {}).get("stage") == stage
-    ]
-
-
-def _types(events: list) -> list:
-    return [event.type for event in events]
-
-
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
@@ -110,58 +100,66 @@ def _listed_refs(repo: Path) -> list:
 
 
 # AC-FR0276-01@v0.8 TRACKS-TRACE exactly once stage events under retry tail
-def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
+def test_exactly_once_stage_events_under_retry_tail(
+    host_repo, trac, event_log, ci_echo_standin
+):
     """AC-FR0276-01: the three release-tail stage transitions are emitted
-    EXACTLY ONCE, in the contract's order.
+    EXACTLY ONCE, in the contract's order -- also when the tail is RE-ENTERED
+    after an interruption (the ``retry_tail`` re-entry safety).
 
     Contract: interfaces §1f items 1 and 2 (the visit guard, the
     ``retry_tail`` re-entry safety) and §4a outlet 5.
 
     Outlet: the EVENT STREAM.
-    """
-    repo, store = _new_host(tmp_path)
-    run_id = "RUN-HF262-STAGE-1"
-    try:
-        # The Arrange is the release tail's own event sequence.
-        store.append(
-            run_id,
-            "v0.8",
-            "release.decided",
-            {"action": "release", "candidate_sha": _CANDIDATE},
-        )
-        store.append(
-            run_id,
-            "v0.8",
-            "publish.planned",
-            {"candidate_sha": _CANDIDATE, "idempotency_key": "k-1"},
-        )
-        store.append(
-            run_id,
-            "v0.8",
-            "publish.executed",
-            {
-                "candidate_sha": _CANDIDATE,
-                "idempotency_key": "k-1",
-                "status": "done",
-            },
-        )
-        store.append(
-            run_id,
-            "v0.8",
-            "milestone.trace_closed",
-            {"trace_digest": "sha256:hf262", "candidate_sha": _CANDIDATE},
-        )
-        store.append(
-            run_id,
-            "v0.8",
-            "run.completed",
-            {"terminal_state": "released", "release_tag": "v0.8.0"},
-        )
-        events = list(store.events(run_id))
-    finally:
-        store.close()
 
-    # The release tail MUST carry the explicit stage transitions.
+    The Arrange drives the REAL release tail through the production entry
+    points (the ``trac`` CLI), because the emitters named by the design
+    (``publish_runtime`` for the M-RELEASE -> M-PUBLISH boundary,
+    ``milestone_chain`` for the M-PUBLISH -> M-MILESTONE boundary and the
+    M-MILESTONE exit) only fire inside that tail.  A bare-Store seed cannot
+    reach them at all.
+
+    The interruption is the contract's own ``retry_tail``: the remote branch
+    is missing, so the publish batch stops fail-closed (SM-01.15) and the
+    run parks; the remote is then repaired and ``trac run`` RE-ENTERS the
+    tail, which resumes the unfinished publish operations and closes the
+    milestone.  The second entry must not duplicate any transition.
+    """
+    # The remote starts WITHOUT main: the first publish batch fails closed
+    # with ``branch_missing`` and the tail parks (the retry_tail premise).
+    _bare, initial = init_bare_remote(
+        host_repo, "hf262-stage-bare.git", push_main=False
+    )
+    run_id = walk_to_awaiting_release(
+        trac,
+        pre_seed_hook=lambda repo: _declare_journey_contract(
+            repo, ["merge:main", "tag:{feature_tag}"]
+        ),
+    )
+    assert run_id
+
+    # The human release decision opens the publish tail.
+    assert trac("release", "--action", "release").returncode == 0
+
+    # The interrupted tail: the publish batch cannot reach the remote.
+    assert trac("run").returncode == 0
+    interrupted = event_log(run_id)
+    assert [
+        event for event in interrupted if event["type"] == "publish.failed"
+    ], "the Arrange must interrupt the publish batch (the retry_tail premise)"
+    assert not [
+        event for event in interrupted if event["type"] == "run.completed"
+    ], "an interrupted tail must not complete the run"
+
+    # The repair and the RE-ENTRY: the tail resumes and closes the milestone.
+    push_ancestor_main(host_repo, initial)
+    assert trac("run").returncode == 0, "the retry tail must resume"
+
+    events = event_log(run_id)
+    types = [event["type"] for event in events]
+
+    # The release tail MUST carry the explicit stage transitions -- exactly
+    # once each, across the interrupted AND the re-entered tail.
     for kind, stage in (
         ("stage.exited", "M-RELEASE"),
         ("stage.entered", "M-PUBLISH"),
@@ -169,25 +167,28 @@ def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
         ("stage.entered", "M-MILESTONE"),
         ("stage.exited", "M-MILESTONE"),
     ):
-        occurrences = _stage_events(events, kind, stage)
+        occurrences = [
+            event
+            for event in events
+            if event["type"] == kind and (event["payload"] or {}).get("stage") == stage
+        ]
         assert len(occurrences) == 1, (
             f"{kind}({stage}) must be emitted exactly once (got {len(occurrences)})"
         )
 
     # The ORDER: the M-RELEASE exit precedes the first publish.planned.
-    types = _types(events)
     first_planned = types.index("publish.planned")
     exited_release = next(
         index
         for index, event in enumerate(events)
-        if event.type == "stage.exited"
-        and (event.payload or {}).get("stage") == "M-RELEASE"
+        if event["type"] == "stage.exited"
+        and (event["payload"] or {}).get("stage") == "M-RELEASE"
     )
     entered_publish = next(
         index
         for index, event in enumerate(events)
-        if event.type == "stage.entered"
-        and (event.payload or {}).get("stage") == "M-PUBLISH"
+        if event["type"] == "stage.entered"
+        and (event["payload"] or {}).get("stage") == "M-PUBLISH"
     )
     assert exited_release < entered_publish < first_planned, (
         "the M-RELEASE exit and the M-PUBLISH entry must both precede the "
@@ -199,14 +200,14 @@ def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
     exited_publish = next(
         index
         for index, event in enumerate(events)
-        if event.type == "stage.exited"
-        and (event.payload or {}).get("stage") == "M-PUBLISH"
+        if event["type"] == "stage.exited"
+        and (event["payload"] or {}).get("stage") == "M-PUBLISH"
     )
     entered_milestone = next(
         index
         for index, event in enumerate(events)
-        if event.type == "stage.entered"
-        and (event.payload or {}).get("stage") == "M-MILESTONE"
+        if event["type"] == "stage.entered"
+        and (event["payload"] or {}).get("stage") == "M-MILESTONE"
     )
     assert exited_publish < entered_milestone < trace_closed, (
         "the M-PUBLISH exit and the M-MILESTONE entry must precede "
@@ -218,8 +219,8 @@ def test_exactly_once_stage_events_under_retry_tail(tmp_path: Path):
     exited_milestone = next(
         index
         for index, event in enumerate(events)
-        if event.type == "stage.exited"
-        and (event.payload or {}).get("stage") == "M-MILESTONE"
+        if event["type"] == "stage.exited"
+        and (event["payload"] or {}).get("stage") == "M-MILESTONE"
     )
     assert exited_milestone <= completed, (
         "the M-MILESTONE exit must land at completion"

@@ -1,14 +1,14 @@
 diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
 --- a/tracks/executor/release_preview.py
 +++ b/tracks/executor/release_preview.py
-@@ -324,6 +324,10 @@
- 
- 
- def preview_inputs_match(old: dict, current: dict) -> bool:
-+    required = ("full_f", "ci", "prism.verify_final", "prism.security", "security")
-+    keys = set(old.get("evidence_digests") or {})
-+    if not set(required).issubset(keys):
-+        return False
+@@ -343,6 +343,10 @@ def preview_inputs_match(old: dict, current: dict) -> bool:
+     """
      old_inputs = {key: value for key, value in old.items() if key != "blob_ref"}
      current_inputs = {key: value for key, value in current.items() if key != "blob_ref"}
-     return old_inputs == current_inputs
++    required = ("full_f", "ci", "prism.verify_final", "prism.security", "security")
++    if not set(required).issubset(set(old.get("evidence_digests") or {})):
++        return False
++
+     old_evidence = old_inputs.get("evidence_digests")
+     current_evidence = current_inputs.get("evidence_digests")
+     if (

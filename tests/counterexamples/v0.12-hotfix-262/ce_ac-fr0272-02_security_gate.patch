@@ -1,12 +1,13 @@
-diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
 --- a/tracks/cli/release_cmd.py
 +++ b/tracks/cli/release_cmd.py
-@@ -248,7 +248,7 @@
-     window = _verify_events_window(events)
-     security = [e for e in window if e.type == "security.assessed"]
-     if security and (security[-1].payload or {}).get("status") != "passed":
--        return True
-+        return False
-     final = [
-         e for e in window
-         if e.type == "prism.verdict"
+@@ -496,9 +496,7 @@
+         lines.append(reuse)
+     security = [e for e in events if e.type == "security.assessed"]
+     if security:
+-        lines.append(
+-            "security=" + str((security[-1].payload or {}).get("status", "unknown"))
+-        )
++        lines.append("security=unknown")
+     prism = _prism_final_status(events)
+     if prism is not None:
+         lines.append("prism=" + prism)

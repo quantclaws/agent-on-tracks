@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/release_authorization.py b/tracks/executor/release_authorization.py
+--- a/tracks/executor/release_authorization.py
++++ b/tracks/executor/release_authorization.py
+@@ -322,7 +322,7 @@ def _gate_status(events: list, candidate: str, contract, digest: str) -> dict:
+     return {
+         "preview_stale": False,
+         "gate_failed": not (
+-            local_ok and ci_ok and prism_ok and security_ok and full_f_ok
++            local_ok and ci_ok and prism_ok and security_ok
+         ),
+         "security_status": security_status,
+         "prism_status": prism_status,

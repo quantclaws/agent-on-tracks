@@ -1,12 +1,18 @@
-diff --git a/tracks/executor/verify_ci.py b/tracks/executor/verify_ci.py
---- a/tracks/executor/verify_ci.py
-+++ b/tracks/executor/verify_ci.py
-@@ -563,6 +563,8 @@
-         self._emit(
-             "stage.entered", {"stage": "M-RELEASE"}, command_id=cmd.command_id
-         )
-+        # COUNTEREXAMPLE: the M-RELEASE -> M-PUBLISH transition is
-+        # never emitted, so the release tail has no stage visit.
-         self._release_preview(cmd, candidate_sha)
- 
-     def _release_preview(self, cmd, candidate_sha: str) -> None:
+diff --git a/tracks/executor/publish_runtime.py b/b/tracks/executor/publish_runtime.py
+index 712bd8a..037ddfb 100644
+--- a/tracks/executor/publish_runtime.py
++++ b/tracks/executor/publish_runtime.py
+@@ -936,6 +936,13 @@ def execute_publish_operations(
+     effect (no aggregate success is ever emitted). ``fail`` is invoked as
+     ``fail(reason, remote_check, idempotency_key)``.
+     """
++    # COUNTEREXAMPLE: the release-tail transition pair is emitted without a
++    # visit guard, so the transition is duplicated (interfaces §1f item 1
++    # requires EXACTLY ONCE per release tail).
++    emit("stage.exited", {"stage": "M-RELEASE"}, command_id=command_id)
++    emit("stage.entered", {"stage": "M-PUBLISH"}, command_id=command_id)
++    emit("stage.exited", {"stage": "M-RELEASE"}, command_id=command_id)
++    emit("stage.entered", {"stage": "M-PUBLISH"}, command_id=command_id)
+     for record in authority["records"]:
+         single = {**authority, "record": record}
+         succeeded = _execute_record(

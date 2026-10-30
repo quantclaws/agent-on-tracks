@@ -7,7 +7,9 @@
   "public_outlets": "the tests were rewritten onto the interfaces §4 public outlets: the `trac check trace --json` / `trac status` / `trac release` / `trac run` / `trac hotfix` CLIs, the `GET /api/runs/{id}/ac-chain` / `timeline` / `GET /api/todos` / `GET /api/projects/{pid}/releases` HTTP read face over a real serve subprocess, the EVENT STREAM, the git ref namespace and the browser DOM. No private helper is imported and no internal return value is asserted.",
   "per_node_coverage": "one counterexample per required node: 25 integration nodes + 4 e2e nodes + 3 shared seams (a patch that covers two nodes is listed once per node).",
   "prism_review_revision": "2026-10-27 M-TEST WRITE revision 6 (the PRISM_REVIEW verdict was revise with one blocker: TEST-2 -- the result_audit site still bypassed the public event outlet, constructing ResultAuditMixin with object.__new__ and replacing _emit with a lambda whose payload the test asserted. Fixed: the collection face now runs on the REAL Executor over a REAL store, so its verdict lands in the EVENT STREAM (interfaces §4a) and the observation is that event's payload -- the child's own captured stdout carried by the verdict.failed the face emits. All 33 kill rows were re-verified at this head.",
-  "design_conformance": "2026-10-28 M-TEST WRITE revision 7 (M-DESIGN revised the contract: architecture §4.4 declares the M-TEST public-observation / counterexample contract, interfaces §4a#7 declares the verdict.failed(check=collection) event payload as the result_audit child-env outlet, and test-plan §6.6 declares the per-anchor-AC patch-ownership table). Conformance checked at this head: (1) the result_audit site already observes the collection face's verdict.failed event through the real executor and store, as interfaces §4a#7 requires; (2) the manifest's 26 anchor ACs and their patch sets match the test-plan §6.6 table exactly (no patch missing, none extra); (3) every binding's result is 'killed' and no binding uses 'n/a'; (4) the previously unregistered ce_ac-fr0271-02_blocking_success.patch -- which had no binding and no bound node, and which the §6.6 table does not list -- was removed so the tree carries exactly the registered patch set; (5) ce_ac-fr0271-02_blocking_status.patch was rewritten to be a self-contained minimal deviation (it previously called a helper that does not exist, so it broke the module instead of inverting the judgment). All 33 kill rows were re-verified at this head."
+  "design_conformance": "2026-10-28 M-TEST WRITE revision 7 (M-DESIGN revised the contract: architecture §4.4 declares the M-TEST public-observation / counterexample contract, interfaces §4a#7 declares the verdict.failed(check=collection) event payload as the result_audit child-env outlet, and test-plan §6.6 declares the per-anchor-AC patch-ownership table). Conformance checked at this head: (1) the result_audit site already observes the collection face's verdict.failed event through the real executor and store, as interfaces §4a#7 requires; (2) the manifest's 26 anchor ACs and their patch sets match the test-plan §6.6 table exactly (no patch missing, none extra); (3) every binding's result is 'killed' and no binding uses 'n/a'; (4) the previously unregistered ce_ac-fr0271-02_blocking_success.patch -- which had no binding and no bound node, and which the §6.6 table does not list -- was removed so the tree carries exactly the registered patch set; (5) ce_ac-fr0271-02_blocking_status.patch was rewritten to be a self-contained minimal deviation (it previously called a helper that does not exist, so it broke the module instead of inverting the judgment). All 33 kill rows were re-verified at this head.",
+  "shield_fix_revision_10": "2026-10-30 M-IMPL SHIELD_FIX (round 10): the DIAGNOSE verdict classified the four T-004 release-evidence nodes as a TEST DEFECT -- the shared release-premise fixture (tests/_support/release_premises.py) never seeded the FULL_F evidence the five-key contract requires, so the real preview command could not assemble a preview at all; the legacy node drove a second repository through the `trac` fixture that is bound to the FIRST repository; and the rejection node created no failed/stale precondition. Fixes at this head: (1) the shared premise helper now seeds a candidate-bound AUTHORITATIVE `full.executed` payload (the interfaces §1a item 1 conjunction, with `serves_as_full_f` deliberately false) -- the five-key set is now complete by construction and every downstream release suite (test_release_preview_direct, test_release_authorization_direct, test_web_release, test_gate_endpoints) is green again; (2) the legacy node builds the pre-v0.12.1 generation of the run's OWN preview (same candidate, same artifact, same plan, single `prism` key) and drives the second repository through its OWN CLI invocation, so the read-back exercises the key-schema difference alone; (3) the rejection node lands the 5896-shape (ineligible, foreign commit) after the preview, so the FULL_F key drops out of the satisfied set and the release gate refuses the decision. The four T-004 nodes' counterexamples were re-cut in place at this head and the test-plan §6.6 registered patch set is preserved: ce_ac-fr0270-02_full_f_credit.patch (killed), ce_ac-fr0273-01_evidence_key.patch (killed), ce_ac-fr0273-02_legacy_readback.patch (killed), and the shared ce_ac-fr0272-02_security_gate.patch (re-cut at the status-fragment seam; it kills both its AC-FR0272-02 node and the AC-FR0274-02 rejection node, which now asserts the security=passed control fragment). The hotfix's own full_f gate seam is bound additionally as ce_ac-fr0274-02_full_f_gate.patch (killed). Every binding was verified with the apply -> run the bound node -> assert the behavioural failure -> restore cycle at this head. The unregistered orphan ce_ac-fr0271-02_blocking_success.patch stays removed so the tree carries exactly the registered patch set.",
+  "shield_fix_revision_11": "2026-10-30 M-TEST SHIELD_FIX (hotfix #262 T-005, PRISM-PLAN-019): the exactly-once stage-event node's Arrange was defective -- it appended raw events to a bare Store, so no release tail ran and the production emitters (publish_runtime / milestone_chain, named by architecture §1.1) could never produce the asserted stage events (measured: 0). The Arrange now drives the REAL release tail through the production entry points (the `trac` CLI: walk to M-RELEASE/AWAITING_RELEASE -> human release decision -> execute_publish), interrupts it with the contract's own retry_tail (the remote branch is missing, so the publish batch fails closed and parks), repairs the remote and RE-ENTERS the tail with a second `trac run`; the node then asserts the exactly-once stage transitions and their INV-9 order over the whole event stream. The counterexample for this node was re-cut at the seam the design names (ce_ac-fr0276-01_stage_events.patch now mutates tracks/executor/publish_runtime.execute_publish_operations -- the release-tail emitter -- so the transition is emitted without a visit guard and therefore DUPLICATED); apply -> run the bound node -> assert the behavioural failure (exactly-once count 2) -> restore was re-verified at this head. No store.py emitter was added: the emission stays at the design-named publish_runtime / milestone_chain seams and the test only drives them. The other two nodes of the module (test_clean_temp_refs_remaining_zero, test_legacy_run_timeline_synthesizes_transitions) and the other T-004 release-evidence bindings are unchanged."
  },
  "bindings": [
   {
@@ -93,7 +95,7 @@
   {
    "ac": "AC-FR0270-02@v0.8",
    "if_ref": "IF-RELEV-001",
-   "mutation": "the closure harvest credits a FULL execution on full_f_eligible alone, so the five-key completeness set is assembled from the wrong key",
+   "mutation": "the CI readback contributes a non-contract evidence key, so the five-key completeness set is never satisfied and the preview can no longer be assembled at all",
    "patch": "ce_ac-fr0270-02_full_f_credit.patch",
    "test": "tests/integration/test_hotfix262_release_evidence.py::test_missing_required_keys_block_release",
    "result": "killed"
@@ -117,15 +119,23 @@
   {
    "ac": "AC-FR0274-02@v0.8",
    "if_ref": "IF-RELEV-001",
-   "mutation": "the release gate's security check stops blocking on a failed security assessment, so an incomplete chain would authorize the release",
+   "mutation": "the release status fragment reports the security assessment as an unknown state instead of its own status, so the refusal can no longer be attributed to the FULL_F key against a chain whose security assessment passed",
    "patch": "ce_ac-fr0272-02_security_gate.patch",
+   "test": "tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale",
+   "result": "killed"
+  },
+  {
+   "ac": "AC-FR0274-02@v0.8",
+   "if_ref": "IF-RELEV-001",
+   "mutation": "the release authorization's gate status drops the full_f key from the completeness conjunction, so a chain whose FULL_F proof is no longer authoritative still authorizes the release",
+   "patch": "ce_ac-fr0274-02_full_f_gate.patch",
    "test": "tests/integration/test_hotfix262_release_evidence.py::test_release_rejected_on_gate_failed_or_stale",
    "result": "killed"
   },
   {
    "ac": "AC-FR0272-02@v0.8",
    "if_ref": "IF-BLOCKREV-001",
-   "mutation": "the release gate's security check stops blocking on a failed security assessment, so a blocking security review would authorize the release",
+   "mutation": "the release status fragment reports the security assessment as an unknown state instead of its own status, so a failed security assessment is never reported as failed",
    "patch": "ce_ac-fr0272-02_security_gate.patch",
    "test": "tests/integration/test_hotfix262_review_ingest.py::test_malformed_or_blocking_security_blocks_release",
    "result": "killed"
@@ -165,7 +175,7 @@
   {
    "ac": "AC-FR0276-01@v0.8",
    "if_ref": "IF-STAGE-001",
-   "mutation": "the M-RELEASE -> M-PUBLISH stage transition is never emitted, so the release tail has no stage visit",
+   "mutation": "the release-tail stage transitions are emitted without a visit guard, so the M-RELEASE -> M-PUBLISH transition is duplicated instead of emitted exactly once",
    "patch": "ce_ac-fr0276-01_stage_events.patch",
    "test": "tests/integration/test_hotfix262_stage_events.py::test_exactly_once_stage_events_under_retry_tail",
    "result": "killed"
