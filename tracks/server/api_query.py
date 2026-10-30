@@ -51,7 +51,7 @@ from tracks.baseline import revision_digest
 from tracks.discuss.parser import parse_threads
 from tracks.frontmatter import split_frontmatter
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
-from tracks.server import projections
+from tracks.server import projections, projections_run
 
 # E-06 material set (§2b #15-16, §1n.4): the six-piece doc domain with
 # `design` kept as the architecture alias. The mapping is owned by the
@@ -1015,7 +1015,7 @@ async def releases(request: Any) -> Any:
             "repo_name": Path(repo_path).name,
         },
         "versions": _registry_versions(repo_path),
-        "backlog": projections._backlog_group(repo_path),
+        "backlog": projections_run._backlog_group_for_home(home, repo_path),
         "archive": archive,
     }
     return _response(200, request, payload)

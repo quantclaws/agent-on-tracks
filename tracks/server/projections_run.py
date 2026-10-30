@@ -8,7 +8,6 @@ and per-run execution state. Public names are re-exported by
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 from pathlib import Path
@@ -364,10 +363,9 @@ def _readable_line(content: object) -> str:
     for line in str(content or "").splitlines():
         text = line.strip().lstrip("#-*> \t").strip()
         if text:
-            chars = list(text)
-            if len(chars) <= _TITLE_MAX_CHARS:
-                return "".join(chars)
-            return f"{''.join(chars[:_TITLE_MAX_CHARS])}…"
+            if len(text) <= _TITLE_MAX_CHARS:
+                return text
+            return f"{text[:_TITLE_MAX_CHARS]}…"
     return ""
 
 
@@ -379,6 +377,10 @@ def _localized_placeholder(version: object, ts: object, noun: str = "待办条�
     return f"{noun} ({label or stamp or 'unknown'})"
 
 
+def _clean_title(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
 def _report_title(raw: object) -> str:
     report: object = raw
     if not isinstance(raw, dict):
@@ -386,55 +388,21 @@ def _report_title(raw: object) -> str:
             report = json.loads(str(raw or "") or "{}")
         except (TypeError, ValueError):
             report = {}
-    title = report.get("title") if isinstance(report, dict) else None
-    return title.strip() if isinstance(title, str) and title.strip() else ""
+    return _clean_title(report.get("title") if isinstance(report, dict) else None)
 
 
-def _payload_title(payload: dict) -> str:
-    title = payload.get("title")
-    return title.strip() if isinstance(title, str) and title.strip() else ""
-
-
-def _default_service_home(repo_path: str) -> Path | None:
-    """The serve store of the production default home, when it is on disk."""
-    candidates = []
-    override = os.environ.get("TRAC_SERVE_HOME")
-    if override:
-        candidates.append(Path(override))
-    candidates.append(Path(repo_path) / ".tracks" / "service")
-    for home in candidates:
-        if (home / "service.db").exists():
-            return home
-    return None
-
-
-def _title_rows(conn: object) -> dict[str, str]:
-    if conn is None:
-        return {}
+def _intake_titles(conn: sqlite3.Connection | None) -> dict[str, str]:
+    """intake_id -> readable report title from the service plane (§1g.4)."""
     return {
         str(row[0]): _report_title(row[1])
         for row in _rows(conn, "SELECT intake_id, report_json FROM intakes")
     }
 
 
-def _intake_titles(repo_path: str, conn: object = None) -> dict[str, str]:
-    if conn is not None:
-        return _title_rows(conn)
-    home = _default_service_home(repo_path)
-    if home is None:
-        return {}
-    owned = _service_db(home)
-    try:
-        return _title_rows(owned)
-    finally:
-        if owned is not None:
-            owned.close()
-
-
 def _backlog_title(run_id: str, ts: str, version: str, payload: dict, titles: dict) -> str:
     intake_id = str(payload.get("intake_id") or "")
     title = (
-        _payload_title(payload)
+        _clean_title(payload.get("title"))
         or titles.get(intake_id, "")
         or _readable_line(payload.get("content"))
         or _localized_placeholder(version, ts)
@@ -444,9 +412,9 @@ def _backlog_title(run_id: str, ts: str, version: str, payload: dict, titles: di
     return title
 
 
-def _backlog_group(repo_path: str, conn: object = None) -> dict:
+def _backlog_group(conn: sqlite3.Connection | None, repo_path: str) -> dict:
     """§1e.2/§1d.3 backlog: readable titles, dispositions folded in."""
-    titles = _intake_titles(repo_path, conn)
+    titles = _intake_titles(conn)
     entries: dict[str, dict] = {}
     dispositions: dict[str, dict] = {}
     rows = _rows(
@@ -475,6 +443,16 @@ def _backlog_group(repo_path: str, conn: object = None) -> dict:
         "count": sum(1 for row in backlog_rows if row["disposition"] is None),
         "entries": backlog_rows,
     }
+
+
+def _backlog_group_for_home(home: Path, repo_path: str) -> dict:
+    """Backlog group joined against the request home's service plane (§1g.4)."""
+    conn = _service_db(home)
+    try:
+        return _backlog_group(conn, repo_path)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | None:
