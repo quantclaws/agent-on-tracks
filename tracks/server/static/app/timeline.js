@@ -2573,6 +2573,8 @@ function selectNode(node, stage, detail, events) {
   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
     other.removeAttribute("data-state-selected");
     other.removeAttribute("data-selected");
+    other.removeAttribute("aria-selected");
+    other.removeAttribute("aria-current");
     const otherSelect = other.querySelector(".stage-node-select");
     if (otherSelect) otherSelect.setAttribute("aria-pressed", "false");
     other.classList.remove("stage-node-selected");
@@ -2583,6 +2585,8 @@ function selectNode(node, stage, detail, events) {
   // the visible selection face (same marker triple as the sidebar focus):
   // data-selected + class hook + an aria mark so the choice reads aloud.
   node.setAttribute("data-selected", "true");
+  node.setAttribute("aria-selected", "true");
+  node.setAttribute("aria-current", "step");
   node.classList.add("stage-node-selected");
   // the active legibility marker (§1l.1 data-state channel): the node's
   // own data-state already names it; expose the frozen alias attribute

@@ -117,18 +117,39 @@ export function renderView(route, mainArea, context = {}) {
   return { body, done };
 }
 
+/** Readable Todo card text (interfaces §1g.5): never the raw run identity. */
+function todoCardLabel(todo) {
+  const version = todo.version || "unknown";
+  const title = todo.title || "未命名待办";
+  const stage = todo.stage || "unknown";
+  const kind = todo.kind_label || todo.kind || "待办";
+  return `${version} · ${title} — ${stage} · ${kind}`;
+}
+
 function renderTodos(body) {
   return loadInto(body, async () => {
     const todos = await requestJson("/api/todos");
     const list = element("ul", { class: "todo-list", "data-testid": "todo-list" });
     for (const todo of Array.isArray(todos) ? todos : []) {
-      list.append(
-        element("li", {
-          class: "todo-row",
-          "data-testid": `todo-${todo.run_id || "unknown"}`,
-          text: `${todo.run_id || "unknown"}: ${todo.reason || todo.kind || "unknown"}`,
-        })
-      );
+      const testid = `todo-${todo.run_id || "unknown"}`;
+      const card = element("li", { class: "todo-row", "data-testid": testid });
+      const link = element("a", {
+        class: "todo-card",
+        href: todo.action_ref || "#",
+        "data-testid": `${testid}-link`,
+        text: todoCardLabel(todo),
+      });
+      link.addEventListener("click", (event) => {
+        if (!todo.action_ref) return;
+        event.preventDefault();
+        globalThis.location.assign(todo.action_ref);
+      });
+      card.append(link);
+      const context = todo.context || todo.summary;
+      if (context) {
+        card.append(element("p", { class: "todo-context", text: context }));
+      }
+      list.append(card);
     }
     if (!list.children.length) list.append(element("li", { text: "No human todos." }));
     body.append(list);

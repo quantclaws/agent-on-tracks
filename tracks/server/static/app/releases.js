@@ -105,7 +105,7 @@ function sidebarGroups(payload, registryNodes) {
     children: (backlog.entries || [])
       .filter((entry) => !entry.disposition)
       .map((entry) => ({
-        label: entry.content || entry.entry_id || "entry",
+        label: entry.display_title || entry.content || "待办条目",
         testid: `sidebar-backlog-${entry.entry_id || "unknown"}`,
         attrs: { "data-entry-id": entry.entry_id || "" },
       })),
@@ -116,7 +116,7 @@ function sidebarGroups(payload, registryNodes) {
     testid: "releases-group-archive",
     open: false,
     children: archive.map((row) => ({
-      label: row.content || row.intake_id || "archived",
+      label: row.display_title || row.content || "已归档条目",
       testid: `sidebar-archive-${row.intake_id || "unknown"}`,
     })),
   });
