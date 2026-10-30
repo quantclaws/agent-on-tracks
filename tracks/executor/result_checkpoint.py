@@ -34,6 +34,7 @@ from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH
 from tracks.executor.result_audit import ResultAuditMixin
 from tracks.executor.result_payload import (
     ResultPayloadMixin,
+    blocking_verdict_failure_payload,
     is_blocking_pass,
     thread_review_fields,
 )
@@ -511,26 +512,15 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
             "diff_ref": commit_sha if created_commit and commit_sha else None,
             "result_id": result_id,
         }
+        domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
         if state.stage == "M-TEST":
-            domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
             # IF-BLOCKREV-001 §1c.2: a pass carrying blocker/high/critical
             # findings is a protocol violation. Fail closed here, before the
             # passing prism.verdict lands; never downgrade it to revise.
             if is_blocking_pass(verdict, domain_payload):
-                # Shape mirrors verdict_face.blocking_verdict_failure_payload;
-                # a top-level import would cycle (verdict_face imports this
-                # module), so keep the fail-closed record local to the site.
                 self._emit(
                     "verdict.failed",
-                    {
-                        "check": "blocking_findings",
-                        "reason": (
-                            "pass verdict carries blocking findings "
-                            "(protocol violation)"
-                        ),
-                        "stage": "M-TEST",
-                        "findings": domain_payload.get("findings"),
-                    },
+                    blocking_verdict_failure_payload(domain_payload, "M-TEST"),
                     command_id=cmd.command_id,
                     task_id=task_id,
                 )
@@ -554,7 +544,6 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
         elif state.stage == "M-DESIGN":
             # D-35 / PRISM-D35-R1-ADV1: M-DESIGN passthrough (AC-FR0240-04) —
             # optional fields ride along when the reviewer supplied them.
-            domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
             thread_review_fields(
                 payload,
                 domain_payload,

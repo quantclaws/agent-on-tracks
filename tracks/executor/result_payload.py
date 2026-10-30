@@ -33,6 +33,28 @@ def is_blocking_pass(verdict: str, payload: dict) -> bool:
     return verdict == "pass" and has_blocking_findings(payload.get("findings"))
 
 
+def blocking_verdict_failure_payload(
+    result: dict, stage: str, candidate_sha: str | None = None
+) -> dict:
+    """IF-BLOCKREV-001 §1c.2 fail-closed record for a contradictory verdict.
+
+    A ``pass`` carrying blocker/high/critical findings is a protocol
+    violation. The ingest point emits ``verdict.failed`` instead of a
+    passing ``prism.verdict``; the reviewer's verdict body is left untouched.
+    """
+    payload = {
+        "check": "blocking_findings",
+        "reason": "pass verdict carries blocking findings (protocol violation)",
+        "stage": stage,
+    }
+    if candidate_sha:
+        payload["candidate_sha"] = candidate_sha
+    findings = result.get("findings")
+    if isinstance(findings, list) and findings:
+        payload["findings"] = findings
+    return payload
+
+
 def _confined_repo_path(raw: str) -> str | None:
     """Normalize a manifest-declared path to a confined repo-relative form.
 

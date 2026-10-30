@@ -19,7 +19,10 @@ from tracks.executor.helpers import (
     git,
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
-from tracks.executor.result_payload import is_blocking_pass
+from tracks.executor.result_payload import (
+    blocking_verdict_failure_payload,
+    is_blocking_pass,
+)
 from tracks.kernel.machine import State
 from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
@@ -53,28 +56,6 @@ def _is_process_crash(result: dict) -> bool:
         if isinstance(code, int) and not isinstance(code, bool) and code != 0:
             return True
     return result.get("failure_class") in _INFRA_FAILURE_CLASSES
-
-
-def blocking_verdict_failure_payload(
-    result: dict, stage: str, candidate_sha: str | None = None
-) -> dict:
-    """IF-BLOCKREV-001 §1c.2 fail-closed record for a contradictory verdict.
-
-    A ``pass`` carrying blocker/high/critical findings is a protocol
-    violation. The ingest point emits ``verdict.failed`` instead of a
-    passing ``prism.verdict``; the reviewer's verdict body is left untouched.
-    """
-    payload = {
-        "check": "blocking_findings",
-        "reason": "pass verdict carries blocking findings (protocol violation)",
-        "stage": stage,
-    }
-    if candidate_sha:
-        payload["candidate_sha"] = candidate_sha
-    findings = result.get("findings")
-    if isinstance(findings, list) and findings:
-        payload["findings"] = findings
-    return payload
 
 
 # D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
