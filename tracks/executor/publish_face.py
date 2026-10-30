@@ -9,6 +9,7 @@ from tracks.effects import publish as publish_effects
 from tracks.executor.publish import PublishBlocked, assert_agent_forbidden
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
 from tracks.executor.release_gate import version_facts
+from tracks.executor.result_payload import is_blocking_pass
 from tracks.executor.security import (
     build_security_review_assignment,
     cve_repair_route,
@@ -17,10 +18,7 @@ from tracks.executor.security import (
     security_policy_digest,
     security_scan_evidence_complete,
 )
-from tracks.executor.verdict_face import (
-    blocking_verdict_failure_payload,
-    is_contradictory_pass,
-)
+from tracks.executor.verdict_face import blocking_verdict_failure_payload
 from tracks.kernel.events import Command
 
 
@@ -274,7 +272,7 @@ blocked-publish payload."""
                 "candidate_sha": candidate,
             }, command_id=cmd.command_id, task_id=task_id)
             return
-        if is_contradictory_pass(verdict, result):
+        if is_blocking_pass(verdict, result):
             self._emit(
                 "verdict.failed",
                 blocking_verdict_failure_payload(result, "M-SECURITY", candidate),

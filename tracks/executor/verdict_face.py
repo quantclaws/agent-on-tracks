@@ -19,7 +19,7 @@ from tracks.executor.helpers import (
     git,
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
-from tracks.executor.review_findings import has_blocking_findings
+from tracks.executor.result_payload import is_blocking_pass
 from tracks.kernel.machine import State
 from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
@@ -53,11 +53,6 @@ def _is_process_crash(result: dict) -> bool:
         if isinstance(code, int) and not isinstance(code, bool) and code != 0:
             return True
     return result.get("failure_class") in _INFRA_FAILURE_CLASSES
-
-
-def is_contradictory_pass(verdict: str, result: dict) -> bool:
-    """IF-BLOCKREV-001 §1c.2: a pass carrying blocking findings is invalid."""
-    return verdict == "pass" and has_blocking_findings(result.get("findings"))
 
 
 def blocking_verdict_failure_payload(
@@ -693,7 +688,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
 
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
-        if role == "prism" and is_contradictory_pass(verdict, result):
+        if role == "prism" and is_blocking_pass(verdict, result):
             self._emit(
                 "verdict.failed",
                 blocking_verdict_failure_payload(result, state.stage),
@@ -785,7 +780,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         if identity.error:
             self._emit_verify_final_identity_error(cmd, verdict, identity)
             return
-        if is_contradictory_pass(verdict, result):
+        if is_blocking_pass(verdict, result):
             self._emit(
                 "verdict.failed",
                 blocking_verdict_failure_payload(

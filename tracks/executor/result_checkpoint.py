@@ -32,7 +32,11 @@ from tracks.executor.file_identity import (  # noqa: F401  (re-export: test impo
 from tracks.executor.helpers import _scoped_commit_if_staged, git
 from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH
 from tracks.executor.result_audit import ResultAuditMixin
-from tracks.executor.result_payload import ResultPayloadMixin
+from tracks.executor.result_payload import (
+    ResultPayloadMixin,
+    is_blocking_pass,
+    thread_review_fields,
+)
 from tracks.executor.validate import has_staged_changes, verify_digests
 from tracks.kernel.events import Command
 
@@ -509,6 +513,28 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
         }
         if state.stage == "M-TEST":
             domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
+            # IF-BLOCKREV-001 §1c.2: a pass carrying blocker/high/critical
+            # findings is a protocol violation. Fail closed here, before the
+            # passing prism.verdict lands; never downgrade it to revise.
+            if is_blocking_pass(verdict, domain_payload):
+                # Shape mirrors verdict_face.blocking_verdict_failure_payload;
+                # a top-level import would cycle (verdict_face imports this
+                # module), so keep the fail-closed record local to the site.
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "blocking_findings",
+                        "reason": (
+                            "pass verdict carries blocking findings "
+                            "(protocol violation)"
+                        ),
+                        "stage": "M-TEST",
+                        "findings": domain_payload.get("findings"),
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
+                return
             payload["criteria_pack"] = domain_payload.get("criteria_pack")
             defect_classification = domain_payload.get("defect_classification")
             if defect_classification is not None:
@@ -520,18 +546,20 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
             # event — without this the verdict event carries no findings and
             # the revise re-dispatch evidence stays empty (live run 01M0AMKV
             # PRISM rounds 1-3, 2026-08-18).
-            for key in ("review_summary", "findings", "review_ref", "discussion_refs"):
-                val = domain_payload.get(key)
-                if val:
-                    payload[key] = val
+            thread_review_fields(
+                payload,
+                domain_payload,
+                ("review_summary", "findings", "review_ref", "discussion_refs"),
+            )
         elif state.stage == "M-DESIGN":
             # D-35 / PRISM-D35-R1-ADV1: M-DESIGN passthrough (AC-FR0240-04) —
             # optional fields ride along when the reviewer supplied them.
             domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
-            for key in ("review_summary", "findings", "review_ref", "discussion_refs"):
-                val = domain_payload.get(key)
-                if val:
-                    payload[key] = val
+            thread_review_fields(
+                payload,
+                domain_payload,
+                ("review_summary", "findings", "review_ref", "discussion_refs"),
+            )
         self._emit("prism.verdict", payload, command_id=cmd.command_id, task_id=task_id)
         if verdict != "pass" and state.stage == "M-DESIGN":
             self._emit(

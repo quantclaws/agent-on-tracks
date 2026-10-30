@@ -12,11 +12,25 @@ from tracks.executor.file_identity import (
     is_regular_file_identity as _is_regular_file_identity,
 )
 from tracks.executor.helpers import git
+from tracks.executor.review_findings import has_blocking_findings
 from tracks.executor.validate import capture_digests
 from tracks.kernel.machine import _STAGES, DESIGN_DOCS
 from tracks.kernel.machine_verdicts import _PARK_VERDICT
 from tracks.project import layout_paths
 from tracks.store import new_ulid
+
+
+def thread_review_fields(payload: dict, source: dict, keys: tuple[str, ...]) -> None:
+    """Copy non-empty reviewer fields from *source* into *payload*."""
+    for key in keys:
+        value = source.get(key)
+        if value:
+            payload[key] = value
+
+
+def is_blocking_pass(verdict: str, payload: dict) -> bool:
+    """IF-BLOCKREV-001 §1c.2: a pass carrying blocking findings is invalid."""
+    return verdict == "pass" and has_blocking_findings(payload.get("findings"))
 
 
 def _confined_repo_path(raw: str) -> str | None:
@@ -285,13 +299,16 @@ class ResultPayloadMixin:
             # defect_classification (the reducer defaults absent to
             # test_defect; a present null used to leave M-TEST un-routed).
             domain_payload["defect_classification"] = defect_classification
+        # IF-BLOCKREV-001 §1c.2: findings must ride the checkpoint on every
+        # verdict, including pass — the M-TEST ingest point judges
+        # pass+blocking from this payload before publishing a prism.verdict.
+        thread_review_fields(domain_payload, result, ("findings",))
         if verdict != "pass":
             # FR-11: thread reviewer findings into the published event so the
             # kernel can put them into the revise re-dispatch evidence.
-            for key in ("review_summary", "findings", "discussion_refs"):
-                val = result.get(key)
-                if val:
-                    domain_payload[key] = val
+            thread_review_fields(
+                domain_payload, result, ("review_summary", "discussion_refs")
+            )
             # D-35 (SC-D35 §2.3): the full review body is content-addressed
             # into blobs/ and referenced by sha; it never rides inline in the
             # event payload (AC-FR0240-02).
