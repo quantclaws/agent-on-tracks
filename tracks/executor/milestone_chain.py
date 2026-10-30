@@ -20,6 +20,8 @@ from tracks.executor.milestone import (
     clean_temp_refs,
     close_issues_with_comment,
     close_project_milestone,
+    emit_stage_exit,
+    emit_stage_handoff,
     release_trace_comment,
     seal_evidence_readonly,
     skipped_issue_entries,
@@ -27,6 +29,7 @@ from tracks.executor.milestone import (
 from tracks.executor.publish import operation_idempotency_key
 from tracks.executor.release_gate import render_placeholders, version_facts
 from tracks.executor.repair import registered_known_issues
+from tracks.executor.review_findings import verdict_failed
 
 _PUBLISH_FAILURE_EVENTS = frozenset(
     {"publish.failed", "publish.blocked", "reconcile_conflict"}
@@ -75,6 +78,15 @@ def _publish_failure_reason(events, after_seq: int) -> str:
     return ""
 
 
+def _remaining_detail(payload: dict) -> dict:
+    """Stable residue identity for the refs/worktrees/staging stall guard."""
+    return {
+        "refs": list(payload.get("remaining_refs") or []),
+        "worktrees": list(payload.get("remaining_worktrees") or []),
+        "staging": bool(payload.get("staging_remaining")),
+    }
+
+
 class ExecMilestoneMixin:
     """close_milestone trace/issue/project/seal/clean/complete handlers."""
 
@@ -95,6 +107,14 @@ class ExecMilestoneMixin:
         candidate_sha = self._milestone_candidate(events, params)
         if self._block_incomplete_publish(cmd, task_id, events, candidate_sha):
             return
+        if self._block_failed_review(cmd, task_id, events, candidate_sha):
+            return
+        # IF-STAGE-001 §1f: the reconciled M-PUBLISH hands to M-MILESTONE
+        # before the trace closure; the visit guard keeps retry_tail re-entry
+        # from duplicating the pair (the kernel reducer stays authoritative).
+        emit_stage_handoff(
+            self._emit, events, "M-PUBLISH", "M-MILESTONE", cmd.command_id
+        )
         trace = self._milestone_trace(cmd, task_id, events, candidate_sha)
         if not trace.get("trace_digest"):
             return
@@ -150,6 +170,79 @@ class ExecMilestoneMixin:
             task_id=task_id,
         )
         return True
+
+    def _block_failed_review(self, cmd, task_id, events, candidate_sha) -> bool:
+        """IF-BLOCKREV-001 §1c: a contradictory/non-pass release review is failed.
+
+        The downstream hard invariant judges ``verdict != "pass" OR
+        has_blocking_findings(findings)`` as failed for the latest
+        candidate-bound ``verify_final``/``security`` verdict. The closing
+        tail must never trace-close or complete a release whose review is
+        failed; it parks on an actionable attention instead. The emitted
+        attention is idempotent per candidate so a retry re-entry does not
+        duplicate the operator block.
+        """
+        failed = []
+        for scope in ("verify_final", "security"):
+            latest = next(
+                (
+                    event
+                    for event in reversed(events)
+                    if event.type == "prism.verdict"
+                    and (event.payload or {}).get("scope") == scope
+                    and self._verdict_bound_to(event, candidate_sha)
+                ),
+                None,
+            )
+            if latest is not None and verdict_failed(latest.payload or {}):
+                failed.append((scope, latest))
+        if not failed:
+            return False
+        if self._review_attention_landed(events, candidate_sha):
+            return True
+        scope, event = failed[0]
+        payload = event.payload or {}
+        self._emit(
+            "attention.required",
+            {
+                "area": "release_evidence",
+                "reason": "blocking_findings",
+                "stage": "M-MILESTONE",
+                "candidate_sha": candidate_sha,
+                "scope": scope,
+                "verdict": payload.get("verdict"),
+                "detail": (
+                    "the release review is not a clean pass "
+                    "(verdict != pass or blocking findings); the milestone "
+                    "is not closed"
+                ),
+                "next": (
+                    "repair the blocking review findings and re-run M-VERIFY; "
+                    "the release closure stays blocked"
+                ),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return True
+
+    @staticmethod
+    def _verdict_bound_to(event, candidate_sha: str) -> bool:
+        bound = str((event.payload or {}).get("candidate_sha") or "")
+        return not candidate_sha or not bound or bound == candidate_sha
+
+    @staticmethod
+    def _review_attention_landed(events, candidate_sha: str) -> bool:
+        return any(
+            event.type == "attention.required"
+            and (event.payload or {}).get("area") == "release_evidence"
+            and (event.payload or {}).get("reason") == "blocking_findings"
+            and (
+                not candidate_sha
+                or (event.payload or {}).get("candidate_sha") == candidate_sha
+            )
+            for event in events
+        )
 
     def _milestone_trace(self, cmd, task_id, events, candidate_sha):
         """The trace close sub-step: reuse any landed milestone.trace_closed,
@@ -508,16 +601,17 @@ class ExecMilestoneMixin:
         ):
             return True
         cleaned = clean_temp_refs(self.repo, self.run_id)
-        prior_remaining = next(
+        detail = _remaining_detail(cleaned)
+        prior = next(
             (
-                (event.payload or {}).get("remaining_refs")
+                _remaining_detail(event.payload or {})
                 for event in reversed(events)
                 if event.type == "refs.cleaned"
             ),
             None,
         )
-        if cleaned.get("remaining") != 0 and prior_remaining == cleaned.get("remaining_refs"):
-            # Same stuck refs as the previous attempt: emit nothing so the
+        if cleaned.get("remaining") != 0 and prior == detail:
+            # Same stuck residue as the previous attempt: emit nothing so the
             # stall breaker stops the retry loop instead of appending
             # duplicate audit events forever.
             return False
@@ -529,7 +623,12 @@ class ExecMilestoneMixin:
                     "area": "milestone_refs",
                     "reason": "refs_remaining",
                     "remaining_refs": cleaned.get("remaining_refs", []),
-                    "next": "inspect refs/trac/tmp owners and trac run",
+                    "remaining_worktrees": cleaned.get("remaining_worktrees", []),
+                    "staging_remaining": cleaned.get("staging_remaining", False),
+                    "next": (
+                        "inspect refs/trac/tmp, refs/trac/rgr and leaked temp "
+                        "worktrees/staging, then trac run"
+                    ),
                 },
                 command_id=cmd.command_id,
                 task_id=task_id,
@@ -538,6 +637,14 @@ class ExecMilestoneMixin:
         return True
 
     def _complete_milestone(self, cmd, task_id, trace, events):
+        # Refresh the projection: the stage handoff emitted moments earlier
+        # (M-PUBLISH -> M-MILESTONE) is the completion witness's entry, and a
+        # retry may have landed any tail step between the caller's snapshot
+        # and this sub-step. The store is the authority.
+        try:
+            events = list(self.store.events(self.run_id))
+        except (AttributeError, OSError):
+            events = list(events or ())
         # IF-MILESTONE-002 §1r.1: only run.completed(terminal_state=released)
         # is the idempotent completion witness -- the M-IMPL closure boundary
         # pseudo-completion (terminal_state=boundary) must not block the
@@ -548,6 +655,9 @@ class ExecMilestoneMixin:
             for event in events
         ):
             return
+        # IF-STAGE-001 §1f: the closing stage exits once, before/with the
+        # released completion (visit-guarded for retry_tail re-entry).
+        emit_stage_exit(self._emit, events, "M-MILESTONE", cmd.command_id)
         # §1.0.7 terminal face: the closing tail completes with
         # run.completed(terminal_state=released, release_tag).
         self._emit(

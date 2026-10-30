@@ -340,6 +340,38 @@ def on_release_decided(state: State, payload: dict, event) -> None:
         state.substate = "RETURNED"
 
 
+def _rearm_publish_pending(state: State, payload: dict, event) -> None:
+    """Restore the batch WAL resolved by the IF-STAGE-001 handoff rows.
+
+    The executor emits ``stage.exited(M-RELEASE)`` + ``stage.entered(
+    M-PUBLISH)`` immediately before ``publish.planned``, inside the same
+    ``execute_publish`` command. ``machine.apply`` clears ``pending`` for any
+    event outside its preserving sets, so the handoff resolves the in-flight
+    command before the batch starts; without re-arming, a later
+    ``publish.failed`` (e.g. ``branch_missing``) cannot preserve a WAL that
+    is already gone, the ``retry_tail`` drive never replays the batch, and
+    M-PUBLISH never exits. The planned write-ahead is the batch-start
+    witness; the terminal publish event clears the WAL on completion
+    (SM-01.15). Legacy streams without an explicit M-PUBLISH entry keep
+    their pending untouched (no handoff cleared it).
+    """
+    if (
+        state.publish_started
+        or state.pending is not None
+        or state.stage != "M-PUBLISH"
+        or not event.command_id
+    ):
+        return
+    params = {}
+    if payload.get("preview_digest"):
+        params["preview_digest"] = str(payload["preview_digest"])
+    state.pending = {
+        "kind": "execute_publish",
+        "params": params,
+        "command_id": event.command_id,
+    }
+
+
 def on_publish_events(state: State, payload: dict, event) -> None:
     """Project publish=planned|executing|reconciled_skip|done|blocked.
 
@@ -349,10 +381,13 @@ def on_publish_events(state: State, payload: dict, event) -> None:
     leaves the stage parked and fail-closed: close_milestone is never
     handed a half-published batch. The write-ahead ``pending`` record of the
     started batch survives the failure (machine.apply) so the next drive
-    replays the SAME command and reconciles the finished operations.
+    replays the SAME command and reconciles the finished operations; the
+    batch-start ``publish.planned`` re-arms it when the IF-STAGE-001 handoff
+    rows resolved it first (``_rearm_publish_pending``).
     """
     etype = event.type
     if etype == "publish.planned":
+        _rearm_publish_pending(state, payload, event)
         state.publish_status = "planned"
         state.publish_started = True
         # SM-01.7 walk: publish execution is the M-PUBLISH body -- the
