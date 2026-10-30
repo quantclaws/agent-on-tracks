@@ -505,11 +505,12 @@ def _todo_for(
     title: str | None = None, updated_ts: str | None = None,
 ) -> dict | None:
     """A legitimate human decision for one run, or None (waits never list)."""
+    run_ref = f"/runs/{run_id}"
     if state.awaiting == "approval":
         return _todo_item(
             run_id, state, project, "stage_approval", "阶段批准",
             f"{state.stage or 'stage'} awaiting Human approval",
-            f"/runs/{run_id}", title, updated_ts,
+            run_ref, title, updated_ts,
             object_label=state.stage or "approval",
             revision=_material_revision(project) or state.preview_digest,
         )
@@ -519,12 +520,12 @@ def _todo_for(
         label, context = gate
         return _todo_item(
             run_id, state, project, gate_kind, label, context,
-            f"/runs/{run_id}", title, updated_ts,
+            run_ref, title, updated_ts,
         )
     if state.substate == "AWAITING_RELEASE":
         return _todo_item(
             run_id, state, project, "release_decision", "发布决策",
-            "release candidate awaiting decision", f"/runs/{run_id}",
+            "release candidate awaiting decision", run_ref,
             title, updated_ts, object_label=state.stage or "release",
         )
     return None
