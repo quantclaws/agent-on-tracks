@@ -55,6 +55,11 @@ def _is_process_crash(result: dict) -> bool:
     return result.get("failure_class") in _INFRA_FAILURE_CLASSES
 
 
+def is_contradictory_pass(verdict: str, result: dict) -> bool:
+    """IF-BLOCKREV-001 §1c.2: a pass carrying blocking findings is invalid."""
+    return verdict == "pass" and has_blocking_findings(result.get("findings"))
+
+
 def blocking_verdict_failure_payload(
     result: dict, stage: str, candidate_sha: str | None = None
 ) -> dict:
@@ -688,11 +693,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
 
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
-        if (
-            role == "prism"
-            and verdict == "pass"
-            and has_blocking_findings(result.get("findings"))
-        ):
+        if role == "prism" and is_contradictory_pass(verdict, result):
             self._emit(
                 "verdict.failed",
                 blocking_verdict_failure_payload(result, state.stage),
@@ -784,7 +785,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         if identity.error:
             self._emit_verify_final_identity_error(cmd, verdict, identity)
             return
-        if verdict == "pass" and has_blocking_findings(result.get("findings")):
+        if is_contradictory_pass(verdict, result):
             self._emit(
                 "verdict.failed",
                 blocking_verdict_failure_payload(
