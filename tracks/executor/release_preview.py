@@ -17,7 +17,7 @@ from tracks.executor.release_gate import (
     generate_preview,
     operation_plan_needs_n,
 )
-from tracks.executor.review_findings import has_blocking_findings
+from tracks.executor.review_findings import verdict_failed
 from tracks.executor.sync_product import validate_record, verified_records
 
 # interfaces §1b item 1: a new preview/authorization is invalid unless every
@@ -139,9 +139,7 @@ def _evidence_is_success(
     if event_type == "prism.verdict":
         # interfaces §1c: pass with blocking findings is a contradictory
         # verdict and never counts as success.
-        return payload.get("verdict") == "pass" and not has_blocking_findings(
-            payload.get("findings")
-        )
+        return not verdict_failed(payload)
     if event_type == "security.assessed":
         return payload.get("status") == "passed"
     return False
@@ -175,10 +173,11 @@ def _collect_evidence(events, candidate_sha: str, barrier: int):
     return before, latest
 
 
-def evidence_digests(events, candidate_sha: str) -> dict | None:
-    barrier = _stale_barrier(events, candidate_sha)
-    before, latest = _collect_evidence(events, candidate_sha, barrier)
-    successful = {
+def _successful_evidence_digests(
+    latest: dict[str, tuple[int, str, dict]], candidate_sha: str
+) -> dict:
+    """Canonical digests of the latest successful evidence per key."""
+    return {
         key: canonical_digest(
             {
                 field: value
@@ -189,6 +188,12 @@ def evidence_digests(events, candidate_sha: str) -> dict | None:
         for key, (_seq, event_type, payload) in sorted(latest.items())
         if _evidence_is_success(event_type, payload, candidate_sha)
     }
+
+
+def evidence_digests(events, candidate_sha: str) -> dict | None:
+    barrier = _stale_barrier(events, candidate_sha)
+    before, latest = _collect_evidence(events, candidate_sha, barrier)
+    successful = _successful_evidence_digests(latest, candidate_sha)
     # A stale barrier requires the PRE-barrier evidence set to be
     # re-established after it. When the pre-barrier set is EMPTY the
     # candidate's entire evidence landed AFTER the barrier (a full re-walk --
@@ -361,6 +366,16 @@ def _legacy_prism_evidence_matches(old_evidence: dict, current_evidence: dict) -
     return True
 
 
+def _is_legacy_prism_blob(old_evidence, current_evidence) -> bool:
+    """Whether *old_evidence* predates the split prism keys (INV-5)."""
+    return (
+        isinstance(old_evidence, dict)
+        and "prism" in old_evidence
+        and "prism.security" not in old_evidence
+        and isinstance(current_evidence, dict)
+    )
+
+
 def preview_inputs_match(old: dict, current: dict) -> bool:
     """Whether *current* reproduces every input recorded by *old*.
 
@@ -372,12 +387,7 @@ def preview_inputs_match(old: dict, current: dict) -> bool:
     current_inputs = {key: value for key, value in current.items() if key != "blob_ref"}
     old_evidence = old_inputs.get("evidence_digests")
     current_evidence = current_inputs.get("evidence_digests")
-    if (
-        isinstance(old_evidence, dict)
-        and "prism" in old_evidence
-        and "prism.security" not in old_evidence
-        and isinstance(current_evidence, dict)
-    ):
+    if _is_legacy_prism_blob(old_evidence, current_evidence):
         old_rest = {
             key: value
             for key, value in old_inputs.items()

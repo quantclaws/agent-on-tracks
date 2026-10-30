@@ -30,3 +30,15 @@ def has_blocking_findings(findings: Iterable[Mapping] | None) -> bool:
         and finding.get("severity") in BLOCKING_SEVERITIES
         for finding in findings
     )
+
+
+def verdict_failed(payload: Mapping) -> bool:
+    """Downstream hard invariant: only a clean ``pass`` is success.
+
+    ``verdict != "pass"`` or a blocking finding (INV-3) is failure. Every
+    downstream consumer (release preview/authorization/status) shares this
+    one rule instead of re-deriving the invariant.
+    """
+    return payload.get("verdict") != "pass" or has_blocking_findings(
+        payload.get("findings")
+    )

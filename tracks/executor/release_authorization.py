@@ -31,7 +31,7 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
-from tracks.executor.review_findings import has_blocking_findings
+from tracks.executor.review_findings import verdict_failed
 from tracks.executor.security import security_policy_digest, security_scan_evidence_complete
 from tracks.executor.sync_product import remote_branch_tip
 
@@ -86,6 +86,20 @@ def _latest_bound(events: list, event_type: str, candidate: str):
             for event in reversed(events)
             if event.type == event_type
             and _payload(event).get("candidate_sha") == candidate
+        ),
+        None,
+    )
+
+
+def _latest_scoped_verdict(events: list, candidate: str, scope: str):
+    """The latest candidate-bound prism verdict for one release scope."""
+    return next(
+        (
+            event
+            for event in reversed(events)
+            if event.type == "prism.verdict"
+            and _payload(event).get("candidate_sha") == candidate
+            and _payload(event).get("scope") == scope
         ),
         None,
     )
@@ -202,22 +216,10 @@ def _ci_status(events: list, candidate: str, contract) -> tuple[str, bool]:
 
 
 def _prism_status(events: list, candidate: str) -> tuple[str, bool]:
-    event = next(
-        (
-            event
-            for event in reversed(events)
-            if event.type == "prism.verdict"
-            and _payload(event).get("candidate_sha") == candidate
-            and _payload(event).get("scope") == "verify_final"
-        ),
-        None,
-    )
+    event = _latest_scoped_verdict(events, candidate, "verify_final")
     if event is None:
         return "unknown", False
-    payload = _payload(event)
-    valid = payload.get("verdict") == "pass" and not has_blocking_findings(
-        payload.get("findings")
-    )
+    valid = not verdict_failed(_payload(event))
     return ("pass" if valid else "failed"), valid
 
 
@@ -229,20 +231,21 @@ def _security_status(
         return "unknown", False
     payload = _payload(event)
     policy_digest = security_policy_digest(contract)
-    review = next((item for item in reversed(events)
-                   if item.type == "prism.verdict"
-                   and _payload(item).get("scope") == "security"
-                   and _payload(item).get("candidate_sha") == candidate), None)
+    review = _latest_scoped_verdict(events, candidate, "security")
     review_payload = _payload(review)
     valid = (
-        payload.get("status") == "passed" and payload.get("policy_digest") == policy_digest
+        payload.get("status") == "passed"
+        and payload.get("policy_digest") == policy_digest
         and payload.get("contract_digest") == contract_digest
-        and bool(payload.get("review_command_id")) and review is not None
-        and review.command_id == payload["review_command_id"] and review.seq < event.seq
-        and review_payload.get("verdict") == "pass"
-        and not has_blocking_findings(review_payload.get("findings"))
+        and bool(payload.get("review_command_id"))
+        and review is not None
+        and review.command_id == payload["review_command_id"]
+        and review.seq < event.seq
+        and not verdict_failed(review_payload)
         and review_payload.get("policy_digest") == policy_digest
-        and security_scan_evidence_complete(contract, payload.get("scans", payload.get("findings")))
+        and security_scan_evidence_complete(
+            contract, payload.get("scans", payload.get("findings"))
+        )
     )
     return ("passed" if valid else "failed"), valid
 
