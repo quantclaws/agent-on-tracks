@@ -330,8 +330,21 @@ def test_legacy_run_timeline_synthesizes_transitions(tmp_path: Path):
     finally:
         store.close()
 
-    # The seed really is a legacy run: no explicit RELEASE-TAIL stage events.
+    # The seed really is a legacy run: interfaces §1f item 3 declares the
+    # v0.12.0-shaped stream carries NO explicit stage events at all (the
+    # release-tail transitions are the projection's synthesis), so the seed
+    # must not contain ANY explicit stage.entered/stage.exited row -- not
+    # only the release-tail ones.
     release_tail_stages = ("M-RELEASE", "M-PUBLISH", "M-MILESTONE")
+    explicit_stages = [
+        (event.type, (event.payload or {}).get("stage"))
+        for event in stored
+        if event.type in ("stage.exited", "stage.entered")
+    ]
+    assert explicit_stages == [], (
+        "the legacy fixture must carry no explicit stage events at all "
+        f"(got {explicit_stages!r})"
+    )
     explicit_tail = [
         (event.type, (event.payload or {}).get("stage"))
         for event in stored

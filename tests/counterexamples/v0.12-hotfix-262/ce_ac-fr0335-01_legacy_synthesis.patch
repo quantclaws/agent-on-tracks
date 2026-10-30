@@ -1,11 +1,14 @@
 diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
 --- a/tracks/server/projections_timeline.py
 +++ b/tracks/server/projections_timeline.py
-@@ -79,6 +79,7 @@
+@@ -172,7 +172,9 @@
+         _service_timeline_rows(conn, run_id, slim=slim, include_internal=include_internal)
+     )
+     rows.sort(key=_timeline_sort_key)
+-    return _synthesize_legacy_stage_rows(rows)
++    # COUNTEREXAMPLE: the legacy transition synthesis is absent, so the
++    # legacy run's timeline renders no release-tail stage visits.
++    return rows
  
  
  def _track_timeline_rows(repo_path: str, run_id: str, *, slim: bool) -> list[dict]:
-+    # COUNTEREXAMPLE: no legacy transition synthesis.
-     if slim:
-         return _slim_track_rows(repo_path, run_id)
-     return _full_track_rows(repo_path, run_id)

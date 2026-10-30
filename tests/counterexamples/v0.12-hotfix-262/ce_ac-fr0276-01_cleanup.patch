@@ -1,12 +1,14 @@
 diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
 --- a/tracks/executor/milestone.py
 +++ b/tracks/executor/milestone.py
-@@ -438,7 +438,7 @@
-     a hardcoded zero.
-     """
-     namespace = "refs/trac/tmp"
--    listed = _list_refs(repo, namespace)
-+    listed = [ref for ref in _list_refs(repo, namespace) if "refs/trac/rgr/" not in ref]
+@@ -542,6 +542,10 @@
+     """Delete every ref in each namespace; report (removed, residue)."""
      removed: list[str] = []
-     for ref in listed:
-         proc = _git_refs(repo, "update-ref", "-d", ref)
+     for namespace in namespaces:
++        # COUNTEREXAMPLE: the temp-ref cleanup skips the
++        # refs/trac/rgr namespace, so the run-scoped rgr refs survive.
++        if namespace.startswith("refs/trac/rgr"):
++            continue
+         for ref in _list_refs(repo, namespace):
+             proc = _git_refs(repo, "update-ref", "-d", ref)
+             if proc is not None and proc.returncode == 0:

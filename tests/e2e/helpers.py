@@ -48,6 +48,15 @@ walk_to_design_complete = walk_to_m_test_complete
 # parks at M-IMPL/DIAGNOSE/awaiting=escalation — the proven parking logic.
 M_IMPL_PARK_SIMULATE = "devon:RED=fail;diagnose:classification=impl_defect"
 
+# The M-IMPL leg of the RELEASE walk: DEVON's RED succeeds, so the
+# implementation stubs land and the host repo's suite stays green.  A NEW
+# release preview needs all five release-evidence keys (interfaces §1b item
+# 1) and the full_f key requires an AUTHORITATIVE FULL_F proof (interfaces
+# §1a item 1); the FULL_F battery runs every collected node of the host
+# repo, so a red DEVON cycle would leave the behavioral-contract nodes
+# failing and the battery could never produce that proof.
+M_IMPL_RELEASE_SIMULATE = "devon:RED=pass"
+
 
 def _seed_phase0_premises(repo, version):
     """Seed the phase0 baseline-repair premises into the host repo (v0.7+).
@@ -184,13 +193,24 @@ def walk_to_awaiting_release(
     max_drives=10,
     host_repo=None,
 ):
-    """Drive the proven M-IMPL park to M-RELEASE/AWAITING_RELEASE.
+    """Drive the release chain to M-RELEASE/AWAITING_RELEASE.
 
-    v0.8 reality (verified on HEAD): after the park, the first injected
-    ``trac run`` replays the failure review and registers the waived known
-    issues, the next one (or two) walks M-IMPL EXIT -> M-VERIFY
-    (evidence.reused -> persisted CI readback -> prism verify_final ->
-    security) and lands the release preview at M-RELEASE/AWAITING_RELEASE.
+    The release preview needs a COMPLETE, verified candidate: interfaces §1b
+    item 1 makes the five release-evidence keys (full_f / ci /
+    prism.verify_final / prism.security / security) a precondition of a NEW
+    preview, and the ``full_f`` key requires an AUTHORITATIVE FULL_F proof
+    (interfaces §1a item 1).  The FULL_F battery runs every collected node of
+    the host repo, so the chain's own M-IMPL cycle must leave that suite
+    GREEN -- a failed DEVON RED leaves the behavioral-contract nodes failing
+    and the battery can never produce an authoritative proof.
+
+    So this walk drives the M-IMPL cycle to SUCCESS (``devon:RED=pass``):
+    the implementation stubs land, the battery is green and the chain reaches
+    M-VERIFY -> M-RELEASE with the complete evidence set.  The M-IMPL PARK
+    (a failed RED, ``walk_to_m_impl_parked``) remains the premise of the
+    ESCAPE anchors, which need the DIAGNOSE escalation; it is not a
+    precondition of the release chain.
+
     The loop is bounded; a missing arrival is a harness bug, not a park
     expectation.
 
@@ -213,15 +233,21 @@ def walk_to_awaiting_release(
         )
         if not has_origin:
             init_bare_remote(host_repo, "walk-origin.git")
-    run_id = walk_to_m_impl_parked(
-        trac,
-        stdin=stdin,
-        version=version,
-        pre_seed_hook=pre_seed_hook,
-        post_approve_hook=post_approve_hook,
-    )
+    run_id = walk_to_await_human(trac, stdin=stdin, version=version)
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    if post_approve_hook is not None:
+        post_approve_hook(trac, run_id)
+    # The phase0 pre-gate: the first post-approval drive drafts the M-DESIGN
+    # trio and fails the phase0 validate on a bare repo; the premises are
+    # seeded on the baseline-repair channel so the next drive seals phase0.
+    r = trac("run", "--no-watch", simulate=M_IMPL_RELEASE_SIMULATE)
+    repo = getattr(trac, "repo", None)
+    if repo is not None:
+        if pre_seed_hook is not None:
+            pre_seed_hook(repo)
+        _seed_phase0_premises(repo, version)
     for _ in range(max_drives):
-        r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
+        r = trac("run", "--no-watch", simulate=M_IMPL_RELEASE_SIMULATE)
         assert r.returncode == 0, (
             f"trac run failed rc={r.returncode}\nstderr:\n{r.stderr[-800:]}\nstdout:\n{r.stdout[-1500:]}"
         )

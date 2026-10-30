@@ -1,11 +1,15 @@
-diff --git a/tracks/server/static/app/timeline.js b/tracks/server/static/app/timeline.js
---- a/tracks/server/static/app/timeline.js
-+++ b/tracks/server/static/app/timeline.js
-@@ -270,6 +270,7 @@
-  * Time-ordered input assumed (the timeline projection sorts by ts).
-  */
- function stageWorkflowWindow(events, stage) {
-+  // COUNTEREXAMPLE: the legacy transition synthesis is absent.
-   const list = Array.isArray(events) ? events : [];
-   if (!stage) return [];
-   let start = -1;
+diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
+--- a/tracks/server/projections_timeline.py
++++ b/tracks/server/projections_timeline.py
+@@ -172,7 +172,10 @@
+         _service_timeline_rows(conn, run_id, slim=slim, include_internal=include_internal)
+     )
+     rows.sort(key=_timeline_sort_key)
+-    return _synthesize_legacy_stage_rows(rows)
++    # COUNTEREXAMPLE: the legacy transition synthesis is absent, so the
++    # client sees no synthesized release-tail stage visit and the stage
++    # workflow window of a legacy run stays empty.
++    return rows
+ 
+ 
+ def _track_timeline_rows(repo_path: str, run_id: str, *, slim: bool) -> list[dict]:

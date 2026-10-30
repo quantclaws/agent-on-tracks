@@ -86,12 +86,6 @@
   },
   "legacy_run_7473_events": [
     {"seq": 7473, "type": "story.requested", "payload": {"raw_chars": 1}},
-    {"seq": 7474, "type": "stage.entered", "payload": {"stage": "M-IMPL"}},
-    {"seq": 7475, "type": "stage.exited", "payload": {"stage": "M-IMPL"}},
-    {"seq": 7476, "type": "stage.entered", "payload": {"stage": "M-VERIFY"}},
-    {"seq": 7477, "type": "stage.exited", "payload": {"stage": "M-VERIFY"}},
-    {"seq": 7478, "type": "stage.entered", "payload": {"stage": "M-SECURITY"}},
-    {"seq": 7479, "type": "stage.exited", "payload": {"stage": "M-SECURITY"}},
     {"seq": 7481, "type": "publish.planned", "payload": {"candidate_sha": "44c14de0000000000000000000000000000000000"}},
     {"seq": 7482, "type": "milestone.trace_closed", "payload": {"trace_digest": "sha256:legacy7473"}},
     {"seq": 7483, "type": "run.completed", "payload": {"terminal_state": "released"}}

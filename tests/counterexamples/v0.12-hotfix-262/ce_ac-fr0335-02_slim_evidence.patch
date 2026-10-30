@@ -1,11 +1,14 @@
 diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
 --- a/tracks/server/projections_timeline.py
 +++ b/tracks/server/projections_timeline.py
-@@ -165,6 +165,7 @@
-     # folds it into 技术详情 (never the default headline).
-     "evidence",
-     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
-+    "evidence_payload",
-     "area", "next"})
- 
- # Slim-mode service-plane noise exclusion (read-face load shedding only; the
+@@ -377,7 +377,9 @@
+     ``include_evidence=False`` so a response row never carries it.
+     """
+     slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+-    if include_evidence and "evidence" in parsed:
++    # COUNTEREXAMPLE: the slim face keeps the full evidence payload,
++    # so the slim response exceeds its size budget.
++    if "evidence" in parsed:
+         slim["evidence"] = parsed["evidence"]
+     if type_ == "outcome.received":
+         # Outcome blobs name their conclusion via status/failure_class (this
