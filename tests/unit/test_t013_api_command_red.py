@@ -52,6 +52,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from tests.unit.helpers import git_repo, git_strip
+from tests.unit.hotfix262_release_support import (
+    FULL_HOST_CONTRACT_TOML,
+    RELEASE_FACTS,
+    release_evidence,
+)
 from tracks.baseline import revision_digest
 from tracks.executor.host_contract import load_host_contract
 from tracks.executor.release_preview import assemble_preview
@@ -65,34 +70,6 @@ _VERSION = "v0.9"
 _RELEASE_VERSION = "v0.8"  # release fixture rides the proven v0.8 harness facts
 _ACTOR = "local-user"
 _SESSION_COOKIE = "trac_session"
-_CONTRACT_TOML = (
-    "[host-contract]\n"
-    "version = 1\n"
-    "language = 'python'\n"
-    "toolchain = 'cpython'\n"
-    "install = ''\n"
-    "\n[host-contract.version_scheme]\n"
-    "feature_tag = 'v{minor}.0'\n"
-    "patch_line = 'v{minor}.{n}'\n"
-    "prerelease_tag = 'v{minor}.{n}-pre.{ulid}'\n"
-    "\n[[host-contract.local_gate]]\n"
-    "kind = 'quality'\n"
-    "source = 'command'\n"
-    "command = 'quality'\n"
-    "result_channel = 'exit_code'\n"
-    "\n[[host-contract.security_scan]]\n"
-    "id = 'security'\ntool = 'fixture'\ntool_version = '1'\n"
-    "install = ''\ncommand = 'true'\nresult_channel = 'exit_code'\n"
-    "threshold = '0'\ntimeout_seconds = 5\n"
-    "\n[host-contract.ci]\n"
-    "repo_env = 'CI_REPO'\n"
-    "workflow = 'ci.yml'\n"
-    "required_checks = ['quality']\n"
-    "\n[host-contract.operations.feature]\n"
-    "steps = ['tag:{feature_tag}']\n"
-)
-
-
 # -- the handler seam: request double + response extraction ------------------
 
 
@@ -317,6 +294,11 @@ def _state_awaiting(repo: Path, run_id: str) -> tuple:
 # -- release fixture: candidate-bound fresh preview (proven harness) ---------
 
 
+def _seed_release_evidence(store, run_id: str, candidate: str) -> None:
+    for event_type, event_payload in release_evidence(candidate):
+        store.append(run_id, _RELEASE_VERSION, event_type, event_payload)
+
+
 def _seed_release_run(tmp_path: Path, run_id: str, *, stale: bool = False):
     """A run at M-RELEASE with a bound fresh preview (or a staled one).
 
@@ -325,7 +307,7 @@ def _seed_release_run(tmp_path: Path, run_id: str, *, stale: bool = False):
     repo = git_repo(tmp_path, gitignore=True)
     contract_path = repo / ".tracks" / "projects" / "project.toml"
     contract_path.parent.mkdir(parents=True, exist_ok=True)
-    contract_path.write_text(_CONTRACT_TOML, encoding="utf-8")
+    contract_path.write_text(FULL_HOST_CONTRACT_TOML, encoding="utf-8")
     git_strip(repo, "add", "-f", ".tracks/projects/project.toml")
     git_strip(repo, "commit", "-m", "release contract")
     candidate = git_strip(repo, "rev-parse", "HEAD")
@@ -344,8 +326,9 @@ def _seed_release_run(tmp_path: Path, run_id: str, *, stale: bool = False):
                 "frozen_at_seq": 3,
             },
         )
+        _seed_release_evidence(store, run_id, candidate)
         contract = load_host_contract(contract_path)
-        facts = {"version": _RELEASE_VERSION, "major": "0", "minor": "0.8"}
+        facts = dict(RELEASE_FACTS)
         preview = assemble_preview(
             repo,
             contract,

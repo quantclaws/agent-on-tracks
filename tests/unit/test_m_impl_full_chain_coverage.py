@@ -175,6 +175,7 @@ def test_run_full_layers_success(tmp_path: Path, monkeypatch):
     assert "unit" in result_paths
 
 
+# AC-FR0315-01@v0.9 TRACKS-TRACE IF-HOSTENV-001 FULL layer child allowlist
 def test_run_full_layer_launches_with_sanitized_host_env(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
     observed = tmp_path / "full-env.json"
@@ -218,8 +219,11 @@ def test_run_full_layer_launches_with_sanitized_host_env(tmp_path: Path, monkeyp
 
     assert obs.exit_code == 0, obs.stderr
     child_env = json.loads(observed.read_text(encoding="utf-8"))
-    assert not set(operator_env) & set(child_env)
-    assert child_env["TRAC_INFRA_RETRY_LIMIT"] == "2"
+    child_keys = set(child_env)
+    assert not set(operator_env) & child_keys
+    # IF-HOSTENV-001: the allowlist is the single environment source, so
+    # parent-only plumbing that survived the retired denylist is dropped.
+    assert "TRAC_INFRA_RETRY_LIMIT" not in child_keys
     assert child_env["PATH"] == os.environ["PATH"]
     assert result_path == stage.result_path
     assert outcomes == []

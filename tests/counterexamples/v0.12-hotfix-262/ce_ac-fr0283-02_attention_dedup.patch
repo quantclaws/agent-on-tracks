@@ -1,21 +1,15 @@
 diff --git a/tracks/executor/release_tail.py b/tracks/executor/release_tail.py
+index aafe4f8..c32aeda 100644
 --- a/tracks/executor/release_tail.py
 +++ b/tracks/executor/release_tail.py
-@@ -247,6 +247,17 @@
-             self._issue_backend = select_issue_backend(self.repo, self.version)
-         except GithubIssuesError as exc:
-             if exc.classification == "missing_token":
-+                self._emit(
-+                    "attention.required",
-+                    {
-+                        "area": "issue_creation",
-+                        "reason": "missing_token",
-+                        "detail": str(exc),
-+                        "next": _ISSUE_TOKEN_NEXT,
-+                    },
-+                    command_id=cmd.command_id,
-+                    task_id=task_id,
-+                )
-                 self._emit(
-                     "attention.required",
-                     {
+@@ -330,8 +330,8 @@ class ExecReleaseTailMixin:
+ 
+     def _emit_missing_token_attention(self, cmd, task_id, error: Exception | None = None):
+         """The classified missing_token attention, emitted at most once."""
+-        if _has_unresolved_missing_token(self.store.events(self.run_id)):
+-            return
++        # COUNTEREXAMPLE: the missing-token attention is emitted twice
++        # per call, so the deduplication guarantee (INV-7) is broken.
+         detail = _missing_token_detail(error)
+         self._emit(
+             "attention.required",

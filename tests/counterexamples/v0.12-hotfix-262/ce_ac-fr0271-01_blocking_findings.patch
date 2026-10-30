@@ -1,10 +1,20 @@
 diff --git a/tracks/executor/review_findings.py b/tracks/executor/review_findings.py
+index 8114a73..5bf40b8 100644
 --- a/tracks/executor/review_findings.py
 +++ b/tracks/executor/review_findings.py
-@@ -18,4 +18,5 @@
- 
- 
- def has_blocking_findings(findings: Iterable[Mapping]) -> bool:
--    raise NotImplementedError("IF-BLOCKREV-001")
+@@ -23,13 +23,8 @@ def has_blocking_findings(findings: Iterable[Mapping] | None) -> bool:
+     blocking: the closed set is the contract, so a typo cannot silently
+     widen the gate.
+     """
+-    if findings is None:
+-        return False
+-    return any(
+-        isinstance(finding, Mapping)
+-        and finding.get("severity") in BLOCKING_SEVERITIES
+-        for finding in findings
+-    )
 +    # COUNTEREXAMPLE: no finding is ever blocking.
 +    return False
+ 
+ 
+ def verdict_failed(payload: Mapping) -> bool:

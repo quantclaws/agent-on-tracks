@@ -1,12 +1,22 @@
 diff --git a/tracks/executor/run_loop.py b/tracks/executor/run_loop.py
+index 837228f..6186600 100644
 --- a/tracks/executor/run_loop.py
 +++ b/tracks/executor/run_loop.py
-@@ -502,6 +502,8 @@
-         self._observe_oob()
-         state = self.store.state(self.run_id)
-         tripped = self._check_breaker(state)
-+        if self._pending_operator_attention(state) is not None:
-+            return "return", state
-         if tripped is not None:
-             return "return", tripped
-         if self._sm02_pre_decide(state):
+@@ -272,13 +272,10 @@ the host Executor keeps construction and the command handlers."""
+         caller releases the writer lock instead of re-running unchanged
+         evidence under it.
+         """
+-        pending = [
+-            attention
+-            for attention in unresolved_attentions(self.store.events(self.run_id))
+-            if str((attention.payload or {}).get("area") or "")
+-            not in AUTO_RETRY_ATTENTION_AREAS
+-            and not _attention_condition_cleared(attention)
+-        ]
++        # COUNTEREXAMPLE: the run loop's preflight does not check the
++        # pending attention, so the loop keeps issuing commands instead
++        # of stopping at needs_attention.
++        pending = []
+         if not pending:
+             return None
+         if state.stage == "M-VERIFY":

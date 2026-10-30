@@ -6,9 +6,14 @@ import hashlib
 from pathlib import Path
 
 from tests.unit.helpers import git_repo, git_strip
+from tests.unit.hotfix262_release_support import (
+    FULL_HOST_CONTRACT_TOML,
+    ci_payload,
+    full_payload,
+    prism_payload,
+    quality_gate_payload,
+)
 from tracks.executor.host_contract import (
-    GATE_RESULT_PROTOCOL,
-    GATE_RESULT_VERSION,
     load_host_contract,
     validate_host_contract,
 )
@@ -38,66 +43,10 @@ def _raw_digest(raw: bytes) -> str:
 
 
 def _gate(candidate: str, contract_digest: str, *, status: str = "passed") -> dict:
-    return {
-        "kind": "quality",
-        "gate_identity": "quality[0]",
-        "candidate_sha": candidate,
-        "contract_digest": contract_digest,
-        "command_echo": ["quality"],
-        "normalized_result": {
-            "schema": GATE_RESULT_PROTOCOL,
-            "version": GATE_RESULT_VERSION,
-            "status": status,
-            "exit_code": 0 if status == "passed" else 7,
-            "summary": {"status": status},
-            "gate_id": "quality",
-        },
-        "reason": None if status == "passed" else "gate_failed",
-    }
+    return quality_gate_payload(candidate, contract_digest, status=status)
 
 
-def _host(tmp_path: Path):
-    repo = git_repo(tmp_path, gitignore=True)
-    project = repo / ".tracks" / "projects"
-    project.mkdir(parents=True, exist_ok=True)
-    contract_path = project / "project.toml"
-    contract_path.write_text(
-        "[host-contract]\n"
-        "version = 1\n"
-        "language = 'python'\n"
-        "toolchain = 'cpython'\n"
-        "install = ''\n"
-        "\n[host-contract.version_scheme]\n"
-        "feature_tag = 'v{minor}.0'\n"
-        "patch_line = 'v{minor}.{n}'\n"
-        "prerelease_tag = 'v{minor}.{n}-pre.{ulid}'\n"
-        "\n[[host-contract.local_gate]]\n"
-        "kind = 'quality'\n"
-        "source = 'command'\n"
-        "command = 'quality'\n"
-        "result_channel = 'exit_code'\n"
-        "\n[[host-contract.security_scan]]\n"
-        "id = 'security'\ntool = 'fixture'\ntool_version = '1'\n"
-        "install = ''\ncommand = 'true'\nresult_channel = 'exit_code'\n"
-        "threshold = '0'\ntimeout_seconds = 5\n"
-        "\n[host-contract.ci]\n"
-        "repo_env = 'CI_REPO'\n"
-        "workflow = 'ci.yml'\n"
-        "required_checks = ['quality']\n"
-        "\n[host-contract.operations.feature]\n"
-        "steps = ['tag:{feature_tag}']\n",
-        encoding="utf-8",
-    )
-    git_strip(repo, "add", "-f", ".tracks/projects/project.toml")
-    git_strip(repo, "commit", "-m", "authorization contract")
-    candidate = git_strip(repo, "rev-parse", "HEAD")
-    home = repo / ".tracks"
-    store = Store(home)
-    run_id = "RUN"
-    store.append(run_id, "v0.8", "story.requested", {"raw_chars": 1})
-    store.append(run_id, "v0.8", "stage.entered", {"stage": "M-RELEASE"})
-    contract_digest = _raw_digest(contract_path.read_bytes())
-    policy_digest = security_policy_digest(load_host_contract(contract_path))
+def _seed_release_events(store, run_id, candidate, contract_digest, policy_digest):
     store.append(
         run_id,
         "v0.8",
@@ -110,23 +59,20 @@ def _host(tmp_path: Path):
         },
     )
     store.append(run_id, "v0.8", "local_gate.passed", _gate(candidate, contract_digest))
-    ci = dict(_CI)
-    ci.update({"head_sha": candidate, "candidate_sha": candidate})
-    store.append(run_id, "v0.8", "ci.run_observed", ci)
+    store.append(run_id, "v0.8", "full.executed", full_payload(candidate))
+    store.append(run_id, "v0.8", "ci.run_observed", ci_payload(candidate))
     store.append(
         run_id,
         "v0.8",
         "prism.verdict",
-        {
-            "verdict": "pass",
-            "scope": "verify_final",
-            "candidate_sha": candidate,
-        },
+        prism_payload("verify_final", candidate),
     )
     store.append(
-        run_id, "v0.8", "prism.verdict",
-        {"scope": "security", "verdict": "pass", "candidate_sha": candidate,
-         "policy_digest": policy_digest}, command_id="security-review",
+        run_id,
+        "v0.8",
+        "prism.verdict",
+        {**prism_payload("security", candidate), "policy_digest": policy_digest},
+        command_id="security-review",
     )
     store.append(
         run_id,
@@ -137,11 +83,38 @@ def _host(tmp_path: Path):
             "policy_digest": policy_digest,
             "candidate_sha": candidate,
             "contract_digest": contract_digest,
-            "scans": [{"id": "security", "status": "passed", "exit_code": 0, "result_version": 1, "summary": {}}],
+            "scans": [
+                {
+                    "id": "security",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "result_version": 1,
+                    "summary": {},
+                }
+            ],
             "prism_scope": "security",
             "review_command_id": "security-review",
         },
     )
+
+
+def _host(tmp_path: Path):
+    repo = git_repo(tmp_path, gitignore=True)
+    project = repo / ".tracks" / "projects"
+    project.mkdir(parents=True, exist_ok=True)
+    contract_path = project / "project.toml"
+    contract_path.write_text(FULL_HOST_CONTRACT_TOML, encoding="utf-8")
+    git_strip(repo, "add", "-f", ".tracks/projects/project.toml")
+    git_strip(repo, "commit", "-m", "authorization contract")
+    candidate = git_strip(repo, "rev-parse", "HEAD")
+    home = repo / ".tracks"
+    store = Store(home)
+    run_id = "RUN"
+    store.append(run_id, "v0.8", "story.requested", {"raw_chars": 1})
+    store.append(run_id, "v0.8", "stage.entered", {"stage": "M-RELEASE"})
+    contract_digest = _raw_digest(contract_path.read_bytes())
+    policy_digest = security_policy_digest(load_host_contract(contract_path))
+    _seed_release_events(store, run_id, candidate, contract_digest, policy_digest)
     contract = load_host_contract(contract_path)
     assert validate_host_contract(contract, repo) == ()
     preview_policy_digest = _digest(contract_path.read_bytes())
@@ -164,7 +137,7 @@ def _host(tmp_path: Path):
     return repo, store, run_id, candidate, contract_digest, contract_path, preview
 
 
-def _append_preview(store, repo, run_id, candidate, contract_digest):
+def _append_preview(store, repo, run_id, candidate, contract_digest, *, expect=True):
     contract = load_host_contract(repo / ".tracks" / "projects" / "project.toml")
     preview_policy_digest = (
         contract_digest
@@ -180,12 +153,16 @@ def _append_preview(store, repo, run_id, candidate, contract_digest):
         list(store.events(run_id)),
         journey="feature",
     )
-    assert preview is not None
+    if expect:
+        assert preview is not None
+    if preview is None:
+        return None
     blob = store.write_audit_blob(preview)
     assert blob is not None
     preview = dict(preview)
     preview["blob_ref"] = f".tracks/runtime/blobs/{blob}"
     store.append(run_id, "v0.8", "release.previewed", preview)
+    return preview
 
 
 def _new_candidate(repo: Path) -> str:
@@ -222,11 +199,16 @@ def test_new_candidate_without_own_ci_cannot_reuse_old_ci(tmp_path, capsys):
         "candidate.frozen",
         {"candidate_sha": new_candidate, "clean_tree": True, "branch": "main"},
     )
-    _append_preview(store, repo, run_id, new_candidate, digest)
+    preview = _append_preview(
+        store, repo, run_id, new_candidate, digest, expect=False
+    )
 
     rc = cmd_release(repo, "--action", "release")
     capsys.readouterr()
 
+    assert preview is None, (
+        "a candidate without its own complete evidence set must not mint a preview"
+    )
     assert rc != 0
     assert not _events(store, run_id, "release.decided")
 
@@ -246,7 +228,7 @@ def test_old_foreign_failure_does_not_poison_current_candidate(tmp_path, capsys)
     capsys.readouterr()
 
     assert rc == 0
-    assert _events(store, run_id, "release.decided")[-1].payload["candidate_sha"] == candidate
+    assert _events(store, run_id, "release.decided")[-1].payload["candidate_sha"] == candidate  # tracks-anchor-ok: candidate comes from the _host capture; this test drives no HEAD-moving activity
 
 
 def test_latest_ci_failure_blocks_release(tmp_path, capsys):

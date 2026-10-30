@@ -1,14 +1,17 @@
 diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
+index d76cc8f..11297a5 100644
 --- a/tracks/executor/release_preview.py
 +++ b/tracks/executor/release_preview.py
-@@ -343,6 +343,10 @@ def preview_inputs_match(old: dict, current: dict) -> bool:
+@@ -385,6 +385,12 @@ def preview_inputs_match(old: dict, current: dict) -> bool:
      """
      old_inputs = {key: value for key, value in old.items() if key != "blob_ref"}
      current_inputs = {key: value for key, value in current.items() if key != "blob_ref"}
 +    required = ("full_f", "ci", "prism.verify_final", "prism.security", "security")
-+    if not set(required).issubset(set(old.get("evidence_digests") or {})):
++    if not set(required).issubset(set(old_inputs.get("evidence_digests") or {})):
++        # COUNTEREXAMPLE: the preview input comparison demands the five
++        # split keys unconditionally, so the pre-v0.12.1 single-
++        # "prism"-key blob is refused instead of read back.
 +        return False
-+
      old_evidence = old_inputs.get("evidence_digests")
      current_evidence = current_inputs.get("evidence_digests")
-     if (
+     if _is_legacy_prism_blob(old_evidence, current_evidence):

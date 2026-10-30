@@ -96,6 +96,33 @@ def _of_type(events: list, event_type: str) -> list:
     return [event for event in events if event.type == event_type]
 
 
+def _events(repo: Path, run_id: str) -> list:
+    store = Store(paths.tracks_home(repo))
+    try:
+        return list(store.events(run_id))
+    finally:
+        store.close()
+
+
+def _release_action(repo: Path) -> subprocess.CompletedProcess:
+    """Run the real release DECISION surface on *repo*'s own store.
+
+    The CLI is invoked with the repository as its working directory and with
+    TRACKS_HOME bound to that repository's own home, so the decision reads
+    the very run the test assembled (no shared store between the cases).
+    """
+    env = dict(os.environ)
+    env["TRACKS_HOME"] = str(paths.tracks_home(repo))
+    env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [sys.executable, "-m", "tracks.cli.main", "release", "--action", "release"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _passing_verdicts(events: list) -> list:
     return [
         event
@@ -323,77 +350,258 @@ def test_security_pass_with_blocker_rejected_and_replay_7342(tmp_path: Path):
 
 # AC-FR0272-02@v0.8 TRACKS-TRACE malformed or blocking security blocks release
 def test_malformed_or_blocking_security_blocks_release(tmp_path: Path):
-    """AC-FR0272-02: a security assessment that is failed/unknown blocks
-    the release, and a security-scope review carrying blocking findings
-    blocks it as well.
+    """AC-FR0272-02: M-SECURITY has not passed -> the release action is
+    ALWAYS refused, and no release decision is ever landed.
 
-    Contract: interfaces §1c item 3 (the ``_release_gate_blocked`` hard
-    invariant) and the acceptance clause "M-SECURITY 未通过时
-    ``trac release --action release`` 一律拒绝".
+    Contract: interfaces §1c item 3 (the downstream hard invariant: every
+    release consumer judges ``verdict != "pass" OR has_blocking_findings``
+    as failed) and the acceptance clauses "策略未声明、结果未知、缺失或畸形
+    （策略版本不匹配……）……``trac status`` 报告 ``security=failed|unknown``
+    并 ``blocked``" and "``M-SECURITY`` 未通过时 ``trac release --action
+    release`` 一律拒绝".
 
-    Outlet: the ``trac status`` CLI's ``security=`` fragment and the
-    ``trac release --action release`` CLI's refusal.
+    Outlet: the ``trac release --action release`` CLI -- its exit code, its
+    refusal text and the release decision it (does not) land -- read back
+    from the EVENT STREAM, plus the ``trac status`` CLI's ``security=`` /
+    ``prism=`` fragments.
+
+    The Arrange is the REAL release surface: a real run, a real host
+    contract, a real candidate and a real preview produced by the production
+    ``generate_preview`` command.  Only the SECURITY state differs between
+    the cases, so every refusal is attributable to the security scope:
+
+    * ``malformed`` -- the security assessment reports ``passed`` but its
+      ``policy_digest`` does not match the host contract's policy digest
+      (the acceptance clause's "策略版本不匹配").  The preview assembles
+      (the assessment is still passed evidence for the preview) but
+      M-SECURITY has NOT passed, so the release action must be refused.
+    * ``failed`` -- the security assessment itself failed.  ``trac status``
+      must report ``security=failed`` and the blocked disposition, and the
+      release action must not be authorized.
+    * ``blocking`` -- a SECURITY-scope ``pass`` verdict carrying the
+      recorded blocker findings.  The verify_final scope is left CLEAN, so
+      the security scope is isolated: ``prism=pass`` proves the final
+      review is not the cause, and the release must still not be
+      authorized.
+    * ``control`` -- the identical chain without the security defect: the
+      release IS authorized.  The control proves the refusals above are
+      caused by the security state and not by a broken arrangement.
     """
-    # A failed security assessment blocks the release.
-    failed_root = tmp_path / "failed"
-    failed_root.mkdir(parents=True, exist_ok=True)
-    repo, store = _new_host(failed_root)
-    home = paths.tracks_home(repo)
-    run_id = "RUN-HF262-BLOCKREV-4"
-    try:
-        _seed_pristine_chain(store, run_id, "v0.8")
-        store.append(
-            run_id,
-            "v0.8",
-            "security.assessed",
-            {"status": "failed", "candidate_sha": _CANDIDATE},
-        )
-    finally:
-        store.close()
-
-    text = _status_text(repo, home)
-    assert "security=failed" in text, (
-        f"a failed security assessment must be reported as failed (status={text!r})"
+    from tests.integration.test_release_preview_direct import (
+        _issue_preview,
+        _prepare,
     )
 
-    # The blocking-security chain: a pass+blocking security review blocks
-    # the release. The chain carries BOTH a verify_final and a security
-    # verdict, so the "no verify_final -> failed" fallback cannot mask the
-    # findings; the control chain (same shape, no findings) must stay green.
-    for label, findings, expect_blocked in (
-        ("blocking", _blocker_findings(), True),
-        ("clean", [], False),
-    ):
+    def _case(label: str, mutate):
+        """One host with a real run + real preview, then the security mutation."""
         case_root = tmp_path / label
         case_root.mkdir(parents=True, exist_ok=True)
-        repo, store = _new_host(case_root)
-        home = paths.tracks_home(repo)
-        run_id = f"RUN-HF262-BLOCKREV-5-{label}"
+        repo = case_root / "host"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "hf262@example.com"], cwd=repo, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "HF262 Human"], cwd=repo, check=True
+        )
+        (repo / "README.md").write_text("hotfix-262 host\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "commit", "-qm", "initial"], cwd=repo, check=True, capture_output=True
+        )
+
+        env = dict(os.environ)
+        env["TRACKS_HOME"] = str(paths.tracks_home(repo))
+        env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+
+        def case_trac(*args: str, stdin=None) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, "-m", "tracks.cli.main", *args],
+                cwd=repo,
+                env=env,
+                capture_output=True,
+                text=True,
+                input=stdin,
+            )
+
+        run_id, candidate, contract, _remote, _artifact, contract_digest = _prepare(
+            repo, case_trac, case_root
+        )
+        version = "v0.8"
+        store = Store(paths.tracks_home(repo))
         try:
-            _seed_pristine_chain(store, run_id, "v0.8")
-            for scope in ("verify_final", "security"):
-                payload = {
-                    "verdict": "pass",
-                    "scope": scope,
-                    "candidate_sha": _CANDIDATE,
-                }
-                if findings:
-                    payload["findings"] = findings
-                store.append(run_id, "v0.8", "prism.verdict", payload)
+            if mutate is not None:
+                mutate(store, run_id, version, candidate, contract_digest)
         finally:
             store.close()
+        _issue_preview(repo, run_id, candidate)
+        return repo, run_id, candidate
 
-        text = _status_text(repo, home)
-        if expect_blocked:
-            assert "prism=failed" in text, (
-                "a security-scope verdict carrying blocking findings must be "
-                f"judged failed (status={text!r})"
-            )
-        else:
-            assert "prism=pass" in text, (
-                "the same chain WITHOUT blocking findings must stay passing "
-                f"(status={text!r})"
-            )
+    def _malformed_security(store, run_id, version, candidate, contract_digest):
+        """A passed assessment whose POLICY DIGEST does not match the host
+        contract's -- the acceptance clause's "策略版本不匹配" (malformed)."""
+        store.append(
+            run_id,
+            version,
+            "security.assessed",
+            {
+                "status": "passed",
+                "policy_digest": "policy-digest-not-the-host-contract",
+                "contract_digest": contract_digest,
+                "candidate_sha": candidate,
+                "scans": [
+                    {
+                        "id": "accepted-security-scan",
+                        "status": "passed",
+                        "exit_code": 0,
+                        "result_version": 1,
+                        "summary": {},
+                    }
+                ],
+                "prism_scope": "security",
+                "review_command_id": f"security-review-{candidate}",
+            },
+        )
+
+    def _failed_security(store, run_id, version, candidate, contract_digest):
+        """A FAILED security assessment -- the acceptance clause's
+        "结果未知" / failed result: ``trac status`` must report
+        ``security=failed`` and the blocked disposition, and the release
+        must not be authorized."""
+        store.append(
+            run_id,
+            version,
+            "security.assessed",
+            {
+                "status": "failed",
+                "policy_digest": "policy-digest-not-the-host-contract",
+                "contract_digest": contract_digest,
+                "candidate_sha": candidate,
+                "scans": [
+                    {
+                        "id": "accepted-security-scan",
+                        "status": "failed",
+                        "exit_code": 1,
+                        "result_version": 1,
+                        "summary": {},
+                    }
+                ],
+                "prism_scope": "security",
+                "review_command_id": f"security-review-{candidate}",
+            },
+        )
+
+    def _blocking_security(store, run_id, version, candidate, contract_digest):
+        """A SECURITY-scope ``pass`` verdict carrying the recorded blocker.
+
+        The verify_final scope is deliberately NOT planted: the security
+        scope is the only consumer under test."""
+        store.append(
+            run_id,
+            version,
+            "prism.verdict",
+            {
+                "verdict": "pass",
+                "scope": "security",
+                "candidate_sha": candidate,
+                "findings": _blocker_findings(),
+            },
+        )
+
+    # ---- the malformed security assessment: the release action refuses ----
+    repo, run_id, candidate = _case("malformed", _malformed_security)
+    home = paths.tracks_home(repo)
+    proc = _release_action(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, (
+        "M-SECURITY has not passed (the assessment's policy digest does not "
+        "match the host contract), so the release action must be refused "
+        f"(stdout={proc.stdout!r}, stderr={proc.stderr!r})"
+    )
+    assert "release rejected" in combined, (
+        "the refusal must carry the contract's fixed wording (output="
+        f"{combined!r})"
+    )
+    events = _events(repo, run_id)
+    assert _of_type(events, "release.decided") == [], (
+        "a refused release must not land a release.decided event (landed "
+        f"{len(_of_type(events, 'release.decided'))})"
+    )
+    assert _of_type(events, "release.rejected"), (
+        "a refused release must be audited as release.rejected"
+    )
+
+    # ---- the failed security assessment: status reports it, release refuses ----
+    repo, run_id, candidate = _case("failed", _failed_security)
+    home = paths.tracks_home(repo)
+    status_text = _status_text(repo, home)
+    assert "security=failed" in status_text, (
+        "a failed security assessment must be reported as failed by "
+        f"`trac status` (status={status_text!r})"
+    )
+    assert "blocked:" in status_text, (
+        "a failed security assessment must leave the chain blocked "
+        f"(status={status_text!r})"
+    )
+    proc = _release_action(repo)
+    assert proc.returncode != 0, (
+        "M-SECURITY has not passed, so the release action must be refused "
+        f"(stdout={proc.stdout!r}, stderr={proc.stderr!r})"
+    )
+    events = _events(repo, run_id)
+    assert _of_type(events, "release.decided") == [], (
+        "a refused release must not land a release.decided event (landed "
+        f"{len(_of_type(events, 'release.decided'))})"
+    )
+
+    # ---- the blocking security review: the release is NOT authorized ----
+    repo, run_id, candidate = _case("blocking", _blocking_security)
+    home = paths.tracks_home(repo)
+    proc = _release_action(repo)
+    combined = proc.stdout + proc.stderr
+    assert proc.returncode != 0, (
+        "a security-scope verdict carrying blocking findings must not "
+        f"authorize the release (stdout={proc.stdout!r}, stderr={proc.stderr!r})"
+    )
+    events = _events(repo, run_id)
+    assert _of_type(events, "release.decided") == [], (
+        "a blocked release must not land a release.decided event (landed "
+        f"{len(_of_type(events, 'release.decided'))})"
+    )
+    # The SECURITY scope's judgment is what blocks the release: a
+    # pass+blocking security verdict is not successful release evidence, so
+    # the five-key set (interfaces §1b item 1) cannot be completed and no
+    # preview is assembled -- nothing the release action could authorize.
+    assert _of_type(events, "release.previewed") == [], (
+        "a security-scope verdict carrying blocking findings must not "
+        "count as release evidence, so no preview may be assembled (landed "
+        f"{len(_of_type(events, 'release.previewed'))})"
+    )
+    # The SECURITY scope is the isolated cause: the final review scope is
+    # clean (prism=pass), so the refusal cannot be attributed to it.
+    status_text = _status_text(repo, home)
+    assert "prism=pass" in status_text, (
+        "the verify_final scope is clean in this case, so the status must "
+        f"report prism=pass (status={status_text!r})"
+    )
+
+    # ---- the control: the same chain without the security defect ----
+    repo, run_id, candidate = _case("control", None)
+    home = paths.tracks_home(repo)
+    proc = _release_action(repo)
+    assert proc.returncode == 0, (
+        "the same chain WITHOUT the security defect must be authorized, so a "
+        f"refusal above is attributable to the security state "
+        f"(stdout={proc.stdout!r}, stderr={proc.stderr!r})"
+    )
+    events = _events(repo, run_id)
+    decided = _of_type(events, "release.decided")
+    assert decided, (
+        "the control chain must land a release.decided event (the release "
+        "surface reached its decision)"
+    )
+    assert decided[-1].payload["candidate_sha"] == candidate
 
 
 # AC-FR0040-03@v0.4 TRACKS-TRACE M-TEST ingest pass with blocker rejected

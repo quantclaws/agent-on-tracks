@@ -1,0 +1,17 @@
+diff --git a/tracks/executor/release_authorization.py b/tracks/executor/release_authorization.py
+index 59eda21..ea0f37b 100644
+--- a/tracks/executor/release_authorization.py
++++ b/tracks/executor/release_authorization.py
+@@ -235,7 +235,11 @@ def _security_status(
+     review_payload = _payload(review)
+     valid = (
+         payload.get("status") == "passed"
+-        and payload.get("policy_digest") == policy_digest
++        # COUNTEREXAMPLE: the release authorization accepts a security
++        # assessment whose policy digest does not match the host
++        # contract, so a malformed (策略版本不匹配) assessment still
++        # authorizes the release.
++        and True
+         and payload.get("contract_digest") == contract_digest
+         and bool(payload.get("review_command_id"))
+         and review is not None

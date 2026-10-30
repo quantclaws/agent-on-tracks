@@ -1,14 +1,21 @@
 diff --git a/tracks/executor/quality_gate.py b/tracks/executor/quality_gate.py
+index fefc279..9eb984a 100644
 --- a/tracks/executor/quality_gate.py
 +++ b/tracks/executor/quality_gate.py
-@@ -257,7 +257,9 @@
+@@ -236,10 +236,12 @@ def execute_gate_command(
      serve shell cannot leak into host test commands."""
      argv = shlex.split(command)
      argv = _resolve_argv0(argv, cwd)
--    run_env = host_test_env()
-+    # COUNTEREXAMPLE: the gate hands the whole operator environment to
-+    # its child -- the strip set is not applied at this site.
+-    run_env = host_process_env(
+-        extra=env_extra,
+-        contract_allowlist=contract_env_allowlist(cwd),
+-    )
++    # COUNTEREXAMPLE: the quality gate site hands the whole operator
++    # environment to its child instead of the allowlisted one, so the
++    # strip set is not applied at that site.
 +    run_env = dict(os.environ)
-     if env_extra:
-         run_env.update(env_extra)
++    if env_extra:
++        run_env.update(env_extra)
      try:
+         proc = subprocess.run(
+             argv,

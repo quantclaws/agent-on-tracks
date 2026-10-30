@@ -9,6 +9,7 @@ import contextlib
 import sys
 from types import SimpleNamespace
 
+from tests.unit.hotfix262_release_support import full_payload, reused_full_payload
 from tracks.cli import release_cmd as rc
 
 
@@ -122,6 +123,11 @@ def test_release_preview_stale_reason_markers():
     ) is None
 
 
+def _full_f(seq: int = 4) -> object:
+    return _ev(seq, "full.executed", full_payload("a" * 40))
+
+
+# AC-FR0274-02@v0.8 TRACKS-TRACE IF-RELEV-001 full_f release gate
 def test_release_gate_blocked_and_block_reason():
     assert rc._release_gate_blocked([]) is True
     failed_security = [_ev(1, "security.assessed", {"status": "failed"})]
@@ -130,8 +136,23 @@ def test_release_gate_blocked_and_block_reason():
         _ev(1, "prism.verdict", {"scope": "verify_final", "verdict": "revise"}),
     ]
     assert rc._release_gate_blocked(bad_final) is True
-    good = [_ev(1, "local_gate.passed")]
+    good = [
+        _ev(1, "local_gate.passed"),
+        _ev(2, "security.assessed", {"status": "passed"}),
+        _ev(3, "prism.verdict", {"scope": "verify_final", "verdict": "pass"}),
+        _full_f(),
+    ]
     assert rc._release_gate_blocked(good) is False
+    assert rc._release_gate_blocked(good[:-1]) is True, (
+        "release requires a current authoritative full_f gate"
+    )
+    ineligible = _full_f()
+    ineligible.payload["full_f_eligible"] = False
+    assert rc._release_gate_blocked([*good[:-1], ineligible]) is True
+    reused = [*good[:-1], _ev(5, "evidence.reused", reused_full_payload("a" * 40))]
+    assert rc._release_gate_blocked(reused) is False, (
+        "a same-candidate bound evidence.reused(kind=full_f) is a full_f proof"
+    )
 
     assert rc._release_block_reason(failed_security) == "security_failed"
     assert rc._release_block_reason([_ev(1, "local_gate.failed")]) == (
@@ -143,6 +164,78 @@ def test_release_gate_blocked_and_block_reason():
     attention = [_ev(1, "attention.required", {"stage": "M-VERIFY", "reason": "parked"})]
     assert rc._release_block_reason(attention) == "parked"
     assert rc._release_block_reason([]) == "gate_evidence_missing"
+
+
+# AC-FR0271-02@v0.8 TRACKS-TRACE IF-BLOCKREV-001 pass+blocker blocks release
+def test_release_gate_blocked_treats_pass_with_blocking_findings_as_failed():
+    base = [
+        _ev(1, "local_gate.passed"),
+        _ev(2, "security.assessed", {"status": "passed"}),
+        _full_f(),
+    ]
+    blocking = _ev(
+        3,
+        "prism.verdict",
+        {
+            "scope": "verify_final",
+            "verdict": "pass",
+            "findings": [{"severity": "critical"}],
+        },
+    )
+    non_blocking = _ev(
+        3,
+        "prism.verdict",
+        {
+            "scope": "verify_final",
+            "verdict": "pass",
+            "findings": [{"severity": "medium"}],
+        },
+    )
+
+    assert rc._release_gate_blocked([*base, blocking]) is True
+    assert rc._release_gate_blocked([*base, non_blocking]) is False
+
+
+# AC-FR0272-02@v0.8 TRACKS-TRACE IF-BLOCKREV-001 security failures block release
+def test_release_gate_blocked_on_malformed_or_blocking_security():
+    base = [
+        _ev(1, "local_gate.passed"),
+        _ev(2, "prism.verdict", {"scope": "verify_final", "verdict": "pass"}),
+        _full_f(),
+    ]
+    malformed = [*base, _ev(3, "security.assessed", {"status": "unknown"})]
+    failed = [*base, _ev(3, "security.assessed", {"status": "failed"})]
+    blocking_review = [
+        *base,
+        _ev(3, "security.assessed", {"status": "passed"}),
+        _ev(
+            4,
+            "prism.verdict",
+            {
+                "scope": "security",
+                "verdict": "pass",
+                "findings": [{"severity": "critical"}],
+            },
+        ),
+    ]
+    clean_review = [
+        *base,
+        _ev(3, "security.assessed", {"status": "passed"}),
+        _ev(
+            4,
+            "prism.verdict",
+            {
+                "scope": "security",
+                "verdict": "pass",
+                "findings": [{"severity": "info"}],
+            },
+        ),
+    ]
+
+    assert rc._release_gate_blocked(malformed) is True
+    assert rc._release_gate_blocked(failed) is True
+    assert rc._release_gate_blocked(blocking_review) is True
+    assert rc._release_gate_blocked(clean_review) is False
 
 
 def test_known_issues_and_attention_fragments():
