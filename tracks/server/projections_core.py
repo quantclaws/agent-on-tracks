@@ -524,7 +524,7 @@ def _todo_for(
     if state.substate == "AWAITING_RELEASE":
         return _todo_item(
             run_id, state, project, "release_decision", "发布决策",
-            "release candidate awaiting decision", f"/runs/{run_id}/release",
+            "release candidate awaiting decision", f"/runs/{run_id}",
             title, updated_ts, object_label=state.stage or "release",
         )
     return None
