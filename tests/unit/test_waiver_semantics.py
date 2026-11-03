@@ -124,6 +124,38 @@ def test_rebuild_ledger_ignores_ledger_waived_events():
     assert list(ledger.values()) == ["OPEN"]
 
 
+def test_rebuild_ledger_applies_waiver_and_prevents_reopen():
+    red_node = "tests/unit/test_red.py::red"
+    waived = {
+        "node_refs": [red_node],
+        "reason": "known-red baseline exclusion (operator OOB)",
+        "actor": "operator",
+        "known_red_file": ".tracks/projects/v0.8/known-red.txt",
+    }
+    ledger = rebuild_ledger(
+        seq(
+            (
+                "ledger.opened",
+                {
+                    "node": red_node,
+                    "failure_signature": "sig-red",
+                    "state": "OPEN",
+                },
+            ),
+            ("ledger.waived", waived),
+            (
+                "ledger.opened",
+                {
+                    "node": red_node,
+                    "failure_signature": "sig-red",
+                    "state": "OPEN",
+                },
+            ),
+        )
+    )
+    assert ledger == {}
+
+
 def test_m_impl_exit_gate_uses_ledger_open_after_waiver():
     from tracks.kernel.m_impl import _decide_m_impl_exit
     from tracks.kernel.machine import State
