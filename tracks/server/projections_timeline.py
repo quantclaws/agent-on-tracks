@@ -223,7 +223,9 @@ def _service_timeline_rows(
         parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
         if slim:
-            parsed = _slim_payload(type_, parsed, include_evidence=False)
+            parsed = _slim_payload(
+                type_, parsed, include_evidence=type_ == "verdict.failed"
+            )
         rows.append(
             {
                 "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
@@ -371,10 +373,12 @@ def _slim_payload(type_: str, parsed: dict, *, include_evidence: bool = True) ->
     ``command.params``. All other shapes (incl. service-plane command rows
     with the same structure) fall through to the scalar whitelist.
 
-    ``evidence`` is NOT part of the slim face (IF-UIPERF-001: the stage detail
-    panels lazy-load the full evidence). The default keeps the historical
-    helper-level scalar for direct callers; the timeline row builders pass
-    ``include_evidence=False`` so a response row never carries it.
+    ``evidence`` stays out of the slim face for bulk rows (IF-UIPERF-001:
+    stage detail panels lazy-load large evidence). The one exception is
+    ``verdict.failed``: the gate failure fold must carry its evidence string
+    (AC-FR0359-02 / the v0.12 arrival-green guard), so the row builders keep
+    evidence for that type only. The default keeps the historical helper
+    scalar for direct callers.
     """
     slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
     if include_evidence and "evidence" in parsed:
@@ -429,7 +433,13 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
     run, seq, ts, type_, command_id, task_id, raw = row
     workflow = type_ in _SLIM_REF_TYPES or type_.startswith("verdict.")
     blob = _load_payload(raw, repo_path) if workflow else {}
-    slim = _slim_payload(type_, blob, include_evidence=False) if blob else {}
+    slim = (
+        _slim_payload(
+            type_, blob, include_evidence=type_ == "verdict.failed"
+        )
+        if blob
+        else {}
+    )
     return _slim_row(
         (run, seq, ts, type_, command_id, task_id), blob, slim, str(parsed["$ref"])
     )
@@ -437,7 +447,9 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
 
 def _slim_inline_row(row: tuple, parsed: dict) -> dict:
     run, seq, ts, type_, command_id, task_id, _raw = row
-    slim = _slim_payload(type_, parsed, include_evidence=False)
+    slim = _slim_payload(
+        type_, parsed, include_evidence=type_ == "verdict.failed"
+    )
     return _slim_row((run, seq, ts, type_, command_id, task_id), parsed, slim, "")
 
 

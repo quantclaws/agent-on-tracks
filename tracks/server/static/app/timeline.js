@@ -1027,6 +1027,10 @@ function blockedBanner(detail, events, stages) {
  * The card always describes the CURRENT stage (detail.stage); selecting a
  * historical node only changes the read-only detail pane below. */
 function currentCard(detail, events, state, stages = []) {
+  const firstTs = events && events.length ? events[0].ts : null;
+  const ownerRaw = ownerRawOf(detail);
+  const ownerDisplay = ownerOf(detail);
+  const attempt = attemptCount(events);
   const gate = detail && detail.awaiting_gate;
   const awaiting = !!gate;
   const stage = (detail && detail.stage) || "-";
@@ -1047,7 +1051,11 @@ function currentCard(detail, events, state, stages = []) {
       text: `当前阶段：${stage} · ${substate}`,
     })
   );
-  const metrics = [];
+  const metrics = [
+    span("card-owner", ownerDisplay, { title: ownerRaw }),
+    span("card-attempt", `累计派发 ${attempt} 次`, { title: "本 run 已发生的派发次数" }),
+    span("card-duration", durationOf(firstTs), { title: "自 run 开始以来的已运行时间" }),
+  ];
   // card-action is a stable card field (v0.12 contract): the wait while
   // awaiting, otherwise the run's control state. No duplicate of the stage.
   const actionText = awaiting
@@ -1095,6 +1103,32 @@ function currentCard(detail, events, state, stages = []) {
     ]));
   }
   return card;
+}
+
+function ownerRawOf(detail) {
+  const lease = detail && detail.lease;
+  const worker = lease && (lease.worker_id || lease.holder);
+  return worker || "supervisor";
+}
+
+function ownerOf(detail) {
+  const raw = ownerRawOf(detail);
+  if (/^supervisor(-\d+)?$/.test(raw)) return "监管进程";
+  return raw;
+}
+
+function attemptCount(events) {
+  // Count real dispatches: the slim face carries the attempt inside
+  // ``command.params`` (the row-level ``attempt`` is usually null), and the
+  // per-stage numbering resets on rollback — the card's "尝试 N 次" is the
+  // run's total dispatch count.
+  let count = 0;
+  for (const event of events || []) {
+    if (!event || event.type !== "command.issued") continue;
+    const params = dispatchParams(event) || {};
+    if (dispatchKind(event) === "dispatch_agent" || params.role) count += 1;
+  }
+  return count || 1;
 }
 
 function durationOf(firstTs) {
@@ -2760,6 +2794,10 @@ function nodeDetail(stage, detail, events) {
       box.append(details);
     }
   }
+  const owner = ownerOf(detail);
+  box.append(
+    element("p", { class: "detail-line", text: `owner: ${owner}` })
+  );
   return box;
 }
 
