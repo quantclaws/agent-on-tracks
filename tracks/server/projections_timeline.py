@@ -263,6 +263,13 @@ _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
     "area", "next", "terminal_state"})
 
+# FR-0359-02 (the arrival-green guard's failure fold) needs a cause string on
+# verdict.failed rows; AC-FR0335-02 forbids the full evidence blob in the
+# slim face (per-row <1024, response <50KB). Keep a bounded head plus an
+# explicit truncation marker: both contracts hold at once.
+_SLIM_EVIDENCE_MAX = 512
+_SLIM_EVIDENCE_MARKER = "…[truncated]"
+
 # Slim rows keep only stage-workflow facts (plus the selected-stage dispatch
 # identity the workflow diagram renders). Everything else stays in the
 # full-history audit face; the bounded tail below is the size backstop.
@@ -365,6 +372,27 @@ def _slim_command(command: object) -> dict:
     return kept
 
 
+def _bounded_evidence(value) -> str:
+    """One verdict.failed evidence string, bounded for the slim face.
+
+    Keeps the head of the failure output so the gate-failure fold still has a
+    cause (FR-0359-02) while staying below the per-row bound AC-FR0335-02
+    sets on the slim response. Non-strings are serialized first so the client
+    always renders a string.
+    """
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            text = str(value)
+    if len(text) <= _SLIM_EVIDENCE_MAX:
+        return text
+    keep = _SLIM_EVIDENCE_MAX - len(_SLIM_EVIDENCE_MARKER)
+    return text[:keep] + _SLIM_EVIDENCE_MARKER
+
+
 def _slim_payload(type_: str, parsed: dict, *, include_evidence: bool = True) -> dict:
     """Whitelisted slim payload for one event (slim branch only).
 
@@ -375,14 +403,14 @@ def _slim_payload(type_: str, parsed: dict, *, include_evidence: bool = True) ->
 
     ``evidence`` stays out of the slim face for bulk rows (IF-UIPERF-001:
     stage detail panels lazy-load large evidence). The one exception is
-    ``verdict.failed``: the gate failure fold must carry its evidence string
-    (AC-FR0359-02 / the v0.12 arrival-green guard), so the row builders keep
-    evidence for that type only. The default keeps the historical helper
-    scalar for direct callers.
+    ``verdict.failed``: the gate failure fold must carry a bounded cause
+    (AC-FR0359-02) while the full blob stays out (AC-FR0335-02), so its
+    evidence is truncated to _SLIM_EVIDENCE_MAX. The default keeps the
+    historical helper scalar for direct callers.
     """
     slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
     if include_evidence and "evidence" in parsed:
-        slim["evidence"] = parsed["evidence"]
+        slim["evidence"] = _bounded_evidence(parsed["evidence"])
     if type_ == "outcome.received":
         # Outcome blobs name their conclusion via status/failure_class (this
         # run's 10 refs carry no ``verdict`` key); keep the small scalars so
