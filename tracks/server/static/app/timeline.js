@@ -1112,9 +1112,9 @@ function ownerRawOf(detail) {
 }
 
 function ownerOf(detail) {
-  const raw = ownerRawOf(detail);
-  if (/^supervisor(-\d+)?$/.test(raw)) return "监管进程";
-  return raw;
+  // v0.12 current-card owner is the dispatch owner, not the legacy run
+  // chrome label (test_static_ui_red pins the legacy string out).
+  return ownerRawOf(detail);
 }
 
 function attemptCount(events) {

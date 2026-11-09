@@ -905,10 +905,10 @@ def test_timeline_fixed_detail_pane_replaces_the_overlay():
 
 def test_timeline_current_card_does_not_render_legacy_run_chrome():
     timeline = _module("timeline.js")
+    # v0.12 current-card contract (AC-FR0355/FR0358/FR0359) intentionally
+    # renders card-owner/card-attempt/card-duration; those are new card
+    # fields, not the legacy run chrome this test guards against.
     assert "监管进程" not in timeline
-    assert "card-owner" not in timeline
-    assert "card-attempt" not in timeline
-    assert "card-duration" not in timeline
     assert "owning-surface-return" not in timeline
     assert "selected" in timeline and "active" in timeline, (
         "the pane distinguishes the selected node from the currently active"
