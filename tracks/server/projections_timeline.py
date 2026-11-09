@@ -224,7 +224,7 @@ def _service_timeline_rows(
         parsed = parsed if isinstance(parsed, dict) else {}
         if slim:
             parsed = _slim_payload(
-                type_, parsed, include_evidence=type_ == "verdict.failed"
+                type_, parsed, include_evidence=_keeps_evidence(type_)
             )
         rows.append(
             {
@@ -372,6 +372,11 @@ def _slim_command(command: object) -> dict:
     return kept
 
 
+def _keeps_evidence(type_: str) -> bool:
+    """Only the gate-failure fold keeps a (bounded) evidence string."""
+    return type_ == "verdict.failed"
+
+
 def _bounded_evidence(value) -> str:
     """One verdict.failed evidence string, bounded for the slim face.
 
@@ -463,7 +468,7 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
     blob = _load_payload(raw, repo_path) if workflow else {}
     slim = (
         _slim_payload(
-            type_, blob, include_evidence=type_ == "verdict.failed"
+            type_, blob, include_evidence=_keeps_evidence(type_)
         )
         if blob
         else {}
@@ -476,7 +481,7 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
 def _slim_inline_row(row: tuple, parsed: dict) -> dict:
     run, seq, ts, type_, command_id, task_id, _raw = row
     slim = _slim_payload(
-        type_, parsed, include_evidence=type_ == "verdict.failed"
+        type_, parsed, include_evidence=_keeps_evidence(type_)
     )
     return _slim_row((run, seq, ts, type_, command_id, task_id), parsed, slim, "")
 
