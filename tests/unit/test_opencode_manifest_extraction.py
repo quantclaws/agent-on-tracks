@@ -16,6 +16,7 @@ import json
 import subprocess
 
 from tracks.effects.opencode import OpencodeBackend
+from tracks.kernel.envelope import build_assignment_envelope
 
 _VALID_ITEMS = [
     {"path": "tests/integration/test_x.py", "kind": "integration_test", "role": "test"},
@@ -27,6 +28,44 @@ def _proc(*texts: str) -> subprocess.CompletedProcess:
         json.dumps({"type": "text", "part": {"text": t}}) + "\n" for t in texts
     )
     return subprocess.CompletedProcess(["opencode"], 0, stdout=lines, stderr="")
+
+
+# AC-FR0279-01@v0.8 TRACKS-TRACE file-delivered manifest shares the kernel parser
+def test_declared_manifest_prefers_file_over_final_pointer(tmp_path):
+    target = tmp_path / "reply.json"
+    manifest = {"include": _VALID_ITEMS}
+    target.write_text(json.dumps({
+        "envelope": {"kind": "shield:write", "version": 2},
+        "payload": {"artifact_manifest": manifest, "suggested_commit_message": "repair tests"},
+    }))
+    assignment = {
+        "envelope": build_assignment_envelope("shield:write"),
+        "result_file": {"result_path": str(target)},
+    }
+    backend = OpencodeBackend(tmp_path, "v0.8")
+    info, failure = backend._manifest_for_dispatch(
+        "shield", "WRITE", _proc(f"result: {target}"), "", None, assignment
+    )
+    assert failure is None
+    assert info == (manifest, "repair tests")
+
+
+# AC-FR0279-01@v0.8 TRACKS-TRACE invalid preferred file cannot fall back to older text
+def test_declared_manifest_rejects_bad_file_despite_valid_stdout(tmp_path):
+    target = tmp_path / "reply.json"
+    target.write_text("{}")
+    assignment = {
+        "envelope": build_assignment_envelope("shield:write"),
+        "result_file": {"result_path": str(target)},
+    }
+    backend = OpencodeBackend(tmp_path, "v0.8")
+    info, failure = backend._manifest_for_dispatch(
+        "shield", "WRITE", _proc(json.dumps({
+            "artifact_manifest": {"include": _VALID_ITEMS}, "suggested_commit_message": "old",
+        })), "", None, assignment,
+    )
+    assert info is None
+    assert failure["status"] == "failed"
 
 
 def test_top_level_include_accepted_when_wrapper_brace_dropped():
