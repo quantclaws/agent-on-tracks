@@ -8,8 +8,8 @@ index aafe4f8..c32aeda 100644
          """The classified missing_token attention, emitted at most once."""
 -        if _has_unresolved_missing_token(self.store.events(self.run_id)):
 -            return
-+        # COUNTEREXAMPLE: the missing-token attention is emitted twice
-+        # per call, so the deduplication guarantee (INV-7) is broken.
++        # COUNTEREXAMPLE: repeated calls ignore the unresolved attention,
++        # breaking the deduplication guarantee (INV-7).
          detail = _missing_token_detail(error)
          self._emit(
              "attention.required",

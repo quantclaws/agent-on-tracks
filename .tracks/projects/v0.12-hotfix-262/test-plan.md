@@ -273,7 +273,7 @@ Test assertions **may only** land on interfaces.md §4 的出口：事件流判�
 | AC-FR0276-01@v0.8 | integration | tests/integration/test_hotfix262_stage_events.py::test_exactly_once_stage_events_under_retry_tail + tests/integration/test_hotfix262_stage_events.py::test_clean_temp_refs_remaining_zero | IF-STAGE-001, IF-CLEANUP-001 |
 | AC-FR0335-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_stage_events.py::test_legacy_run_timeline_synthesizes_transitions + tests/e2e/test_hotfix262_release_ui.py::test_legacy_run_stage_window_nonempty | IF-STAGE-001 |
 | AC-FR0335-02@v0.11 | integration | tests/integration/test_hotfix262_ui_perf.py::test_slim_timeline_payload_bounded | IF-UIPERF-001, IF-STAGE-001 |
-| AC-NFR0150-02@v0.9 | integration | tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry | IF-UIPERF-001 |
+| AC-NFR0150-02@v0.9 | unit + integration | tests/unit/test_hotfix262_ac_chain_red.py::test_empty_registry_never_reads_event_stream + tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry | IF-UIPERF-001 |
 | AC-FR0333-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_unified_todos_inbox_coverage + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-UIPERF-001 |
 | AC-FR0340-01@v0.11 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_backlog_title_never_ulid + tests/e2e/test_hotfix262_release_ui.py::test_backlog_titles_readable | IF-UIPERF-001 |
 | AC-FR0307-01@v0.9 | integration + e2e | tests/integration/test_hotfix262_ui_perf.py::test_todos_items_carry_context_and_action_ref + tests/e2e/test_hotfix262_release_ui.py::test_todos_cards_clickable_readable | IF-UIPERF-001 |

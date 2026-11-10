@@ -24,13 +24,22 @@ from types import SimpleNamespace
 from typing import Any
 
 from tracks import paths
-from tracks.server import api_query, projections
+from tracks.server import api_query, projections, projections_core
 from tracks.server.redaction import SecretRedactor
 from tracks.store.store import Store
 from tracks.supervisor import db as sdb
 
 _VERSION = "v0.12"
 _PROJECT_ID = "proj-1"
+
+
+# AC-NFR0150-02@v0.9 TRACKS-TRACE a warm cache cannot hide a forbidden event replay
+def test_empty_registry_never_reads_event_stream(tmp_path, monkeypatch):
+    def forbidden_read(*args):
+        raise AssertionError("an empty AC registry must not read or replay run events")
+
+    monkeypatch.setattr(projections_core, "_run_events", forbidden_read)
+    assert projections_core._chain_rows(str(tmp_path), "v0.8", "RUN") == []
 
 
 def _write_acceptance(repo: Path, ac_id: str) -> None:

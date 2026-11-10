@@ -155,7 +155,7 @@
    "if_ref": "IF-ATTN-001",
    "mutation": "the missing-token attention is emitted twice per call, so the journey sees a duplicated attention instead of the single one the contract allows",
    "patch": "ce_ac-fr0283-02_attention_dedup.patch",
-   "test": "tests/e2e/test_hotfix262_attention_journey.py::test_missing_token_halts_and_recovers",
+   "test": "tests/integration/test_hotfix262_attention.py::test_missing_token_single_attention_and_hint",
    "result": "killed"
   },
   {
@@ -211,7 +211,7 @@
    "if_ref": "IF-UIPERF-001",
    "mutation": "the ac-chain read face replays the run's events before the empty-registry short-circuit, so the 0-AC response is no longer under the 5 ms budget",
    "patch": "ce_ac-nfr0150-02_ac_chain_shortcircuit.patch",
-   "test": "tests/integration/test_hotfix262_ui_perf.py::test_ac_chain_short_circuits_empty_registry",
+   "test": "tests/unit/test_hotfix262_ac_chain_red.py::test_empty_registry_never_reads_event_stream",
    "result": "killed"
   },
   {
