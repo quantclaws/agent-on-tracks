@@ -468,6 +468,38 @@ def approved_acs(projects_dir: Path, version: str) -> list[str]:
     return sorted(_referenced_acs(projects_dir, version))
 
 
+def closure_acs(projects_dir: Path, version: str, anchor_acs=None) -> list[str]:
+    """Resolve a feature's ACs or a hotfix's approved, versioned anchors.
+
+    A delta need not duplicate acceptance.md. Its persisted anchor set is
+    the scope, and every reference must resolve in its original approval
+    artifact. Missing scope is an error, never an empty successful join.
+    """
+    if "-hotfix-" not in version:
+        return approved_acs(projects_dir, version)
+    if not anchor_acs:
+        raise ValueError("hotfix_closure_scope_missing: no approved anchor ACs")
+    resolved = []
+    for ref in anchor_acs:
+        identity = _resolve_anchor_ref(ref)
+        if identity is None or identity[0] not in _referenced_acs(projects_dir, identity[1]):
+            raise ValueError(f"hotfix_closure_anchor_unresolved: {ref}")
+        resolved.append(ref)
+    return sorted(set(resolved))
+
+
+def closure_ac_identity(reference, acs: list[str]) -> str | None:
+    """Keep qualified scopes exact; support legacy unqualified feature scopes."""
+    if not isinstance(reference, str):
+        return None
+    if reference in acs:
+        return reference
+    base = reference.split("@", 1)[0]
+    if not any("@" in ac for ac in acs) and base in acs:
+        return base
+    return None
+
+
 def _anchor_not_closed(
     ref: str,
     declared_refs: set[str],

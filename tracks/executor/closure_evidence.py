@@ -426,14 +426,14 @@ class ExecClosureEvidenceMixin:
         gates. Fail-closed: any blocked/failed experiment stops the chain
         (the stop itself routes through the park disposition -- never a
         guessed pass)."""
-        del reconcile, state, task_id
+        del reconcile, task_id
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
         version = self.version
         if not candidate_sha or not version:
             raise ValueError("produce_closure_evidence requires candidate_sha+version")
         from tracks import paths
-        from tracks.checks.trace import approved_acs
+        from tracks.checks.trace import closure_acs
 
         bindings = _load_binding_tables(Path(self.repo), version)
         if not bindings:
@@ -446,8 +446,17 @@ class ExecClosureEvidenceMixin:
                 )
             )
             return
-        acs = approved_acs(paths.projects_dir(self.store.home), version)
-        existing = self._closure_existing(candidate_sha)
+        try:
+            acs = closure_acs(
+                paths.projects_dir(self.store.home), version,
+                getattr(state, "hotfix_anchor_acs", None),
+            )
+        except ValueError as exc:
+            self._emit("closure_evidence.failed", {
+                "candidate_sha": candidate_sha, "failures": [str(exc)], "failed_count": 1,
+            }, command_id=cmd.command_id)
+            return
+        existing = self._closure_existing(candidate_sha, acs)
         failures = self._produce_pending(
             acs, existing, bindings, candidate_sha, version, cmd
         )
@@ -484,19 +493,27 @@ class ExecClosureEvidenceMixin:
             )
         return failures
 
-    def _closure_existing(self, candidate_sha: str) -> set[str]:
-        """ACs already carrying a same-candidate manifest (idempotent re-drive)."""
+    def _closure_existing(self, candidate_sha: str, acs: list[str]) -> set[str]:
+        """ACs with both successful manifest and repaired baseline for this candidate."""
+        from tracks.checks.trace import closure_ac_identity
+
         done: set[str] = set()
+        repaired: set[str] = set()
         for event in self.store.events(self.run_id):
-            if event.type != "mutation.manifest":
-                continue
             payload = event.payload or {}
             if payload.get("candidate_digest") != candidate_sha:
                 continue
-            ac = str(payload.get("ac") or "").split("@", 1)[0]
-            if ac:
-                done.add(ac)
-        return done
+            ac = closure_ac_identity(payload.get("ac"), acs)
+            if ac is None:
+                continue
+            if event.type == "mutation.manifest":
+                if payload.get("status") == "declared":
+                    done.add(ac)
+                else:
+                    done.discard(ac)
+            elif event.type == "phase0.baseline_repaired" and payload.get("status") == "repaired":
+                repaired.add(ac)
+        return done & repaired
 
     def _produce_one_binding(
         self, cmd, candidate_sha: str, version: str, binding: Mapping
@@ -505,7 +522,7 @@ class ExecClosureEvidenceMixin:
         patch_file = _patch_paths(repo, version, binding["patch"])
         patch_digest = "sha256:" + hashlib.sha256(patch_file.read_bytes()).hexdigest()
         manifest = _mutation_facade.build_manifest(
-            ac=f"{binding['ac']}@{version}",
+            ac=binding["ac"] if "@" in binding["ac"] else f"{binding['ac']}@{version}",
             if_ref=binding["if_ref"],
             candidate_digest=candidate_sha,
             patch_digest=patch_digest,
@@ -582,7 +599,7 @@ class ExecClosureEvidenceMixin:
         self._emit(
             "phase0.baseline_repaired",
             {
-                "ac": f"{binding['ac']}@{version}",
+                "ac": manifest.ac,
                 "bound_node": {"node_id": node_id, "digest": candidate_sha},
                 "selection_id": f"closure-{binding['ac'].lower()}-{candidate_sha[:12]}",
                 "evidence_id": evidence_id,

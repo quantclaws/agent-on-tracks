@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from tracks import paths
 from tracks.checks.reach import check_reach_file
 from tracks.checks.release_evidence import check_release_evidence_file
-from tracks.checks.trace import approved_acs, check_trace_full_file
+from tracks.checks.trace import (
+    approved_acs,
+    check_trace_full_file,
+    closure_ac_identity,
+    closure_acs,
+)
 from tracks.deliverables import check_deliverables
 from tracks.executor import version_extensions
 from tracks.executor.full_f_authority import is_authoritative_full_f
@@ -300,6 +305,9 @@ def _merge_baseline_repair(entry: dict, payload: dict) -> None:
 
 def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
     """Fold one ``mutation.manifest`` payload (§1g field set) into an entry."""
+    if payload.get("status") == "blocked":
+        entry.pop("mutation_evidence", None)
+        return
     digest = payload.get("candidate_digest")
     if isinstance(digest, str) and digest:
         entry["mutation_candidate"] = digest
@@ -336,11 +344,10 @@ def _merge_stream_event(
 ) -> None:
     """Fold one stream event into the harvest state under *candidate_digest*."""
     payload = _event_payload(event)
-    if event.type == "mutation.manifest":
-        base = _ac_base_ref(payload.get("ac")) or ""
+    base = closure_ac_identity(payload.get("ac"), acs)
+    if event.type == "mutation.manifest" and base:
         _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
-    elif event.type == "phase0.baseline_repaired":
-        base = _ac_base_ref(payload.get("ac")) or ""
+    elif event.type == "phase0.baseline_repaired" and base:
         _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
     elif event.type == "full.executed":
         _apply_full_execution(per_ac, acs, payload, candidate_digest)
@@ -424,7 +431,18 @@ def _cmd_check_trace_v07(
 
 def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     """Assemble the closure report and optional release segment from events."""
-    acs = approved_acs(paths.projects_dir(home), version)
+    scope_error = None
+    try:
+        context = (
+            _active_hotfix_trace_context(home, paths.version_dir(home, version))
+            if "-hotfix-" in version else None
+        )
+        acs = (
+            closure_acs(paths.projects_dir(home), version, (context or {}).get("anchor_acs"))
+            if "-hotfix-" in version else approved_acs(paths.projects_dir(home), version)
+        )
+    except ValueError as exc:
+        acs, scope_error = [], str(exc)
     release: dict | None = None
     store = Store(home)
     try:
@@ -434,6 +452,8 @@ def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     finally:
         store.close()
     report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
+    if scope_error:
+        report = replace(report, status="fail", hard_errors=(*report.hard_errors, scope_error))
     return report, release
 
 
