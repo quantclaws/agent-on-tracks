@@ -139,9 +139,9 @@ function renderTodos(body) {
         "data-testid": `${testid}-link`,
         text: todoCardLabel(todo),
       });
-      link.addEventListener("click", (event) => {
-        if (!todo.action_ref) return;
-        event.preventDefault();
+      card.addEventListener("click", (event) => {
+        if (!todo.action_ref || event.defaultPrevented || event.target.closest("a")) return;
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         globalThis.location.assign(todo.action_ref);
       });
       card.append(link);
