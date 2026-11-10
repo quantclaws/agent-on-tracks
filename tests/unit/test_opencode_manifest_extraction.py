@@ -68,6 +68,29 @@ def test_declared_manifest_rejects_bad_file_despite_valid_stdout(tmp_path):
     assert failure["status"] == "failed"
 
 
+# AC-FR0279-01@v0.8 TRACKS-TRACE file delivery retains repo-relative manifest validation
+def test_declared_file_manifest_rejects_absolute_path(tmp_path):
+    target = tmp_path / "reply.json"
+    target.write_text(json.dumps({
+        "envelope": {"kind": "shield:write", "version": 2},
+        "payload": {
+            "artifact_manifest": {"include": [{
+                "path": "/tmp/foreign.py", "kind": "integration_test", "role": "test",
+            }]},
+            "suggested_commit_message": "invalid absolute path",
+        },
+    }))
+    assignment = {
+        "envelope": build_assignment_envelope("shield:write"),
+        "result_file": {"result_path": str(target)},
+    }
+    info, failure = OpencodeBackend(tmp_path, "v0.8")._manifest_for_dispatch(
+        "shield", "WRITE", _proc(f"result: {target}"), "", None, assignment,
+    )
+    assert info is None
+    assert "repo-relative" in failure["self_report"]
+
+
 def test_top_level_include_accepted_when_wrapper_brace_dropped():
     payload = (
         "```json\n"

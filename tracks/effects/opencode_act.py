@@ -161,6 +161,7 @@ class OpencodeActMixin:
             if not prepared.ok:
                 return prepared.failure
             audit = self._prepare_act_audit(req)
+            self._save_dispatch_audit(req, audit, prepared.evidence)
             proc = self._dispatch_with_session_health(
                 req.name, req.prompt, req.root, key=req.key
             )
@@ -288,6 +289,9 @@ class OpencodeActMixin:
                 payload = validate_envelope(envelope, "shield:write")["payload"]
             except EnvelopeFormatError as exc:
                 return None, self._manifest_malformed_result(str(exc), proc, prompt, console_input)
+            _, error = self._manifest_include(payload)
+            if error is not None:
+                return None, self._manifest_malformed_result(error, proc, prompt, console_input)
             return (payload["artifact_manifest"], payload["suggested_commit_message"]), None
         manifest, commit_msg, error = self._extract_manifest(proc)
         if error is not None:

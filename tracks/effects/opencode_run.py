@@ -60,6 +60,20 @@ class OpencodeRunMixin:
                 log_fh.close()
             raise
 
+        if getattr(self, "_active_dispatch_receipt", None) is not None:
+            try:
+                self._record_dispatch_pid(proc.pid)
+            except BaseException:
+                # A failed durable PID write or cancellation must not leave
+                # the already-spawned child running without its audit record.
+                self._kill_group(proc.pid)
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=5)
+                self._close_master(master_fd)
+                if log_fh:
+                    log_fh.close()
+                raise
+
         stdin_writer = self._start_stdin_pump(
             proc, os.environ.get("TRAC_AGENT_CONSOLE_INPUT"), master_fd
         )

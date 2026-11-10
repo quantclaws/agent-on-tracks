@@ -740,8 +740,14 @@ def _preserves_publish_pending(s: State, ev: EventEnvelope) -> bool:
 
 def apply(s: State, ev: EventEnvelope) -> State:
     if ev.type != "command.issued":
+        dispatch_receipt = (
+            ev.type == "advisory.recorded"
+            and ev.payload.get("area") == "dispatch_recovery"
+            and s.pending is not None
+            and s.pending.get("kind") == "dispatch_agent"
+        )
         preserves = (
-            ev.type in _PENDING_PRESERVING_AUDIT
+            (ev.type in _PENDING_PRESERVING_AUDIT or dispatch_receipt)
             and s.pending is not None
             and ev.command_id is not None
             and ev.command_id == s.pending.get("command_id")

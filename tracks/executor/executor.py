@@ -34,6 +34,7 @@ from tracks.executor.dispatch import (
     select_failure,  # noqa: F401
     static_parity_check,  # noqa: F401
 )
+from tracks.executor.dispatch_recovery import ExecDispatchRecoveryMixin
 from tracks.executor.doc_face import (
     _NEXT_STAGE,  # noqa: F401
     ExecDocMixin,
@@ -190,6 +191,7 @@ def hotfix_human_anchor(repo, store, run_id: str, refs: list[str]) -> int:
 
 
 class Executor(
+    ExecDispatchRecoveryMixin,
     MImplRuntimeMixin,
     ExecObserveMixin,
     ExecDocMixin,
