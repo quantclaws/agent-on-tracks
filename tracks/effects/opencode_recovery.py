@@ -10,23 +10,13 @@ from __future__ import annotations
 import base64
 import copy
 import hashlib
-import os
 import subprocess
 from pathlib import Path
 
 from tracks.effects.audit import Auditor
 from tracks.effects.envelope_reply import declared_result_path
 from tracks.kernel.envelope import load_declared_reply
-
-
-def process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+from tracks.processes import process_alive
 
 
 class OpencodeRecoveryMixin:
