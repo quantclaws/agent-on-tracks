@@ -30,7 +30,7 @@ from tracks.executor.local_gate_evidence import (
     normalized_result_payload,
 )
 from tracks.executor.m_impl_testops import MImplTestOpsMixin
-from tracks.executor.registry_gate import execute_registry_gate
+from tracks.executor.registry_gate import execute_registry_gate, registry_architecture
 from tracks.executor.release_gate import complete_version_facts
 from tracks.executor.test_select import (
     TestResultError,
@@ -1020,7 +1020,7 @@ the runtime-materialized default contract lives here."""
                 version = state.version or getattr(self, "version", None)
                 if not version:
                     raise ValueError("guard_registry requires the active version")
-                architecture = paths.version_dir(self.store.home, version) / "architecture.md"
+                architecture = registry_architecture(self.store.home, version)
                 result = execute_registry_gate(gate, self.repo, architecture, scope)
             else:
                 result = execute_gate(gate, self.repo, scope)

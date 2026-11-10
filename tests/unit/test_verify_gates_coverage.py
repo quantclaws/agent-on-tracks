@@ -755,6 +755,24 @@ def test_run_one_local_gate_registry_resolves_active_version(tmp_path: Path, mon
     assert host.emitted[0][0] == "local_gate.passed"
 
 
+# AC-FR0269-01@v0.8 TRACKS-TRACE native gate consumes the inherited registry on deltas
+def test_hotfix_local_gate_inherits_base_registry(tmp_path: Path, monkeypatch):
+    host = _Host(tmp_path)
+    host.store.home = host.repo / ".tracks"
+    captured = []
+
+    def execute(gate, repo, architecture, scope):
+        captured.append(architecture)
+        return SimpleNamespace(status="passed", command_echo=(), exit_code=0, summary={})
+
+    monkeypatch.setattr(verify_gates, "execute_registry_gate", execute)
+    gate = LocalGateDecl("quality", "guard_registry", "", ("lint_format",), "exit_code", 1)
+    assert host._run_one_local_gate(
+        _cmd(), "SHA", "D", None, State(version="v0.12-hotfix-262"), 0, gate, {}
+    )
+    assert captured == [host.store.home / "projects/v0.12/architecture.md"]
+
+
 def test_run_one_local_gate_version_decl_delegates(tmp_path: Path):
     host = _Host(tmp_path)
     calls: list = []
