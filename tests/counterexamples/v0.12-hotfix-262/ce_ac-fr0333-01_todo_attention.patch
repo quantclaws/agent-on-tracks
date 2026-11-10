@@ -1,12 +1,14 @@
-diff --git a/tracks/server/projections_core.py b/tracks/server/projections_core.py
---- a/tracks/server/projections_core.py
-+++ b/tracks/server/projections_core.py
-@@ -470,6 +470,8 @@
+diff --git a/tracks/server/projections_run.py b/tracks/server/projections_run.py
+--- a/tracks/server/projections_run.py
++++ b/tracks/server/projections_run.py
+@@ -740,9 +740,7 @@
+     blocked = _blocked(_run_events(project["repo_path"], run["run_id"]), state)
+     if blocked is None:
+         return None
+-    return _attention_todo(
+-        run["run_id"], state, project, title, run["updated_ts"], blocked
+-    )
++    return None
  
  
- def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
-+    if state.awaiting == "attention":
-+        return None
-     if state.awaiting == "approval":
-         return {"run_id": run_id, "kind": "stage_approval", "object": state.stage or "approval",
-             "revision": _material_revision(project) or state.preview_digest,
+ def _run_todos(project: dict) -> list[dict]:

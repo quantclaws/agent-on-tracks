@@ -1,14 +1,14 @@
 diff --git a/tracks/server/projections_timeline.py b/tracks/server/projections_timeline.py
 --- a/tracks/server/projections_timeline.py
 +++ b/tracks/server/projections_timeline.py
-@@ -377,7 +377,9 @@
-     ``include_evidence=False`` so a response row never carries it.
+@@ -414,8 +414,8 @@
+     historical helper scalar for direct callers.
      """
      slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
 -    if include_evidence and "evidence" in parsed:
-+    # COUNTEREXAMPLE: the slim face keeps the full evidence payload,
-+    # so the slim response exceeds its size budget.
+-        slim["evidence"] = _bounded_evidence(parsed["evidence"])
 +    if "evidence" in parsed:
-         slim["evidence"] = parsed["evidence"]
++        slim["evidence"] = parsed["evidence"]
      if type_ == "outcome.received":
          # Outcome blobs name their conclusion via status/failure_class (this
+         # run's 10 refs carry no ``verdict`` key); keep the small scalars so
