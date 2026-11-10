@@ -799,30 +799,7 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
             known_issues=known_issues,
         )
         if preview is None:
-            # Fail-closed LOUD: an unassemblable preview (typically the
-            # evidence set is incomplete for the frozen candidate -- fix
-            # commits landed mid-chain and staled the evidence) must never
-            # spin silently; the operator gets the disposition.
-            self._emit(
-                "attention.required",
-                {
-                    "area": "release_evidence",
-                    "reason": "evidence_incomplete_for_candidate",
-                    "stage": "M-RELEASE",
-                    "candidate_sha": candidate_sha,
-                    "detail": (
-                        "the release preview could not be assembled: the "
-                        "verified evidence set does not cover the frozen "
-                        "candidate (fix commits during the release chain "
-                        "staled it)"
-                    ),
-                    "next": (
-                        "trac return --to M-VERIFY --reason <why>; the chain "
-                        "re-walks for the current candidate"
-                    ),
-                },
-                command_id=cmd.command_id,
-            )
+            self._record_incomplete_preview(cmd, candidate_sha, state)
             return
         if not self._park_preview_changed(events, candidate_sha, preview):
             return
@@ -832,6 +809,32 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
         preview = dict(preview)
         preview["blob_ref"] = f".tracks/runtime/blobs/{blob}"
         self._emit("release.previewed", preview, command_id=cmd.command_id)
+
+    def _record_incomplete_preview(self, cmd, candidate_sha: str, state) -> None:
+        # M-IMPL's park chain gathers diagnostics while its repair is still
+        # running. Missing release proof is expected there; a blocking
+        # M-RELEASE attention would prevent that repair from producing it.
+        # The real release path still refuses an incomplete candidate.
+        repairing = getattr(state, "stage", None) == "M-IMPL"
+        payload = {
+            "area": "release_evidence",
+            "reason": "evidence_incomplete_for_candidate",
+            "stage": "M-IMPL" if repairing else "M-RELEASE",
+            "candidate_sha": candidate_sha,
+            "detail": "the verified release evidence does not cover the frozen candidate",
+            "next": (
+                "complete the implementation repair and candidate verification"
+                if repairing
+                else "trac return --to M-VERIFY --reason <why>; re-walk the current candidate"
+            ),
+        }
+        if repairing:
+            payload["status"] = "pending"
+        self._emit(
+            "advisory.recorded" if repairing else "attention.required",
+            payload,
+            command_id=cmd.command_id,
+        )
 
     def _park_preview_contract(
         self, cmd, candidate_sha: str, contract_or_digest, contract_digest: str | None
