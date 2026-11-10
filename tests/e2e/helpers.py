@@ -48,6 +48,17 @@ walk_to_design_complete = walk_to_m_test_complete
 # parks at M-IMPL/DIAGNOSE/awaiting=escalation — the proven parking logic.
 M_IMPL_PARK_SIMULATE = "devon:RED=fail;diagnose:classification=impl_defect"
 
+# The CI channel's credential binding (interfaces §1a/§1d): the release-tail
+# M-VERIFY readback needs it, the M-IMPL park disposition does not.  The park
+# leg is driven with these variables masked so the two-drive waiver
+# disposition lands exactly as it does on a credential-less host (the
+# CI-bound park chain is attributed to the product, not to the test premise).
+_CI_CREDENTIAL_ENV_KEYS = (
+    "GITHUB_TOKEN",
+    "TRAC_GITHUB_REPO",
+    "TRAC_GITHUB_API_BASE",
+)
+
 # The M-IMPL leg of the RELEASE walk: DEVON's RED succeeds, so the
 # implementation stubs land and the host repo's suite stays green.  A NEW
 # release preview needs all five release-evidence keys (interfaces §1b item
@@ -165,10 +176,24 @@ def walk_to_m_impl_parked(
     channel while the agent channel stays the deterministic fake) can land
     their events before the M-DESIGN drive consumes the M-REQ-APPROVAL
     boundary."""
+    run_id = _entry_and_approval(
+        trac, stdin=stdin, version=version, post_approve_hook=post_approve_hook
+    )
+    _drive_to_m_impl_park(trac, version, pre_seed_hook=pre_seed_hook)
+    return run_id
+
+
+def _entry_and_approval(trac, *, stdin, version, post_approve_hook):
+    """init -> start -> triage -> doc trio -> approval (+ post-approval hook)."""
     run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     if post_approve_hook is not None:
         post_approve_hook(trac, run_id)
+    return run_id
+
+
+def _drive_to_m_impl_park(trac, version, *, pre_seed_hook=None):
+    """First post-approval drive -> phase0 premise seed -> M-IMPL park."""
     r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
     repo = getattr(trac, "repo", None)
     if repo is not None:
@@ -180,7 +205,6 @@ def walk_to_m_impl_parked(
     assert "stage=M-IMPL" in r.stdout
     assert "substate=DIAGNOSE" in r.stdout
     assert "awaiting=escalation" in r.stdout
-    return run_id
 
 
 def walk_to_awaiting_release(
@@ -192,26 +216,32 @@ def walk_to_awaiting_release(
     post_approve_hook=None,
     max_drives=10,
     host_repo=None,
+    known_issue_waivers=False,
 ):
     """Drive the release chain to M-RELEASE/AWAITING_RELEASE.
 
-    The release preview needs a COMPLETE, verified candidate: interfaces §1b
-    item 1 makes the five release-evidence keys (full_f / ci /
-    prism.verify_final / prism.security / security) a precondition of a NEW
-    preview, and the ``full_f`` key requires an AUTHORITATIVE FULL_F proof
-    (interfaces §1a item 1).  The FULL_F battery runs every collected node of
-    the host repo, so the chain's own M-IMPL cycle must leave that suite
-    GREEN -- a failed DEVON RED leaves the behavioral-contract nodes failing
-    and the battery can never produce an authoritative proof.
+    Two contract premises are available on one run:
 
-    So this walk drives the M-IMPL cycle to SUCCESS (``devon:RED=pass``):
-    the implementation stubs land, the battery is green and the chain reaches
-    M-VERIFY -> M-RELEASE with the complete evidence set.  The M-IMPL PARK
-    (a failed RED, ``walk_to_m_impl_parked``) remains the premise of the
-    ESCAPE anchors, which need the DIAGNOSE escalation; it is not a
-    precondition of the release chain.
+    * ``known_issue_waivers=True`` drives the M-IMPL two-drive waiver
+      disposition first (``walk_to_m_impl_parked`` + the following drives):
+      it registers the non-authoritative known issues the M-MILESTONE closer
+      audits as ``issue.closed state=skipped reason=not_authoritative``
+      (FR-0284/FR-0286 §5).  Only the milestone-tail anchors need that
+      premise; the default walk keeps the green M-IMPL cycle so the FULL_F
+      reuse anchors observe ``evidence.reused(kind="full_f")``.
+    * the release preview needs a COMPLETE, verified candidate: interfaces
+      §1b item 1 makes the five release-evidence keys (full_f / ci /
+      prism.verify_final / prism.security / security) a precondition of a NEW
+      preview, and the ``full_f`` key requires an AUTHORITATIVE FULL_F proof
+      (interfaces §1a item 1).  The M-IMPL cycle is driven to SUCCESS
+      (``devon:RED=pass``) so the battery lands that proof.
 
-    The loop is bounded; a missing arrival is a harness bug, not a park
+    The park leg runs with the CI credential binding masked: the waiver
+    disposition is a CI-independent M-IMPL premise, while the CI readback is
+    a release-tail (M-VERIFY) input.  The credentials are restored for the
+    bounded M-VERIFY -> M-RELEASE drives.
+
+    The loops are bounded; a missing arrival is a harness bug, not a park
     expectation.
 
     The release preview needs the version facts' remote tag census, so the
@@ -233,19 +263,13 @@ def walk_to_awaiting_release(
         )
         if not has_origin:
             init_bare_remote(host_repo, "walk-origin.git")
-    run_id = walk_to_await_human(trac, stdin=stdin, version=version)
-    assert trac("approve", "--actor", "Aaron").returncode == 0
-    if post_approve_hook is not None:
-        post_approve_hook(trac, run_id)
-    # The phase0 pre-gate: the first post-approval drive drafts the M-DESIGN
-    # trio and fails the phase0 validate on a bare repo; the premises are
-    # seeded on the baseline-repair channel so the next drive seals phase0.
-    r = trac("run", "--no-watch", simulate=M_IMPL_RELEASE_SIMULATE)
-    repo = getattr(trac, "repo", None)
-    if repo is not None:
-        if pre_seed_hook is not None:
-            pre_seed_hook(repo)
-        _seed_phase0_premises(repo, version)
+    run_id = _entry_and_approval(
+        trac, stdin=stdin, version=version, post_approve_hook=post_approve_hook
+    )
+    if known_issue_waivers:
+        _drive_known_issue_waivers(trac, version, pre_seed_hook, max_drives)
+    else:
+        _seed_phase0_after_first_drive(trac, version, pre_seed_hook)
     for _ in range(max_drives):
         r = trac("run", "--no-watch", simulate=M_IMPL_RELEASE_SIMULATE)
         assert r.returncode == 0, (
@@ -258,6 +282,39 @@ def walk_to_awaiting_release(
     raise AssertionError(
         f"M-RELEASE/AWAITING_RELEASE not reached within {max_drives} drives"
     )
+
+
+def _seed_phase0_after_first_drive(trac, version, pre_seed_hook):
+    """First post-approval drive (M-DESIGN trio / phase0 block) + premises."""
+    trac("run", "--no-watch", simulate=M_IMPL_RELEASE_SIMULATE)
+    repo = getattr(trac, "repo", None)
+    if repo is not None:
+        if pre_seed_hook is not None:
+            pre_seed_hook(repo)
+        _seed_phase0_premises(repo, version)
+
+
+def _drive_known_issue_waivers(trac, version, pre_seed_hook, max_drives):
+    """Park + two-drive waiver disposition; lift the park before returning.
+
+    The CI credential binding is masked for the M-IMPL disposition (the
+    release-tail readback is not a park premise) and restored afterwards.
+    """
+    saved = {key: os.environ[key] for key in _CI_CREDENTIAL_ENV_KEYS if key in os.environ}
+    try:
+        for key in _CI_CREDENTIAL_ENV_KEYS:
+            os.environ.pop(key, None)
+        _drive_to_m_impl_park(trac, version, pre_seed_hook=pre_seed_hook)
+        for _ in range(max_drives):
+            status = trac("status")
+            if "stage=M-IMPL" not in (status.stdout + status.stderr):
+                break
+            r = trac("run", "--no-watch", simulate=M_IMPL_PARK_SIMULATE)
+            assert r.returncode == 0, (
+                f"trac run failed rc={r.returncode}\nstderr:\n{r.stderr[-800:]}\nstdout:\n{r.stdout[-1500:]}"
+            )
+    finally:
+        os.environ.update(saved)
 
 
 def real_issue_hook(host_repo, version="v0.8"):
@@ -347,11 +404,26 @@ def assert_temp_refs_empty(host_repo):
     assert listed.strip() == ""
 
 
-def walk_and_release(trac, host_repo, *, post_approve_hook=None, name="bare.git"):
+def walk_and_release(
+    trac,
+    host_repo,
+    *,
+    post_approve_hook=None,
+    name="bare.git",
+    known_issue_waivers=False,
+):
     """One full release-chain setup: bare origin -> walk to AWAITING_RELEASE
-    -> human ``release`` decision; returns the run id."""
+    -> human ``release`` decision; returns the run id.
+
+    ``known_issue_waivers`` forwards the milestone-tail premise (see
+    ``walk_to_awaiting_release``): the closer's non-authoritative audit needs
+    the M-IMPL two-drive waiver registrations on the same run."""
     init_bare_remote(host_repo, name)
-    run_id = walk_to_awaiting_release(trac, post_approve_hook=post_approve_hook)
+    run_id = walk_to_awaiting_release(
+        trac,
+        post_approve_hook=post_approve_hook,
+        known_issue_waivers=known_issue_waivers,
+    )
     assert run_id
     assert trac("release", "--action", "release").returncode == 0
     return run_id

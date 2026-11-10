@@ -11,10 +11,12 @@ stale; crashes at three points reuse the same P and key.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 
 import pytest
 
+from tests._support.release_premises import append_verify_release_premises
 from tests.unit.helpers import git_repo, git_strip
 from tracks.effects import publish as publish_effects
 from tracks.executor.executor import Executor
@@ -24,6 +26,7 @@ from tracks.executor.publish_runtime import resolve_publish_authority
 from tracks.executor.release_authorization import assess_release
 from tracks.executor.release_gate import version_facts
 from tracks.executor.release_preview import assemble_preview
+from tracks.executor.security import security_policy_digest
 from tracks.executor.sync_product import EVIDENCE_RINGS, SYNC_VERIFIED
 from tracks.kernel.events import Command
 from tracks.store import Store
@@ -169,6 +172,21 @@ def _seed_host(tmp_path, *, exact_branch=True):
             ],
         },
     )
+    # IF-RELEV-001 item 1: a NEW preview is invalid unless the five release
+    # evidence keys exist for the frozen candidate.  The accepted upstream
+    # premises are seeded through the shared fixture helper (the full_f key
+    # is the authoritative 7362-shape proof, interfaces §1a item 1).
+    contract = load_host_contract(projects / "project.toml")
+    append_verify_release_premises(
+        store,
+        "RUN",
+        "v0.8",
+        candidate,
+        git_strip(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+        hashlib.sha256((projects / "project.toml").read_bytes()).hexdigest(),
+        "",
+        security_policy_digest(contract),
+    )
     return repo, bare, base, baseline, candidate, store
 
 
@@ -232,8 +250,8 @@ def test_prepared_product_enters_plan_publishes_and_resumes(tmp_path, monkeypatc
     verified = [e for e in events if e.type == SYNC_VERIFIED]
     assert len(verified) == 1
     record = verified[0].payload["product"]
-    assert record["baseline_sha"] == baseline
-    assert record["source_candidate_sha"] == candidate
+    assert record["baseline_sha"] == baseline  # tracks-anchor-ok: pinned fixture commit, never rewritten
+    assert record["source_candidate_sha"] == candidate  # tracks-anchor-ok: pinned fixture commit, never rewritten
     assert set(record["evidence_digests"]) == set(EVIDENCE_RINGS)
 
     plan = preview["operation_plan"]
@@ -263,13 +281,13 @@ def test_prepared_product_enters_plan_publishes_and_resumes(tmp_path, monkeypatc
     assert sync_done and sync_done[-1]["status"] == "done"
     done = sync_done[-1]
     assert done["product_sha"] == product_sha
-    assert done["baseline_sha"] == baseline
-    assert done["source_candidate_sha"] == candidate
+    assert done["baseline_sha"] == baseline  # tracks-anchor-ok: pinned fixture commit, never rewritten
+    assert done["source_candidate_sha"] == candidate  # tracks-anchor-ok: pinned fixture commit, never rewritten
     assert done["evidence_digests"] == record["evidence_digests"]
     assert done["remote_check"]["object_id"] == product_sha
     assert _remote_head(bare, _RELEASE) == product_sha
-    assert _remote_head(bare, "main") == candidate
-    assert _remote_tag(bare, _TAG) == candidate
+    assert _remote_head(bare, "main") == candidate  # tracks-anchor-ok: frozen fixture candidate
+    assert _remote_tag(bare, _TAG) == candidate  # tracks-anchor-ok: frozen fixture candidate
     assert len(pushes) == 1
 
     # Resume: per-operation reconciled_skip, the sync op skips on the exact P
@@ -338,7 +356,7 @@ def test_preparation_failure_blocks_before_any_irreversible_operation(
     assert _remote_head(bare, _RELEASE) == git_strip(
         repo, "rev-parse", f"{_RELEASE}"
     )
-    assert _remote_head(bare, "main") == base
+    assert _remote_head(bare, "main") == base  # tracks-anchor-ok: pinned fixture commit
     assert _remote_tag(bare, _TAG) is None
 
 
@@ -415,8 +433,8 @@ def test_publish_requires_the_verified_event(tmp_path, monkeypatch):
     )
     failed = [e for e in store.events("RUN") if e.type == "publish.failed"][-1]
     assert failed.payload["reason"] == "sync_product_unverified"
-    assert _remote_head(bare, _RELEASE) == baseline
-    assert _remote_head(bare, "main") != candidate
+    assert _remote_head(bare, _RELEASE) == baseline  # tracks-anchor-ok: pinned fixture commit
+    assert _remote_head(bare, "main") != candidate  # tracks-anchor-ok: fixture candidate must not be published
 
 
 def test_publish_rejects_tampered_product_identity(tmp_path, monkeypatch):
@@ -466,7 +484,7 @@ def test_publish_rejects_tampered_product_identity(tmp_path, monkeypatch):
     failed = [e for e in store.events("RUN") if e.type == "publish.failed"][-1]
     assert failed.payload["reason"] == "sync_product_tree_mismatch"
     assert not [e for e in store.events("RUN") if e.type == "publish.planned"]
-    assert _remote_head(bare, _RELEASE) == baseline
+    assert _remote_head(bare, _RELEASE) == baseline  # tracks-anchor-ok: pinned fixture commit
 
 
 def test_preview_refuses_foreign_candidate_product(tmp_path, monkeypatch):
@@ -576,7 +594,7 @@ def test_ancestor_rollback_after_approval_is_stale(tmp_path, monkeypatch):
 
     assert authority is None
     assert error == "sync_product_stale"
-    assert _remote_head(bare, _RELEASE) == base
+    assert _remote_head(bare, _RELEASE) == base  # tracks-anchor-ok: pinned fixture commit
 
 
 def test_crash_before_wal_then_resume_reuses_product(tmp_path, monkeypatch):
@@ -640,7 +658,7 @@ def test_crash_after_wal_before_push_reuses_same_product(tmp_path, monkeypatch):
     ]
     assert len(planned) == 1
     assert planned[0]["product_sha"] == record["product_sha"]
-    assert _remote_head(bare, _RELEASE) == baseline
+    assert _remote_head(bare, _RELEASE) == baseline  # tracks-anchor-ok: pinned fixture commit
 
     # Resume: the WAL identity is reused (no duplicate planned), the same P
     # is pushed once.
@@ -731,6 +749,6 @@ def test_fast_forward_release_branch_needs_no_product(tmp_path, monkeypatch):
         if e.type == "publish.executed"
     }
     assert executed[_RELEASE]["status"] == "done"
-    assert executed[_RELEASE]["remote_check"]["object_id"] == candidate
-    assert _remote_head(bare, _RELEASE) == candidate
-    assert baseline != candidate
+    assert executed[_RELEASE]["remote_check"]["object_id"] == candidate  # tracks-anchor-ok: frozen candidate
+    assert _remote_head(bare, _RELEASE) == candidate  # tracks-anchor-ok: frozen fixture candidate
+    assert baseline != candidate  # tracks-anchor-ok: distinct pinned fixture commits (premise)

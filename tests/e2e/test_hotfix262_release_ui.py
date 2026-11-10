@@ -41,12 +41,14 @@ def _login(page, base_url: str) -> None:
 
 
 def _seed_legacy_run(ui_serve, run_id: str) -> None:
-    """A legacy run: no explicit release-tail stage events.
+    """A legacy run: no explicit stage events at all.
 
     The seed mirrors the offline v0.12.0 slice (the 7473-shape): the run
-    walks the pre-release stages and then records the publish/milestone
-    facts WITHOUT the explicit ``stage.exited`` / ``stage.entered`` events
-    the v0.12.1 contract adds.
+    records the publish/milestone facts WITHOUT any explicit ``stage.exited``
+    / ``stage.entered`` event -- not only the release tail (interfaces §1f
+    item 3: the whole legacy shape, matching the integration sibling's
+    ``explicit_stages == []`` premise).  Every stage visit the timeline shows
+    is the projection's synthesis.
     """
     from tracks.paths import tracks_home
     from tracks.store import Store
@@ -54,9 +56,6 @@ def _seed_legacy_run(ui_serve, run_id: str) -> None:
     store = Store(tracks_home(ui_serve.repo))
     try:
         store.append(run_id, _VERSION, "story.requested", {"raw_chars": 1})
-        for stage in ("M-START", "M-STORY", "M-SPEC", "M-ACC", "M-IMPL", "M-VERIFY"):
-            store.append(run_id, _VERSION, "stage.entered", {"stage": stage})
-            store.append(run_id, _VERSION, "stage.exited", {"stage": stage})
         store.append(
             run_id,
             _VERSION,

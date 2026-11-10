@@ -26,7 +26,10 @@ pytestmark = pytest.mark.integration
 # AC-FR0284-01@v0.8 TRACKS-TRACE close with trace comment and sealed refs clean
 def test_close_with_trace_comment(host_repo, trac, event_log, ci_echo_standin):
     run_id = walk_and_release(
-        trac, host_repo, post_approve_hook=real_issue_hook(host_repo)
+        trac,
+        host_repo,
+        post_approve_hook=real_issue_hook(host_repo),
+        known_issue_waivers=True,
     )
     assert trac("run").returncode == 0, "publish + M-MILESTONE must complete"
     events = event_log(run_id)
@@ -85,7 +88,7 @@ def test_close_with_trace_comment(host_repo, trac, event_log, ci_echo_standin):
 
 # AC-FR0284-02@v0.8 TRACKS-TRACE fake counterexamples rejected and not sealed
 def test_fake_counterexamples_rejected(host_repo, trac, event_log, ci_echo_standin):
-    walk_and_release(trac, host_repo)
+    walk_and_release(trac, host_repo, known_issue_waivers=True)
     assert trac("run").returncode == 0
     events = event_log()
 

@@ -75,9 +75,11 @@ def _drop_tail_events(host_repo, run_id, types):
         store.close()
 
 
-def _walk_and_release(trac, host_repo):
+def _walk_and_release(trac, host_repo, *, known_issue_waivers=False):
     init_bare_remote(host_repo, "bare.git")
-    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
+    run_id = walk_to_awaiting_release(
+        trac, host_repo=host_repo, known_issue_waivers=known_issue_waivers
+    )
     assert run_id
     assert trac("release", "--action", "release").returncode == 0
     return run_id
@@ -85,7 +87,7 @@ def _walk_and_release(trac, host_repo):
 
 # AC-FR0276-01@v0.8 TRACKS-TRACE real trace aggregation seal and refs clean
 def test_real_trace_seal_refs_and_close(host_repo, trac, event_log, ci_echo_standin):
-    run_id = _walk_and_release(trac, host_repo)
+    run_id = _walk_and_release(trac, host_repo, known_issue_waivers=True)
     # Plant a temp ref before the publish+closing run: the cleanup must remove
     # it for real and measure an empty namespace afterwards.
     subprocess.run(
@@ -293,7 +295,7 @@ def test_declared_tracker_closes_milestone_via_api(
 def test_authoritative_issue_closed_via_api(
     host_repo, trac, event_log, ci_echo_standin
 ):
-    run_id = _walk_and_release(trac, host_repo)
+    run_id = _walk_and_release(trac, host_repo, known_issue_waivers=True)
     # An authoritative mapping (API-verified creation accepted on a previous
     # run) is the only closable identity; the walk itself only has fake
     # known-issue registrations, so the closer's known-issue fallback still
@@ -392,13 +394,18 @@ def test_interrupted_tail_resumes_without_duplicate_events(
     assert _count(after, "milestone.sealed") == 1
     assert _count(after, "refs.cleaned") == 1
     assert _count(after, "run.completed") == 1
-    # No duplicate publish side effects on the tail resume.
+    # No duplicate publish side effects on the tail resume.  The store is
+    # append-only, so a republish would surface as a NEW publish.executed(seq)
+    # beyond the interruption snapshot -- seq is the discriminator, not a
+    # count comparison across runtime activity.
+    publish_seqs_before = {e["seq"] for e in done_before}
     done_after = [
         e
         for e in after
         if e["type"] == "publish.executed" and e["payload"].get("status") == "done"
     ]
-    assert len(done_after) == len(done_before)
+    new_done = [e for e in done_after if e["seq"] not in publish_seqs_before]
+    assert not new_done, "the tail resume must not republish"
 
     resumed_trace = _trace_of(after)
     assert resumed_trace["trace_digest"] == trace["trace_digest"]

@@ -329,16 +329,18 @@ def _walk_hotfix_to_awaiting_release(trac, issue, scenario, *, max_drives=12):
     """Entry + bounded M-RELEASE drives for a v0.8 hotfix release journey.
 
     Mirrors ``walk_to_awaiting_release`` for ``trac hotfix`` entries (the
-    shared walker is feature-``trac start`` specific): the M-IMPL failure
-    injection parks the first release-chain stop and the bounded drives walk
-    M-IMPL EXIT -> M-VERIFY -> M-RELEASE.
+    shared walker is feature-``trac start`` specific): the M-IMPL cycle runs
+    to SUCCESS (``devon:RED=pass``) so the post-cycle FULL_F battery can land
+    the AUTHORITATIVE proof the five-key release evidence requires
+    (interfaces §1a/§1b), then the bounded drives walk M-VERIFY ->
+    M-RELEASE/AWAITING_RELEASE.
     """
-    from tests.e2e.helpers import M_IMPL_PARK_SIMULATE
+    from tests.e2e.helpers import M_IMPL_RELEASE_SIMULATE
 
     entry = trac("hotfix", str(issue), "--scenario", scenario)
     assert entry.returncode == 0, entry.stderr
     for _ in range(max_drives):
-        drive = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+        drive = trac("run", simulate=M_IMPL_RELEASE_SIMULATE)
         assert drive.returncode == 0, drive.stderr
         status = trac("status")
         if "AWAITING_RELEASE" in status.stdout:
