@@ -16,6 +16,7 @@ import { renderSidebar } from "./sidebar.js";
 const PROXY_TYPES = ["http", "https", "socks5"];
 
 export function renderSettingsView(body) {
+  if (!body.isConnected) return null;
   renderSidebar({
     title: "settings",
     window: "settings",

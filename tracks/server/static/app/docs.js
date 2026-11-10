@@ -154,9 +154,11 @@ export function renderDocsView(body, context = {}) {
       if (rows.length) projectId = rows[0].project_id;
     }
     if (!projectId) projectId = "host";
+    if (!body.isConnected) return;
     const tree = await requestJson(
       `/api/projects/${encodeURIComponent(projectId)}/docs/tree`
     );
+    if (!body.isConnected) return;
     const all = Array.isArray(tree.versions) ? tree.versions : [];
     const versions = all.filter((version) => (version.docs || []).length);
     if (!versions.length) {

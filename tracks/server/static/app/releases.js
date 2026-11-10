@@ -503,6 +503,7 @@ function emptyState(body, pid) {
 
 export async function renderReleasesView(body, context = {}) {
   const pid = context.projectId || (await firstProjectId());
+  if (!body.isConnected) return null;
   focusedProjectId = pid;
   if (!pid) {
     body.append(element("p", { class: "degraded", text: "No registered projects yet" }));
@@ -575,6 +576,7 @@ export async function renderReleasesView(body, context = {}) {
   // list): the registry stays the switcher between runs (§1e.1), the
   // focused node carries the selected face and its version group expands.
   const { runRowFullLabel } = await import("./views.js");
+  if (!body.isConnected) return null;
   const sidebar = renderSidebar({
     title: "releases",
     nodes: [],
