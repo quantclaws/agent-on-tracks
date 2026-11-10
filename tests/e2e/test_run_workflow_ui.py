@@ -406,7 +406,6 @@ def test_rounds_lazy_first_paint(ui_serve, page):
     assert [url for url in requests if "/stages/M-TEST/rounds" in url]
 
 
-# AC-FR0355-03@v0.12 TRACKS-TRACE operational block banner and retry action
 def _seed_blocked_verify_run(ui_serve, run_id: str) -> str:
     from tracks.paths import tracks_home
     from tracks.store import Store
@@ -446,8 +445,9 @@ def _seed_blocked_verify_run(ui_serve, run_id: str) -> str:
     return run_id
 
 
+# AC-FR0355-01@v0.12 TRACKS-TRACE blocked stage and operational retry action
 def test_verify_blocked_banner_progress_and_retry(ui_serve, page):
-    """AC-FR0355-03: an unresolved attention.required renders the blocked
+    """AC-FR0355-01: an unresolved attention.required renders the blocked
     banner (reason/detail/next), marks the M-VERIFY node blocked (not
     active/attention), shows the sub-step states, and retries through the
     existing POST /retry surface."""

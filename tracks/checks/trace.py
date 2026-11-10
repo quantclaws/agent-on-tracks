@@ -226,7 +226,13 @@ def _check_ac_test_errors(
     """AC<->test bidirectional hard error detection + short-format detection."""
     errors: list[str] = []
     marker_ac_ids_long = {
-        ac_id for ac_id, markers in test_markers.items() if any("@" in m for m in markers)
+        ac_id
+        for ac_id, markers in test_markers.items()
+        if any(
+            "@" in marker
+            and (current_version is None or marker.split("@", 1)[1] == current_version)
+            for marker in markers
+        )
     }
     for ac_id, _, line in ac_items:
         if ac_id not in tombstones and ac_id not in marker_ac_ids_long:
