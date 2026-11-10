@@ -23,7 +23,7 @@ def _scope(tmp_path):
     return home
 
 
-def _seed_run(home):
+def _seed_run(home, *, increment=True):
     store = Store(home)
     for kind, payload in [
         ("hotfix.requested", {"issue": 262, "scenario": "post-release"}),
@@ -32,6 +32,8 @@ def _seed_run(home):
         ("increment.declared", {"trace_status": "pass", "unit_rows": []}),
         ("candidate.frozen", {"candidate_sha": "candidate"}),
     ]:
+        if kind == "increment.declared" and not increment:
+            continue
         store.append("RUN", VERSION, kind, payload)
     return store
 
@@ -60,6 +62,22 @@ def test_cli_hotfix_report_does_not_vacuously_pass_zero_acs(tmp_path):
     assert report.status == "fail"
     assert [row.ac for row in report.records] == REFS
     assert "node_missing" in report.hard_errors
+
+
+# AC-FR0265-01@v0.7 TRACKS-TRACE public CLI inherits the base capability on legacy deltas
+@pytest.mark.parametrize("increment", [True, False])
+def test_public_cli_uses_candidate_closure_for_hotfix(tmp_path, capsys, increment):
+    from tracks.cli.main import cmd_check
+
+    store = _seed_run(_scope(tmp_path), increment=increment)
+    store.close()
+    assert cmd_check(tmp_path, "trace", "--version", VERSION, "--json") == 1
+    import json
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["closure"] == "candidate-bound"
+    assert [row["ac"] for row in report["records"]] == REFS
+    assert "node_missing" in report["hard_errors"]
 
 
 # AC-FR0265-02@v0.7 TRACKS-TRACE an unestablished delta has an explicit scope error

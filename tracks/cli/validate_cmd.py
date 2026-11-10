@@ -14,6 +14,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from tracks import paths
+from tracks.capabilities import base_version
 from tracks.checks.reach import check_reach_file
 from tracks.checks.release_evidence import check_release_evidence_file
 from tracks.checks.trace import (
@@ -234,10 +235,10 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     # whose extension provides the trace capability takes the candidate-bound
     # closure exit (§2c), which needs no version directory; early versions
     # resolve nothing and keep their classic behaviour untouched.
-    checker = version_extensions.resolve_capability(version, "trace")
+    checker = version_extensions.resolve_capability(base_version(version), "trace")
     if checker is not None:
         release_builder = version_extensions.resolve_optional_capability(
-            version, "release_trace"
+            base_version(version), "release_trace"
         )
         return _cmd_check_trace_v07(
             repo, home, version, checker, use_json, release_builder
@@ -433,12 +434,8 @@ def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     """Assemble the closure report and optional release segment from events."""
     scope_error = None
     try:
-        context = (
-            _active_hotfix_trace_context(home, paths.version_dir(home, version))
-            if "-hotfix-" in version else None
-        )
         acs = (
-            closure_acs(paths.projects_dir(home), version, (context or {}).get("anchor_acs"))
+            closure_acs(paths.projects_dir(home), version, _hotfix_closure_anchors(home, version))
             if "-hotfix-" in version else approved_acs(paths.projects_dir(home), version)
         )
     except ValueError as exc:
@@ -455,6 +452,21 @@ def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     if scope_error:
         report = replace(report, status="fail", hard_errors=(*report.hard_errors, scope_error))
     return report, release
+
+
+def _hotfix_closure_anchors(home: Path, version: str) -> list[str]:
+    """Approved anchors also exist on runs predating increment.declared."""
+    store = Store(home)
+    try:
+        for run_id in (store.active_run(), *store.runs_for_version(version)):
+            if run_id is None or _run_version(store, run_id) != version:
+                continue
+            state = store.state(run_id)
+            if state.hotfix_issue is not None and state.hotfix_anchor_validated:
+                return list(state.hotfix_anchor_acs or [])
+        return []
+    finally:
+        store.close()
 
 
 def _emit_trace_v07_json(report, release) -> None:
