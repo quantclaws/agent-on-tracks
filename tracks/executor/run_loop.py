@@ -534,6 +534,8 @@ the host Executor keeps construction and the command handlers."""
             return "return", self._park_on_operator_attention(pending, state)
         if self._sm02_pre_decide(state):
             return "continue", None
+        if self._reverify_repaired_full_candidate(state):
+            return "continue", None
         return "proceed", state
 
     def _post_issue_checks(self, cmd) -> bool:
