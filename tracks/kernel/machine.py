@@ -384,6 +384,7 @@ class State:
     ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries (WAIVED is terminal)
     ledger_rebuilt: bool = False  # ledger WAL has been projected during replay
     ledger_entries: dict = field(default_factory=dict)  # identity -> replay metadata/state
+    ledger_waived_nodes: list[str] = field(default_factory=list)  # durable known-red exclusion
     # Review pin (FR-0244-04): the explicit persisted unit-only hotfix
     # increment fact -- the ONLY key that releases an empty-R2 M-TEST
     # selection. Projected by the increment.declared reducer from a

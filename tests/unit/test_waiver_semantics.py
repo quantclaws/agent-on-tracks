@@ -156,6 +156,45 @@ def test_rebuild_ledger_applies_waiver_and_prevents_reopen():
     assert ledger == {}
 
 
+# AC-FR0253-05@v0.6 TRACKS-TRACE waived history cannot resurrect phantom exit blockers
+def test_projection_replays_repeated_open_after_waiver_like_execution_ledger():
+    red = {"node": "tests/e2e/test_old.py::test_old", "failure_signature": "old", "state": "OPEN"}
+    live = {"node": "tests/unit/test_live.py::test_live", "failure_signature": "live", "state": "OPEN"}
+    history = seq(
+        ("stage.entered", {"stage": "M-IMPL"}),
+        ("ledger.opened", red),
+        ("ledger.opened", live),
+        ("ledger.waived", {"node_refs": [red["node"]]}),
+        ("ledger.opened", red),
+        ("ledger.opened", red),
+        ("ledger.opened", {**red, "failure_signature": "new"}),
+        ("ledger.transitioned", {**red, "from": "PROVEN", "to": "OPEN"}),
+    )
+    projected = project(history)
+    assert projected.ledger_open == len(rebuild_ledger(history)) == 1
+    assert projected.ledger_waived_nodes == [red["node"]]
+    assert [e["state"] for e in projected.ledger_entries.values()] == ["WAIVED", "OPEN"]
+    assert decide(projected).kind != "write_frontmatter"
+
+
+# AC-FR0253-05@v0.6 TRACKS-TRACE a waiver is durable even before any identity opens
+def test_projection_remembers_waiver_before_open_and_allows_proven_exit():
+    red = "tests/e2e/test_old.py::test_old"
+    history = seq(
+        ("stage.entered", {"stage": "M-IMPL"}),
+        ("ledger.waived", {"node_refs": [red]}),
+        ("ledger.opened", {"node": red, "failure_signature": "s", "state": "OPEN"}),
+        ("full.executed", {"round": "FULL_F"}),
+        ("verdict.passed", {"check": "island_2"}),
+    )
+    state = project(history)
+    assert state.ledger_open == 0
+    assert not state.ledger_entries
+    assert state.ledger_waived_nodes == [red]
+    assert rebuild_ledger(history) == {}
+    assert decide(state).kind == "write_frontmatter"
+
+
 def test_m_impl_exit_gate_uses_ledger_open_after_waiver():
     from tracks.kernel.m_impl import _decide_m_impl_exit
     from tracks.kernel.machine import State
