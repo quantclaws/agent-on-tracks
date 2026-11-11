@@ -15,43 +15,22 @@ import os
 import shlex
 import subprocess
 import sys
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from tracks.executor.helpers import _ILLEGIT_KEYWORDS as _COLLECTION_KEYWORDS
-from tracks.executor.host_contract import declared_install_interpreter
-
-# Operator/agent controls that must never reach a host test subprocess:
-# TRAC_GITHUB_* and the GitHub token/host vars make fake sources look like a
-# real CI readback; TRAC_AGENT_SESSION_REUSE changes the agent session
-# behavior. Runtime effects that legitimately need them execute in the
-# parent process, not inside the host's test runner.
-_OPERATOR_CONTROL_ENV = frozenset(
-    {
-        "TRAC_GITHUB_REPO",
-        "TRAC_GITHUB_CA_BUNDLE",
-        "GITHUB_TOKEN",
-        "GH_TOKEN",
-        "GH_HOST",
-        "TRAC_AGENT_SESSION_REUSE",
-    }
-)
+from tracks.executor.host_contract import contract_env_allowlist, declared_install_interpreter
+from tracks.executor.host_env import host_process_env
 
 
-def host_test_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Return a copy of *environ* without operator/agent control variables.
+def host_test_env() -> dict[str, str]:
+    """Compatibility face over :func:`host_process_env` (IF-HOSTENV-001).
 
-    Keeps PATH/PYTHONPATH/VIRTUAL_ENV/HOME and unrelated TRAC_* controls so
-    ordinary test plumbing and explicit test knobs survive.
+    Legacy callers keep this name; the allowlist lives in ``host_env`` and
+    is the only source of truth. The retired denylist no longer exists.
     """
-    source = os.environ if environ is None else environ
-    return {
-        key: value
-        for key, value in source.items()
-        if key not in _OPERATOR_CONTROL_ENV
-    }
+    return host_process_env()
 
 
 @dataclass(frozen=True)
@@ -253,13 +232,14 @@ def execute_gate_command(
     forensic capture, convergence plan 2026-09-05) overlays additional
     environment variables -- e.g. TRAC_FORENSICS_DIR so failing
     integration tests persist their git-state forensic package. The base
-    environment is sanitized through :func:`host_test_env`, so the operator's
+    environment comes from :func:`host_process_env`, so the operator's
     serve shell cannot leak into host test commands."""
     argv = shlex.split(command)
     argv = _resolve_argv0(argv, cwd)
-    run_env = host_test_env()
-    if env_extra:
-        run_env.update(env_extra)
+    run_env = host_process_env(
+        extra=env_extra,
+        contract_allowlist=contract_env_allowlist(cwd),
+    )
     try:
         proc = subprocess.run(
             argv,
@@ -416,6 +396,9 @@ def _run_check(
             capture_output=True,
             text=True,
             check=False,
+            env=host_process_env(
+                contract_allowlist=contract_env_allowlist(work_dir)
+            ),
         )
         return (name, proc.returncode, proc.stdout, proc.stderr)
     except (OSError, FileNotFoundError) as exc:

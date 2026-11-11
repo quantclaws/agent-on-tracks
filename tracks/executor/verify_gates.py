@@ -11,6 +11,7 @@ import tomllib
 
 from tracks import paths
 from tracks.executor import m_verify
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
@@ -29,7 +30,7 @@ from tracks.executor.local_gate_evidence import (
     normalized_result_payload,
 )
 from tracks.executor.m_impl_testops import MImplTestOpsMixin
-from tracks.executor.registry_gate import execute_registry_gate
+from tracks.executor.registry_gate import execute_registry_gate, registry_architecture
 from tracks.executor.release_gate import complete_version_facts
 from tracks.executor.test_select import (
     TestResultError,
@@ -154,9 +155,7 @@ the runtime-materialized default contract lives here."""
         self, event, payload, selections, latest_selection, candidate_sha
     ):
         """The matching selection when *event* is a valid producer, else None."""
-        if payload.get("execution_commit") != candidate_sha:
-            return None
-        if payload.get("passed") is not True or not payload.get("full_f_eligible"):
+        if not is_authoritative_full_f(payload, candidate_sha):
             return None
         selection_seq = payload.get("selection_event_seq")
         if not isinstance(selection_seq, int) or latest_selection is None:
@@ -1021,7 +1020,7 @@ the runtime-materialized default contract lives here."""
                 version = state.version or getattr(self, "version", None)
                 if not version:
                     raise ValueError("guard_registry requires the active version")
-                architecture = paths.version_dir(self.store.home, version) / "architecture.md"
+                architecture = registry_architecture(self.store.home, version)
                 result = execute_registry_gate(gate, self.repo, architecture, scope)
             else:
                 result = execute_gate(gate, self.repo, scope)

@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections_run.py b/tracks/server/projections_run.py
+--- a/tracks/server/projections_run.py
++++ b/tracks/server/projections_run.py
+@@ -371,7 +371,7 @@
+                 "entry_id": run_id,
+                 "version": version,
+                 "source": payload.get("source"),
+-                "content": payload.get("content"),
++                "content": payload.get("content") or run_id,
+                 "recorded_ts": ts,
+                 "disposition": None,
+                 "to": None,

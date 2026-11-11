@@ -154,9 +154,11 @@ export function renderDocsView(body, context = {}) {
       if (rows.length) projectId = rows[0].project_id;
     }
     if (!projectId) projectId = "host";
+    if (!body.isConnected) return;
     const tree = await requestJson(
       `/api/projects/${encodeURIComponent(projectId)}/docs/tree`
     );
+    if (!body.isConnected) return;
     const all = Array.isArray(tree.versions) ? tree.versions : [];
     const versions = all.filter((version) => (version.docs || []).length);
     if (!versions.length) {
@@ -204,7 +206,10 @@ export function renderDocsView(body, context = {}) {
     body.__beforeUnmount = workbench.prepareUnmount;
     // Within the session the window reopens on the last document (any
     // version); a fresh session starts blank until the sidebar selects one.
-    const last = lastOpenDoc.get(projectId);
+    const requested = context.version && context.doc
+      ? { version: context.version, doc: context.doc }
+      : null;
+    const last = requested || lastOpenDoc.get(projectId);
     if (
       last &&
       versions.some(

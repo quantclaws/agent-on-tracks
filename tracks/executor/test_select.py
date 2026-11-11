@@ -197,15 +197,34 @@ def _record_transitioned(ledger: dict[str, LedgerStateValue], identities, payloa
 
 
 def rebuild_ledger(events) -> dict[str, LedgerStateValue]:
-    """Replay ledger WAL, rejecting unknown states and ambiguous transitions."""
+    """Replay ledger WAL, rejecting unknown states and ambiguous transitions.
+
+    ``ledger.waived`` is the durable known-red disposition: replay drops the
+    already-opened identities named by the waiver and refuses to reopen them
+    later. Without this, a waiver followed by a second FULL round emits a
+    duplicate ``ledger.opened`` for the same node and the replay fails closed.
+    """
     ledger: dict[str, LedgerStateValue] = {}
     identities: dict[str, tuple[str, str]] = {}
+    waived: set[str] = set()
     ordered = sorted(events, key=_event_seq)
     for event in ordered:
         event_type, payload = _event_parts(event)
-        if event_type == "ledger.opened":
+        if event_type == "ledger.waived":
+            nodes = {str(node) for node in (payload.get("node_refs") or [])}
+            waived.update(nodes)
+            for key in [
+                key for key, identity in identities.items() if identity[0] in nodes
+            ]:
+                ledger.pop(key, None)
+                identities.pop(key, None)
+        elif event_type == "ledger.opened":
+            if _opened_identity(payload)[0] in waived:
+                continue
             _record_opened(ledger, identities, payload)
         elif event_type == "ledger.transitioned":
+            if str(payload.get("node") or "") in waived:
+                continue
             _record_transitioned(ledger, identities, payload)
     return ledger
 

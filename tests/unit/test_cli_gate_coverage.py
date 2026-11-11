@@ -58,7 +58,7 @@ def test_retry_gate_error_clear_evidence_windows():
     assert _retry_gate_error(escalation, clear_evidence=True) is None
     blocked = SimpleNamespace(awaiting="rollback", status="awaiting_human")
     msg = _retry_gate_error(blocked, clear_evidence=True)
-    assert "retry --clear-evidence requires escalation" in msg
+    assert "retry --clear-evidence/--reset-dispatch requires escalation" in msg
     assert "awaiting=rollback" in msg
     ordinary = _retry_gate_error(
         SimpleNamespace(awaiting=None, status="active", stage="M-STORY"), clear_evidence=False
@@ -79,7 +79,11 @@ def test_cmd_retry_clear_evidence_success_on_clean_active(tmp_path, capsys):
     store.close()
     assert rc == 0
     assert "human.retry event appended" in out
-    assert retries[0].payload == {"actor": "T", "clear_evidence": True}
+    assert retries[0].payload == {
+        "actor": "T",
+        "clear_evidence": True,
+        "reset_dispatch": False,
+    }
 
 
 def test_cmd_retry_rejected_by_gate(tmp_path, capsys):

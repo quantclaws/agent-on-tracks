@@ -20,7 +20,8 @@ from tracks.executor.helpers import (
     emit_test_committed,
     git,
 )
-from tracks.executor.quality_gate import host_test_env
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.executor.test_collect import _R2_BASIS, _R2_SCOPE, _contract_sections
 from tracks.executor.test_select import (
     EmptyR2SelectionError,
@@ -698,7 +699,9 @@ class ExecTestRunMixin:
             proc = subprocess.run(
                 list(argv),
                 cwd=cwd,
-                env=host_test_env(),
+                env=host_process_env(
+                    contract_allowlist=contract_env_allowlist(cwd)
+                ),
                 capture_output=True,
                 text=True,
                 timeout=timeout,

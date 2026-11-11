@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/m_verify.py b/tracks/executor/m_verify.py
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -73,7 +73,7 @@
+ ) -> ReuseDecision:
+     """Reuse only when candidate is undrifted, identity matches and no STALE."""
+     # stale has highest priority: any STALE mark or evidence flag means rerun
+-    if stale_marks or full_f_evidence.get("stale"):
++    if False:  # COUNTEREXAMPLE: the STALE mark is ignored.
+         basis = tuple(full_f_evidence.get("identity_basis", ()))
+         return ReuseDecision(decision="rerun", reason="stale", identity_basis=basis)
+     expected = full_f_evidence.get("identity_basis")

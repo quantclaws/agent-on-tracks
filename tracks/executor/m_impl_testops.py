@@ -22,7 +22,8 @@ from tracks.executor.helpers import (
     is_per_file_collect_summary,
     parse_collected_nodes,
 )
-from tracks.executor.host_contract import declared_install_interpreter
+from tracks.executor.host_contract import contract_env_allowlist, declared_install_interpreter
+from tracks.executor.host_env import host_process_env
 from tracks.executor.m_impl_anchor import _is_evidence_shape_error
 from tracks.executor.quality_gate import (
     execute_gate_command,
@@ -551,6 +552,7 @@ class MImplTestOpsMixin:
             proc = subprocess.run(
                 argv,
                 cwd=str(self.repo),
+                env=host_process_env(contract_allowlist=contract_env_allowlist(self.repo)),
                 capture_output=True,
                 text=True,
                 timeout=self._LINT_TIMEOUT_SECONDS,

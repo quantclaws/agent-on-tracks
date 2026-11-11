@@ -143,7 +143,12 @@ def test_retry_tail_no_republish(host_repo, trac, event_log, ci_echo_standin):
     ]
 
     # Repair the archive store: the retry tail must only finish the tail.
+    # The failed seal is an operator-actionable block, cleared through the
+    # documented retry verb (`trac retry` appends human.retry; the active
+    # M-MILESTONE window needs --reset-dispatch because the block area
+    # itself is not an auto-retry area) before the resume drive.
     blocker.unlink()
+    assert trac("retry", "--reset-dispatch").returncode == 0
     assert trac("run").returncode == 0, "the closing tail must resume"
     events2 = event_log(run_id)
     done_after = [
@@ -151,7 +156,12 @@ def test_retry_tail_no_republish(host_repo, trac, event_log, ci_echo_standin):
         for e in events2
         if e["type"] == "publish.executed" and e["payload"].get("status") == "done"
     ]
-    assert len(done_after) == len(done_before), "retry must not republish"
+    # The store is append-only: a republish on the retry tail surfaces as a NEW
+    # publish.executed(seq) beyond the pre-retry snapshot -- seq is the
+    # discriminator, not a count comparison across runtime activity.
+    done_seqs_before = {e["seq"] for e in done_before}
+    new_done = [e for e in done_after if e["seq"] not in done_seqs_before]
+    assert not new_done, "retry must not republish"
     skipped = [
         e
         for e in events2
@@ -159,7 +169,7 @@ def test_retry_tail_no_republish(host_repo, trac, event_log, ci_echo_standin):
         and e["payload"].get("status") == "reconciled_skip"
     ]
     # The retry tail may reconcile already-done operations as skipped.
-    assert skipped or len(done_after) == len(done_before)
+    assert skipped or not new_done
     completed = [e for e in events2 if e["type"] == "run.completed"]
     assert len(completed) == 1
     assert completed[0]["payload"]["terminal_state"] == "released"

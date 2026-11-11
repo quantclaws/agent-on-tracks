@@ -3,6 +3,44 @@
 from __future__ import annotations
 
 
+def authoritative_full_f_payload(candidate: str) -> dict:
+    """A candidate-bound AUTHORITATIVE ``full.executed`` payload.
+
+    The payload is the shape interfaces §1a item 1 names as authoritative:
+    ``passed`` AND ``full_f_eligible`` AND ``round`` in
+    {FULL_1, fallback_full, FULL_F} AND the candidate binding AND non-empty
+    ``evidence_ids`` AND an internally consistent identity quadruple.
+    ``serves_as_full_f`` is deliberately FALSE -- the authority never rests
+    on it alone (interfaces §1a item 1, INV-1).
+
+    The expected values are a transcription of that contract clause, never a
+    copy of an implementation's output.
+    """
+    identity = {
+        "tree": "tree-release-premise",
+        "command": ["pytest"],
+        "env": "env-release-premise",
+        "selection_id": "selection-release-premise",
+    }
+    return {
+        "round": "FULL_F",
+        "passed": True,
+        "full_f_eligible": True,
+        "serves_as_full_f": False,
+        "execution_commit": candidate,
+        "candidate_sha": candidate,
+        "evidence_ids": ["evidence-release-premise"],
+        "selection_id": identity["selection_id"],
+        "identity": dict(identity),
+        "identity_basis": [
+            identity["tree"],
+            list(identity["command"]),
+            identity["env"],
+            identity["selection_id"],
+        ],
+    }
+
+
 def append_verify_release_premises(
     store,
     run_id: str,
@@ -16,12 +54,19 @@ def append_verify_release_premises(
     include_ci: bool = True,
     ci_run_id: int = 17,
     include_gate_summary: bool = True,
+    include_full_f: bool = True,
 ) -> None:
     """Append the same accepted M-VERIFY through M-RELEASE premises.
 
     The caller still creates/freezes the candidate and the test target remains
     the real preview/authorization command.  ``include_gate_summary`` keeps
     the older authorization fixture's exact payload shape intact.
+
+    ``include_full_f`` seeds the candidate-bound authoritative FULL_F proof
+    (interfaces §1b item 1): without it the five-key release-evidence set is
+    incomplete by construction and the preview is invalid -- the arrangement
+    would test the wrong thing.  Callers that arrange a MISSING key switch
+    it off and seed the omission themselves.
     """
     store.append(run_id, version, "stage.entered", {"stage": "M-VERIFY"})
     store.append(
@@ -84,6 +129,13 @@ def append_verify_release_premises(
                 "required_checks": ["required-ci"],
                 "api_verified": True,
             },
+        )
+    if include_full_f:
+        store.append(
+            run_id,
+            version,
+            "full.executed",
+            authoritative_full_f_payload(candidate),
         )
     append_review_security_premises(
         store, run_id, version, candidate, contract_digest, artifact_digest, policy_digest,

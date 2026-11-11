@@ -4,9 +4,35 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import asdict, replace
+from pathlib import Path
 
-from tracks.executor.guard_registry import load_guard_registry, validate_guard_registry
+from tracks import paths
+from tracks.capabilities import base_version
+from tracks.executor.guard_registry import (
+    _REGISTRY_HEADING,
+    load_guard_registry,
+    validate_guard_registry,
+)
 from tracks.executor.host_contract import NormalizedGateResult, execute_gate
+
+
+def registry_architecture(home: Path, version: str) -> Path:
+    """Inherit a hotfix's base registry unless the delta declares its own.
+
+    An explicit but malformed override must be validated as written; it
+    cannot silently fall back to a less restrictive inherited registry.
+    """
+    current = paths.version_dir(home, version) / "architecture.md"
+    base = base_version(version)
+    if base == version:
+        return current
+    if current.is_file() and any(
+        _REGISTRY_HEADING.match(line)
+        or line.lstrip().startswith(("[quality_", "[[quality_"))
+        for line in current.read_text(encoding="utf-8").splitlines()
+    ):
+        return current
+    return paths.version_dir(home, base) / "architecture.md"
 
 
 def execute_registry_gate(gate, repo, architecture, scope) -> NormalizedGateResult:

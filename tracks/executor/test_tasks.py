@@ -368,11 +368,15 @@ def parse_test_tasks(acc_path, plan_path) -> list[dict]:
     """
     if not acc_path.exists() or not plan_path.exists():
         return []
-    known = _known_ac_ids(acc_path.read_text(encoding="utf-8"))
-    hotfix_acs = _hotfix_plan_ac_ids(plan_path, plan_path.read_text(encoding="utf-8"))
+    plan_text = plan_path.read_text(encoding="utf-8")
+    acc_text, source_issues = _plan_acceptance(plan_path, plan_text, acc_path)
+    if source_issues or _hotfix_coverage_ref_issues(plan_path, plan_text):
+        return []
+    known = _known_ac_ids(acc_text)
+    hotfix_acs = _hotfix_plan_ac_ids(plan_path, plan_text)
     if hotfix_acs is not None:
         known &= hotfix_acs
-    rows = _coverage_rows(plan_path.read_text(encoding="utf-8"))
+    rows = _coverage_rows(plan_text)
     return _test_tasks(known, rows)
 
 
@@ -602,12 +606,18 @@ def required_ac_ids(acc_path, plan_path) -> set[str]:
     M-TEST trace gate must verify). Unit-only ACs do not block M-TEST exit."""
     if not acc_path.exists() or not plan_path.exists():
         return set()
-    _, acs = _acc_scan(acc_path.read_text(encoding="utf-8"))
-    visible = _visible_plan_lines(plan_path.read_text(encoding="utf-8"))
+    plan_text = plan_path.read_text(encoding="utf-8")
+    acc_text, source_issues = _plan_acceptance(plan_path, plan_text, acc_path)
+    if source_issues or _hotfix_coverage_ref_issues(plan_path, plan_text):
+        return set()
+    _, acs = _acc_scan(acc_text)
+    required = _hotfix_plan_ac_ids(plan_path, plan_text)
+    visible = _visible_plan_lines(plan_text)
     return {
         ac_id
         for ac_id, _ref, _ln, _sec in acs
-        if _layer_of(ac_id, visible) in ("integration", "e2e")
+        if (required is None or ac_id in required)
+        and _layer_of(ac_id, visible) in ("integration", "e2e")
     }
 
 
@@ -654,6 +664,26 @@ def _extract_if_registry(interfaces_text: str) -> set[str] | None:
     return set(_IF_ID.findall(_strip_comments(section)))
 
 
+def _plan_acceptance(plan_path: Path, plan_text: str, acc_path: Path) -> tuple[str, list[str]]:
+    if _HOTFIX_VERSION_RE.match(plan_path.parent.name) is None:
+        return acc_path.read_text(encoding="utf-8"), []
+    from tracks.executor.hotfix_test_sources import resolve_ac_sources
+
+    refs = [ref for ref, _layer, _test, _if in _coverage_rows_with_test(plan_text)
+            if _FULL_AC_REF.fullmatch(ref)]
+    return resolve_ac_sources(plan_path.parent.parent, refs)
+
+
+def _plan_if_registry(plan_path: Path, if_path: Path) -> set[str] | None:
+    registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
+    delta = plan_path.parent / "interfaces.md"
+    if _HOTFIX_VERSION_RE.match(plan_path.parent.name) and delta.is_file():
+        local = _extract_if_registry(delta.read_text(encoding="utf-8"))
+        if local is not None:
+            registry = (registry or set()) | local
+    return registry
+
+
 def resolve_inherited_baseline_docs(doc_path: Path) -> tuple[Path, Path]:
     """IF-HOTFIX-010 (interfaces §1i): resolve the acceptance.md and
     interfaces.md paths a file-level validator reads for a test-plan doc.
@@ -695,15 +725,16 @@ def check_design_trace_file(path) -> list:
         return ["line:1 test-plan validate requires acceptance.md in same dir"]
     if not if_path.exists():
         return ["line:1 test-plan validate requires interfaces.md in same dir"]
-    registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
+    registry = _plan_if_registry(path, if_path)
     if registry is None:
         return ["interfaces.md missing '## 5. IF Registry' section"]
     if not registry:
         return ["interfaces.md §5 IF Registry is empty (no IF- identifiers)"]
     plan_text = path.read_text(encoding="utf-8")
+    acc_text, source_issues = _plan_acceptance(path, plan_text, acc_path)
     required_acs = _hotfix_plan_ac_ids(path, plan_text)
-    return _hotfix_coverage_ref_issues(path, plan_text) + check_design_trace(
-        acc_path.read_text(encoding="utf-8"),
+    return source_issues + _hotfix_coverage_ref_issues(path, plan_text) + check_design_trace(
+        acc_text,
         plan_text,
         registry,
         required_acs,
@@ -834,15 +865,16 @@ def check_test_tasks_contract_file(plan_path) -> list:
         return ["line:1 test-plan test_tasks validate requires acceptance.md"]
     if not if_path.exists():
         return ["line:1 test-plan test_tasks validate requires interfaces.md"]
-    registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
+    registry = _plan_if_registry(plan_path, if_path)
     if registry is None:
         return ["interfaces.md missing '## 5. IF Registry' section"]
     if not registry:
         return ["interfaces.md §5 IF Registry is empty (no IF- identifiers)"]
     plan_text = plan_path.read_text(encoding="utf-8")
+    acc_text, source_issues = _plan_acceptance(plan_path, plan_text, acc_path)
     required_acs = _hotfix_plan_ac_ids(plan_path, plan_text)
-    return _hotfix_coverage_ref_issues(plan_path, plan_text) + check_test_tasks(
-        acc_path.read_text(encoding="utf-8"),
+    return source_issues + _hotfix_coverage_ref_issues(plan_path, plan_text) + check_test_tasks(
+        acc_text,
         plan_text,
         registry,
         required_acs,

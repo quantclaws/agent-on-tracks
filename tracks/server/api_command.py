@@ -797,14 +797,20 @@ async def return_stage(request: Any) -> CommandResponse:
 async def retry_run(request: Any) -> CommandResponse:
     """POST /api/runs/{run_id}/retry -> retry_run (§1b #12, §2b #26)."""
     body = await _json_body(request)
+    clear_evidence = body.get("clear_evidence", False)
+    reset_dispatch = body.get("reset_dispatch", False)
     params = {
         "run_id": request.path_params.get("run_id"),
-        "clear_evidence": bool(body.get("clear_evidence", False)),
+        "clear_evidence": bool(clear_evidence),
+        "reset_dispatch": bool(reset_dispatch),
     }
     # guard.py's schema registry carries the required core param; the
-    # contract's optional boolean flag is closed-set checked here (§1b #12).
-    clear_evidence = body.get("clear_evidence", False)
-    if not set(body) <= {"clear_evidence"} or not isinstance(clear_evidence, bool):
+    # contract's optional boolean flags are closed-set checked here (§1b #12).
+    if (
+        not set(body) <= {"clear_evidence", "reset_dispatch"}
+        or not isinstance(clear_evidence, bool)
+        or not isinstance(reset_dispatch, bool)
+    ):
         session = _authenticated(request)
         if session is None:
             return _error(401, "unauthenticated", "an authenticated session is required")
@@ -814,7 +820,7 @@ async def retry_run(request: Any) -> CommandResponse:
             "retry_run",
             params,
             "validation_failed",
-            "retry accepts only the optional boolean clear_evidence flag",
+            "retry accepts only the optional boolean clear_evidence/reset_dispatch flags",
         )
     return await _mutate(
         request,

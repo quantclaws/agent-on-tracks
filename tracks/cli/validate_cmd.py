@@ -10,15 +10,22 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from tracks import paths
+from tracks.capabilities import base_version
 from tracks.checks.reach import check_reach_file
 from tracks.checks.release_evidence import check_release_evidence_file
-from tracks.checks.trace import approved_acs, check_trace_full_file
+from tracks.checks.trace import (
+    approved_acs,
+    check_trace_full_file,
+    closure_ac_identity,
+    closure_acs,
+)
 from tracks.deliverables import check_deliverables
 from tracks.executor import version_extensions
+from tracks.executor.full_f_authority import is_authoritative_full_f
 from tracks.executor.taskgraph import (
     parse_tasks_json,
     validate_ac_coverage,
@@ -228,10 +235,10 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     # whose extension provides the trace capability takes the candidate-bound
     # closure exit (§2c), which needs no version directory; early versions
     # resolve nothing and keep their classic behaviour untouched.
-    checker = version_extensions.resolve_capability(version, "trace")
+    checker = version_extensions.resolve_capability(base_version(version), "trace")
     if checker is not None:
         release_builder = version_extensions.resolve_optional_capability(
-            version, "release_trace"
+            base_version(version), "release_trace"
         )
         return _cmd_check_trace_v07(
             repo, home, version, checker, use_json, release_builder
@@ -299,6 +306,9 @@ def _merge_baseline_repair(entry: dict, payload: dict) -> None:
 
 def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
     """Fold one ``mutation.manifest`` payload (§1g field set) into an entry."""
+    if payload.get("status") == "blocked":
+        entry.pop("mutation_evidence", None)
+        return
     digest = payload.get("candidate_digest")
     if isinstance(digest, str) and digest:
         entry["mutation_candidate"] = digest
@@ -307,53 +317,73 @@ def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
         entry["mutation_evidence"] = patch
 
 
-def _apply_full_execution(per_ac: dict, acs: list[str], payload: dict) -> None:
+def _apply_full_execution(
+    per_ac: dict, acs: list[str], payload: dict, candidate_digest: str | None
+) -> None:
     """Credit a suite-level FULL execution to every required AC equally.
 
-    The FULL gate executes the whole suite, so its outcome (real emitted
-    ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
-    becomes each required AC's full-pass evidence for this candidate.
+    Only an authoritative FULL_F proof for the harvested candidate may be
+    credited (INV-1): ``serves_as_full_f`` alone is not authority.
     """
-    if not payload.get("serves_as_full_f"):
+    if not is_authoritative_full_f(payload, candidate_digest):
         return
-    evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
-    evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")
+    evidence_id = sorted(
+        e for e in payload.get("evidence_ids") or [] if isinstance(e, str)
+    )[0]
     for ac in acs:
         per_ac.setdefault(ac, {})["full_pass_evidence"] = evidence_id
 
 
+def _event_payload(event) -> dict:
+    """The event payload when it is a mapping (harvest ignores anything else)."""
+    payload = event.payload
+    return payload if isinstance(payload, dict) else {}
+
+
 def _merge_stream_event(
     candidate_digest: str | None, per_ac: dict, acs: list[str], event
-) -> str | None:
-    """Fold one stream event into the harvest state; returns the current digest."""
-    payload = event.payload if isinstance(event.payload, dict) else {}
-    if event.type == "mutation.manifest":
-        base = _ac_base_ref(payload.get("ac")) or ""
+) -> None:
+    """Fold one stream event into the harvest state under *candidate_digest*."""
+    payload = _event_payload(event)
+    base = closure_ac_identity(payload.get("ac"), acs)
+    if event.type == "mutation.manifest" and base:
         _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
-        digest = payload.get("candidate_digest")
-        if isinstance(digest, str) and digest:
-            return digest
-    elif event.type == "phase0.baseline_repaired":
-        base = _ac_base_ref(payload.get("ac")) or ""
+    elif event.type == "phase0.baseline_repaired" and base:
         _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
     elif event.type == "full.executed":
-        _apply_full_execution(per_ac, acs, payload)
-    return candidate_digest
+        _apply_full_execution(per_ac, acs, payload, candidate_digest)
+
+
+def _binding_candidate_digest(events) -> str | None:
+    """The candidate digest from ``candidate.frozen`` / ``milestone.trace_closed``.
+
+    INV-2: the last frozen/closed candidate of the version owns the closure
+    report; a ``mutation.manifest`` digest never rebinds it.
+    """
+    digest: str | None = None
+    for event in events:
+        if event.type not in ("candidate.frozen", "milestone.trace_closed"):
+            continue
+        candidate = _event_payload(event).get("candidate_sha")
+        if isinstance(candidate, str) and candidate:
+            digest = candidate
+    return digest
 
 
 def _closure_evidence(store: Store, version: str, acs: list[str]) -> tuple[str | None, dict]:
     """Harvest per-AC candidate-bound evidence from *version*'s event stream.
 
     Only contracted payloads feed the join: baseline repair (§3), mutation
-    manifest (§1g) and same-suite FULL executions. Absent elements stay
-    absent -- the pure join degrades those records to fail; evidence is
-    never invented, padded or suppressed.
+    manifest (§1g) and authoritative FULL executions bound to the candidate
+    from ``candidate.frozen`` / ``milestone.trace_closed`` (INV-2). Absent
+    elements stay absent -- the pure join degrades those records to fail;
+    evidence is never invented, padded or suppressed.
     """
-    candidate_digest: str | None = None
+    events = _version_events(store, version)
+    candidate_digest = _binding_candidate_digest(events)
     per_ac: dict[str, dict] = {}
-    for run_id in store.runs_for_version(version):
-        for event in store.events(run_id):
-            candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
+    for event in events:
+        _merge_stream_event(candidate_digest, per_ac, acs, event)
     return candidate_digest, per_ac
 
 
@@ -402,7 +432,14 @@ def _cmd_check_trace_v07(
 
 def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     """Assemble the closure report and optional release segment from events."""
-    acs = approved_acs(paths.projects_dir(home), version)
+    scope_error = None
+    try:
+        acs = (
+            closure_acs(paths.projects_dir(home), version, _hotfix_closure_anchors(home, version))
+            if "-hotfix-" in version else approved_acs(paths.projects_dir(home), version)
+        )
+    except ValueError as exc:
+        acs, scope_error = [], str(exc)
     release: dict | None = None
     store = Store(home)
     try:
@@ -412,7 +449,24 @@ def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
     finally:
         store.close()
     report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
+    if scope_error:
+        report = replace(report, status="fail", hard_errors=(*report.hard_errors, scope_error))
     return report, release
+
+
+def _hotfix_closure_anchors(home: Path, version: str) -> list[str]:
+    """Approved anchors also exist on runs predating increment.declared."""
+    store = Store(home)
+    try:
+        for run_id in (store.active_run(), *store.runs_for_version(version)):
+            if run_id is None or _run_version(store, run_id) != version:
+                continue
+            state = store.state(run_id)
+            if state.hotfix_issue is not None and state.hotfix_anchor_validated:
+                return list(state.hotfix_anchor_acs or [])
+        return []
+    finally:
+        store.close()
 
 
 def _emit_trace_v07_json(report, release) -> None:

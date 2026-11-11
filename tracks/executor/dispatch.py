@@ -189,6 +189,10 @@ the envelope/failure faces stay re-exported by executor.py."""
         if materialization_error is not None:
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
             return
+        if reconcile and self._recover_completed_dispatch(
+            cmd, state, task_id, role, substate, doc
+        ):
+            return
         if self._reject_over_budget_card(cmd, state, task_id, p):
             return
         if self._release_empty_hotfix_shield(cmd, state, task_id, role, substate, assignment):
@@ -347,9 +351,10 @@ the envelope/failure faces stay re-exported by executor.py."""
         # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
         # and dirty snapshot BEFORE act() so deltas can be classified after.
         doc_gap = self._capture_doc_gap_context(state, role)
-        result = self._run_agent_act(
-            cmd, state, task_id, role, substate, doc, doc_path, assignment
-        )
+        with self._capture_dispatch_receipt(cmd, assignment, pre_dirty, doc_gap):
+            result = self._run_agent_act(
+                cmd, state, task_id, role, substate, doc, doc_path, assignment
+            )
         if result is None:
             return
         self._finalize_agent_outcome(
@@ -372,18 +377,12 @@ the envelope/failure faces stay re-exported by executor.py."""
     def _run_agent_act(
         self, cmd, state, task_id, role, substate, doc, doc_path, assignment
     ):
-        """Open the writer worktree, run act(), and surface a replay failure.
+        """Run act() in the writer's isolated view and report replay failures.
 
-        B1 (issue #2, user ruling 2026-08-18): writer agents (Devon RGR in
-        M-IMPL, Shield WRITE in M-TEST) run in a spatially isolated worktree
-        created from the current main HEAD; the work is replayed onto the main
-        tree afterwards, so every existing pipeline (pre_dirty, manifest
-        audit, R/G refs, atomic rollback) keeps operating on the main tree
-        unchanged. Per-dispatch lifecycle: each phase re-creates from HEAD,
-        so REFACTOR and PRISM-revise re-dispatches naturally see committed
-        work; a crash leaks only a worktree that the B2 start-time sweep
-        reclaims. Audited events. Returns None after emitting a replay
-        failure (the turn is fail-closed)."""
+        ExecWorktreeMixin owns creation from HEAD, permitted WIP seeding,
+        replay, cleanup and audit events. Non-writers stay on the main tree.
+        Return None after a failed replay so its result cannot be consumed.
+        """
         handle, wt_task_id = self._open_writer_worktree(state, role, substate, cmd)
         result, replay_error = self._act_in_worktree(
             cmd, role, substate, doc, doc_path, assignment, handle, wt_task_id

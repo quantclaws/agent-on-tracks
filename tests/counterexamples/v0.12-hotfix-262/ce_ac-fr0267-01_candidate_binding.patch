@@ -1,0 +1,20 @@
+diff --git a/tracks/cli/validate_cmd.py b/tracks/cli/validate_cmd.py
+index 00f2308..abb9e91 100644
+--- a/tracks/cli/validate_cmd.py
++++ b/tracks/cli/validate_cmd.py
+@@ -359,6 +359,15 @@ def _binding_candidate_digest(events) -> str | None:
+         candidate = _event_payload(event).get("candidate_sha")
+         if isinstance(candidate, str) and candidate:
+             digest = candidate
++    for event in events:
++        if event.type != "mutation.manifest":
++            continue
++        manifest_digest = _event_payload(event).get("candidate_digest")
++        if isinstance(manifest_digest, str) and manifest_digest:
++            # COUNTEREXAMPLE: the closure harvest takes the candidate
++            # digest from a mutation manifest, so a manifest bound to a
++            # FOREIGN commit overwrites the frozen binding.
++            digest = manifest_digest
+     return digest
+ 
+ 

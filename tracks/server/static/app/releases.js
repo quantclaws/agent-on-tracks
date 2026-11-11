@@ -73,9 +73,22 @@ function activeRun(runs) {
  * painted by sidebar.js). */
 function sidebarGroups(payload, registryNodes) {
   const groups = [];
-  for (const entry of payload.versions || []) {
+  const versions = [...(payload.versions || [])].sort((a, b) => {
+    const active = (entry) => (entry.runs || []).some(
+      (run) => !["completed", "backlog"].includes(run.status)
+    );
+    return Number(active(b)) - Number(active(a));
+  });
+  for (const entry of versions) {
+    const isActive = (entry.runs || []).some(
+      (run) => !["completed", "backlog"].includes(run.status)
+    );
+    const hotfix = /^v(\d+\.\d+)-hotfix-(\d+)$/.exec(entry.version || "");
+    const label = hotfix
+      ? `${entry.version}（基于 v${hotfix[1]}，${isActive ? "当前进行中" : "历史 hotfix"}）`
+      : `${entry.version}（${isActive ? "当前基线" : "已发布/历史"}）`;
     groups.push({
-      label: `${entry.version} (${(entry.runs || []).length})`,
+      label: `${label} · ${(entry.runs || []).length}`,
       testid: "releases-group-registry",
       versionTestid: `releases-registry-${entry.version}`,
       open: true,
@@ -92,7 +105,7 @@ function sidebarGroups(payload, registryNodes) {
     children: (backlog.entries || [])
       .filter((entry) => !entry.disposition)
       .map((entry) => ({
-        label: entry.content || entry.entry_id || "entry",
+        label: entry.display_title || entry.content || "待办条目",
         testid: `sidebar-backlog-${entry.entry_id || "unknown"}`,
         attrs: { "data-entry-id": entry.entry_id || "" },
       })),
@@ -103,7 +116,7 @@ function sidebarGroups(payload, registryNodes) {
     testid: "releases-group-archive",
     open: false,
     children: archive.map((row) => ({
-      label: row.content || row.intake_id || "archived",
+      label: row.display_title || row.content || "已归档条目",
       testid: `sidebar-archive-${row.intake_id || "unknown"}`,
     })),
   });
@@ -147,21 +160,30 @@ function wireSidebarSelections(sidebar) {
   }
 }
 
-/** Pending intakes (submitted/evaluating/evaluated) that still need a
- * human decision. Rendered at the top of the releases main area in both
- * the empty and timeline states; each row offers a "继续" entry into
- * openDecisionModal. Absent when nothing pends. */
-const PENDING_INTAKE_STATUSES = new Set(["submitted", "evaluating", "evaluated"]);
+/** Only evaluated intakes are human decisions. submitted/evaluating belong to
+ * the supervisor/Scribe work queue and are not actionable human decisions. */
+const PENDING_INTAKE_STATUSES = new Set(["evaluated"]);
 
 function pendingStatusLabel(status) {
-  if (status === "evaluated") return "待决策";
-  return "评估中";
+  if (status === "evaluated") return "待人类决策";
+  return "非人类决策状态";
 }
 
 function truncate60(value) {
   const chars = Array.from(String(value || ""));
   if (chars.length <= 60) return chars.join("");
   return `${chars.slice(0, 60).join("")}…`;
+}
+
+function intakeTitle(detail, row) {
+  const report = detail && detail.report;
+  const reportTitle = report && typeof report.title === "string" ? report.title.trim() : "";
+  if (reportTitle) return reportTitle;
+  const content = detail && typeof detail.content === "string" ? detail.content : row.content;
+  const firstLine = String(content || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  if (firstLine) return truncate60(firstLine.replace(/^[-#>*\s]+/, ""));
+  const source = row.source ? `（来源：${row.source}）` : "";
+  return `未命名需求${source}`;
 }
 
 async function mountPendingIntakes(body, pid) {
@@ -178,20 +200,18 @@ async function mountPendingIntakes(body, pid) {
     (row) => row && PENDING_INTAKE_STATUSES.has(row.status)
   );
   if (!pending.length || !body || !body.isConnected) return;
-  // Resolve display titles via the #38 detail (report.title); the list
-  // face carries no content/title, so fall back to the intake id.
-  const titles = await Promise.all(
+  // Resolve display data via the #38 detail. Never expose an internal ULID
+  // as the human-facing title.
+  const details = await Promise.all(
     pending.map(async (row) => {
       try {
         const detail = await requestJson(
           `/api/projects/${encodeURIComponent(pid)}/intakes/${encodeURIComponent(row.intake_id)}`
         );
-        const report = detail && detail.report ? detail.report : null;
-        if (report && report.title) return String(report.title);
+        return detail || row;
       } catch (error) {
-        /* fall through to the id */
+        return row;
       }
-      return String(row.intake_id || "");
     })
   );
   if (!body.isConnected) return;
@@ -209,7 +229,7 @@ async function mountPendingIntakes(body, pid) {
     item.append(
       element("span", {
         class: "pending-intake-title",
-        text: truncate60(titles[index] || intakeId),
+          text: intakeTitle(details[index], row),
       }),
       element("span", {
         class: "pending-intake-status",
@@ -220,7 +240,7 @@ async function mountPendingIntakes(body, pid) {
       type: "button",
       class: "pending-intake-resume",
       "data-testid": `pending-intake-resume-${intakeId}`,
-      text: "继续",
+      text: "查看建议并决策",
     });
     resume.addEventListener("click", () => {
       openDecisionModal({
@@ -483,6 +503,7 @@ function emptyState(body, pid) {
 
 export async function renderReleasesView(body, context = {}) {
   const pid = context.projectId || (await firstProjectId());
+  if (!body.isConnected) return null;
   focusedProjectId = pid;
   if (!pid) {
     body.append(element("p", { class: "degraded", text: "No registered projects yet" }));
@@ -555,6 +576,7 @@ export async function renderReleasesView(body, context = {}) {
   // list): the registry stays the switcher between runs (§1e.1), the
   // focused node carries the selected face and its version group expands.
   const { runRowFullLabel } = await import("./views.js");
+  if (!body.isConnected) return null;
   const sidebar = renderSidebar({
     title: "releases",
     nodes: [],

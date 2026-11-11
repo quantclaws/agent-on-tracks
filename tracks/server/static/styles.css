@@ -1585,30 +1585,12 @@ textarea {
   color: var(--danger);
 }
 
-/* selected-for-inspection marker (distinct from the active node): a
-   focus ring plus a filled face so the choice is unmissable. */
+/* selected-for-inspection marker (distinct from the active node): an
+   outline ring only — the state-* colours stay authoritative. */
 .stage-node-selected,
 .stage-node[data-selected="true"] {
-  outline: 2px solid var(--focus);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-fg);
-}
-
-.stage-node-selected .node-icon,
-.stage-node[data-selected="true"] .node-icon,
-.stage-node-selected .stage-label,
-.stage-node[data-selected="true"] .stage-label,
-.stage-node-selected .stage-attempt,
-.stage-node[data-selected="true"] .stage-attempt {
-  color: var(--accent-fg);
-}
-
-.stage-node-selected .stage-attempt,
-.stage-node[data-selected="true"] .stage-attempt {
-  border-color: var(--accent-fg);
-  background: transparent;
 }
 
 .stage-node {

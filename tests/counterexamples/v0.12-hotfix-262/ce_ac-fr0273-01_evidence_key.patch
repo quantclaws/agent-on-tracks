@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
+index d76cc8f..d83ef25 100644
+--- a/tracks/executor/release_preview.py
++++ b/tracks/executor/release_preview.py
+@@ -92,7 +92,10 @@ def _evidence_key(event, payload: dict) -> str | None:
+         # M-DESIGN/M-TEST/M-IMPL verdicts never enter the release set.
+         scope = payload.get("scope")
+         if scope == "verify_final":
+-            return "prism.verify_final"
++            # COUNTEREXAMPLE: the evidence key for the verify_final
++            # scope stays the legacy single "prism" key, so a new
++            # preview carries the pre-split schema.
++            return "prism"
+         if scope == "security":
+             return "prism.security"
+         return None

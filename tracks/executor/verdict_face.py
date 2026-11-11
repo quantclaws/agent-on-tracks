@@ -19,6 +19,10 @@ from tracks.executor.helpers import (
     git,
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
+from tracks.executor.result_payload import (
+    blocking_verdict_failure_payload,
+    is_blocking_pass,
+)
 from tracks.kernel.machine import State
 from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
@@ -665,6 +669,14 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
 
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
+        if role == "prism" and is_blocking_pass(verdict, result):
+            self._emit(
+                "verdict.failed",
+                blocking_verdict_failure_payload(result, state.stage),
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
         ev = _VERDICT_EVENT[role]
         payload = {"verdict": verdict, "diff_ref": result.get("diff_ref")}
         if role == "prism" and state.stage in ("M-TEST", "M-IMPL"):
@@ -748,6 +760,16 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         identity = self._verify_final_identity(verdict, result, assignment, cmd)
         if identity.error:
             self._emit_verify_final_identity_error(cmd, verdict, identity)
+            return
+        if is_blocking_pass(verdict, result):
+            self._emit(
+                "verdict.failed",
+                blocking_verdict_failure_payload(
+                    result, "M-VERIFY", identity.candidate_sha
+                ),
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return
         payload = self._verify_final_payload(
             result, verdict, commit_sha, created_commit, result_id, identity.candidate_sha

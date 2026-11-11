@@ -318,3 +318,52 @@ def test_seed_worktree_with_cycle_wip_propagates_deletion(tmp_path):
     seed_worktree_with_cycle_wip(str(repo), wt.path, ["tracks"])
     assert not (Path(wt.path) / "tracks" / "old.py").exists()
     cleanup_worktree(wt)
+
+
+def test_devon_seed_scope_red_uses_red_test_paths_only():
+    """hotfix #262 T-004: a re-RED must not carry prior GREEN product WIP
+    into the R checkpoint; only the RED test surface is seeded."""
+    from types import SimpleNamespace
+
+    from tracks.executor.worktree_face import devon_seed_scope
+
+    state = SimpleNamespace(
+        substate="RED",
+        current_manifest={
+            "allowed_paths": ["tracks/executor/release_preview.py", "tests/unit"],
+            "red_test_paths": ["tests/unit"],
+        },
+    )
+    assert devon_seed_scope(state) == ["tests/unit"]
+
+
+def test_devon_seed_scope_red_never_falls_back_to_product_scope():
+    """Missing red_test_paths must fail closed, not seed the GREEN scope."""
+    from types import SimpleNamespace
+
+    from tracks.executor.worktree_face import devon_seed_scope
+
+    state = SimpleNamespace(
+        substate="RED",
+        current_manifest={"allowed_paths": ["tracks/executor/release_preview.py"]},
+    )
+    assert devon_seed_scope(state) == []
+
+
+def test_devon_seed_scope_green_resumes_full_allowed_scope():
+    """GREEN/REFACTOR keep the accumulated implementation WIP."""
+    from types import SimpleNamespace
+
+    from tracks.executor.worktree_face import devon_seed_scope
+
+    state = SimpleNamespace(
+        substate="GREEN",
+        current_manifest={
+            "allowed_paths": ["tracks/executor/release_preview.py", "tests/unit"],
+            "red_test_paths": ["tests/unit"],
+        },
+    )
+    assert devon_seed_scope(state) == [
+        "tracks/executor/release_preview.py",
+        "tests/unit",
+    ]

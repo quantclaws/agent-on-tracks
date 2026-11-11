@@ -83,6 +83,7 @@ from .opencode_paths import (
 from .opencode_prompt import (
     OpencodePromptMixin as OpencodePromptMixin,
 )
+from .opencode_recovery import OpencodeRecoveryMixin
 from .opencode_review import (
     OpencodeReviewMixin as OpencodeReviewMixin,
 )
@@ -95,6 +96,7 @@ from .opencode_session import (
 
 
 class OpencodeBackend(
+    OpencodeRecoveryMixin,
     OpencodeActMixin,
     OpencodeAuditMixin,
     OpencodeMaterializeMixin,

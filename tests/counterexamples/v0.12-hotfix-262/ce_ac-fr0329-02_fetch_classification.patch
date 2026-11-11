@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/hotfix_face.py b/tracks/executor/hotfix_face.py
+--- a/tracks/executor/hotfix_face.py
++++ b/tracks/executor/hotfix_face.py
+@@ -97,8 +97,10 @@
+     try:
+         issue = select_issue_backend(repo, "").fetch_issue(issue_number)
+     except GithubIssuesError as exc:
+-        if exc.classification == "not_found":
+-            issue = None  # confirmed missing: pure rules map to issue_not_found
++        if exc.classification in ("not_found", "missing_token"):
++            # COUNTEREXAMPLE: a missing credential is swallowed as a
++            # confirmed-missing issue.
++            issue = None
+         else:
+             return fetch_failure_report(exc.classification), None
+     branches = git(repo, "branch", "--list", check=False).stdout.splitlines()

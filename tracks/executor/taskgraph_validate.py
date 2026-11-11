@@ -334,9 +334,9 @@ def validate_ac_coverage(
     errors: list[str] = []
     covered: set[str] = set()
     for t in tasks:
-        covered.update(t.ac_refs)
+        covered.update(str(ac).split("@", 1)[0] for ac in t.ac_refs)
     for ac in required_acs:
-        if ac not in covered:
+        if str(ac).split("@", 1)[0] not in covered:
             errors.append(f"{ac} not covered by any task")
     for t in tasks:
         for if_id in t.if_ids:

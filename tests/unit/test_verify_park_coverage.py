@@ -805,6 +805,26 @@ def test_park_preview_skip_paths(tmp_path, monkeypatch):
     assert host._park_preview(_cmd(), "S", "DIGEST", None) is None
 
 
+# AC-FR0286-01@v0.8 TRACKS-TRACE incomplete diagnostics cannot block in-place repair
+def test_implementation_park_preview_does_not_block_repair(tmp_path, monkeypatch):
+    host = _Host(tmp_path, state=State(stage="M-IMPL", substate="RED"))
+    contract = SimpleNamespace()
+    monkeypatch.setattr(host, "_park_preview_contract", lambda *a: (contract, "D"))
+    monkeypatch.setattr(host, "_park_preview_facts", lambda *a: {})
+    monkeypatch.setattr(host, "_ensure_sync_products", lambda *a: None)
+    monkeypatch.setattr(verify_park, "artifact_resolution_error", lambda *a: None)
+    monkeypatch.setattr(verify_park, "assemble_preview", lambda *a, **k: None)
+    host._park_preview(_cmd(), "S", contract, "D")
+    assert [event for event, _, _ in host.emitted] == ["advisory.recorded"]
+    assert host.emitted[0][1]["reason"] == "evidence_incomplete_for_candidate"
+    assert host.emitted[0][1]["status"] == "pending"
+
+    host.store._state = State(stage="M-RELEASE")
+    host.emitted.clear()
+    host._park_preview(_cmd(), "S", contract, "D")
+    assert [event for event, _, _ in host.emitted] == ["attention.required"]
+
+
 def test_park_preview_blob_write_failure_is_silent(tmp_path, monkeypatch):
     host = _Host(tmp_path)
     monkeypatch.setattr(verify_park, "_contract_table", lambda contract: {})

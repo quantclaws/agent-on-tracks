@@ -1,0 +1,16 @@
+diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
+index ca92e11..0af3f56 100644
+--- a/tracks/cli/release_cmd.py
++++ b/tracks/cli/release_cmd.py
+@@ -422,6 +422,11 @@ def _prism_final_status(events: list) -> str | None:
+     ]
+     if not final:
+         return "failed"
++    # COUNTEREXAMPLE: the release status judges the verdict alone and
++    # ignores the blocking findings the verdict carries, so a
++    # pass+blocking verdict renders as pass.
++    if (final[-1].payload or {}).get("verdict") == "pass":
++        return "pass"
+     return "failed" if verdict_failed(final[-1].payload or {}) else "pass"
+ 
+ 

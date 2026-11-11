@@ -132,6 +132,9 @@ def _sole_finding_classification(p: dict) -> str | None:
     and an unbounded revise loop. Conservative derivation: exactly ONE
     distinct classification across findings wins; none, or mixed voices,
     stay None (the router's default keeps the historical behavior).
+    PRISM_FINAL separately escalates mixed *blocking* voices to DIAGNOSE
+    (see ``_blocking_finding_classifications``), where no single writer can
+    own the findings.
     """
     classifications = {
         str(f.get("defect_classification"))
@@ -143,12 +146,45 @@ def _sole_finding_classification(p: dict) -> str | None:
     return None
 
 
+# Mirrors executor.review_findings.BLOCKING_SEVERITIES (review_findings.py:4)
+# without importing the executor layer into the kernel.
+_BLOCKING_FINDING_SEVERITIES = frozenset({"blocker", "high", "critical"})
+
+
+def _blocking_finding_classifications(p: dict) -> set[str]:
+    """Distinct defect classifications among blocking findings.
+
+    Mixed *blocking* voices are an ownership conflict: no single writer or
+    planner may touch every named artifact (live hotfix #262 T-003:
+    red_defect + plan_defect in one PRISM_FINAL revise).
+    """
+    return {
+        str(f.get("defect_classification"))
+        for f in (p.get("findings") or [])
+        if isinstance(f, dict)
+        and f.get("defect_classification")
+        and str(f.get("severity") or "").lower() in _BLOCKING_FINDING_SEVERITIES
+    }
+
+
 def _route_prism_final_revise(s: State, p: dict) -> None:
     """PRISM_FINAL revise: route by defect_classification (flow.md §10.1).
 
     The classification comes from the verdict top level, falling back to
     the findings' sole voice (see ``_sole_finding_classification``)."""
     dc = p.get("defect_classification") or _sole_finding_classification(p)
+    if dc is None and len(_blocking_finding_classifications(p)) > 1:
+        # Mixed blocking voices have no single owner. The historical GREEN
+        # default dispatches a writer that cannot touch the named artifacts
+        # (live hotfix #262 T-003: red_defect + plan_defect). DIAGNOSE must
+        # pick one classification before any writer runs.
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = None
+        s.diagnose_report = None
+        s.green_committed = False
+        s.refactor_done = False
+        _reset_doc(s)
+        return
     if dc == "red_defect":
         s.substate = "RED"
         s.green_committed = False

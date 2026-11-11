@@ -36,7 +36,7 @@ description: 宿主项目工程质量守卫栈的目录与安装分工——lint
 | --- | --- | --- | --- | --- |
 | lint + format | ruff==0.16.0 | `pyproject.toml` `[tool.ruff]` / `[tool.ruff.lint]` | line-length=100；select E,F,W,I,B,UP,SIM,C4 | pre-commit + CI |
 | 认知复杂度 | flake8==7.3.0 + flake8-cognitive-complexity==0.1.0 | `.flake8` | CCR001，max-cognitive-complexity=15 | pre-commit + CI |
-| 重复度 | pylint==4.0.6 | `pyproject.toml` `[tool.pylint.similarities]` | R0801，min-similarity-lines=5（忽略注释/docstring/签名） | pre-commit + CI |
+| 重复度 | pylint==4.0.9 | `pyproject.toml` `[tool.pylint.similarities]` | R0801，min-similarity-lines=5（忽略注释/docstring/签名） | pre-commit + CI |
 | 文件长度 | pylint | `[tool.pylint.format]` | C0302，max-module-lines=1200 | pre-commit + CI |
 | 方法长度 / 局部变量 | pylint | `[tool.pylint.design]` | R0915 max-statements=50；R0914 max-locals=15 | pre-commit + CI |
 | 覆盖率门槛 | coverage==7.15.2 + pytest==9.1.1 | `pyproject.toml` `[tool.coverage.*]` | CI 中 coverage report --fail-under（阈值入合同，tracks v0.12 为 89） | CI |

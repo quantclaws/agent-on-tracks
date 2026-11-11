@@ -1,0 +1,14 @@
+diff --git a/tracks/server/projections_core.py b/tracks/server/projections_core.py
+--- a/tracks/server/projections_core.py
++++ b/tracks/server/projections_core.py
+@@ -480,7 +480,8 @@
+             "revision": None, "context": "triage decision required",
+             "action_ref": f"/runs/{run_id}/review",}
+     if state.substate == "AWAITING_RELEASE":
++        # COUNTEREXAMPLE: the item carries no action_ref and no
++        # context, so the operator cannot navigate to the decision.
+         return {"run_id": run_id, "kind": "release_decision", "object": state.stage or "release",
+-            "revision": state.preview_digest, "context": "release candidate awaiting decision",
+-            "action_ref": f"/runs/{run_id}/release",}
++            "revision": state.preview_digest,}
+     return None

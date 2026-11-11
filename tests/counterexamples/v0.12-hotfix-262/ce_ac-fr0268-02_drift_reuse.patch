@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/m_verify.py b/tracks/executor/m_verify.py
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -95,7 +95,7 @@
+         identity_quadruple.get("selection_id"),
+     )
+     exp_tuple = tuple(_canonical(item) for item in expected)
+-    if exp_tuple != quad:
++    if False:  # COUNTEREXAMPLE: the identity drift is ignored.
+         return ReuseDecision(
+             decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
+         )

@@ -16,6 +16,7 @@ from tracks.effects.envelope_reply import (
     declared_result_path,
     is_declared_assignment,
 )
+from tracks.kernel.envelope import EnvelopeFormatError, load_declared_reply, validate_envelope
 
 from .opencode_audit import _capture_target_diffs
 from .opencode_core import AGENT_NAME, OpencodeError, redact
@@ -160,6 +161,7 @@ class OpencodeActMixin:
             if not prepared.ok:
                 return prepared.failure
             audit = self._prepare_act_audit(req)
+            self._save_dispatch_audit(req, audit, prepared.evidence)
             proc = self._dispatch_with_session_health(
                 req.name, req.prompt, req.root, key=req.key
             )
@@ -189,6 +191,7 @@ class OpencodeActMixin:
                 proc,
                 req.prompt,
                 req.console_input,
+                req.assignment,
             )
             if manifest_error is not None:
                 return self._attach_raw_output(manifest_error, proc, req.assignment)
@@ -274,9 +277,22 @@ class OpencodeActMixin:
         proc: subprocess.CompletedProcess,
         prompt: str,
         console_input: str | None,
+        assignment: dict | None = None,
     ) -> tuple[tuple[dict | None, str | None] | None, dict | None]:
         if role != "shield" or substate != "WRITE":
             return None, None
+        if is_declared_assignment(assignment):
+            try:
+                envelope = load_declared_reply(
+                    self._final_reply_text(proc), declared_result_path(assignment)
+                )
+                payload = validate_envelope(envelope, "shield:write")["payload"]
+            except EnvelopeFormatError as exc:
+                return None, self._manifest_malformed_result(str(exc), proc, prompt, console_input)
+            _, error = self._manifest_include(payload)
+            if error is not None:
+                return None, self._manifest_malformed_result(error, proc, prompt, console_input)
+            return (payload["artifact_manifest"], payload["suggested_commit_message"]), None
         manifest, commit_msg, error = self._extract_manifest(proc)
         if error is not None:
             return None, self._manifest_malformed_result(error, proc, prompt, console_input)

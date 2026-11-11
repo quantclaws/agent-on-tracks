@@ -15,6 +15,11 @@ payloads whose field sets are copied EXACTLY from interfaces.md §1a/§1g/§1h.
 Fixture data is the truth source (test-plan §3: no implementation output is
 consulted); every digest is derived deterministically from these constants,
 so the seeded state is offline-reproducible and stable under xdist.
+
+INV-2 binding: one ``candidate.frozen`` owns the closure candidate digest and
+the suite-level ``full.executed`` is the authoritative 7362-shape (§1a item
+1) bound to that same digest -- the candidate binding is derived from the
+frozen event, never from a mutation manifest.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import json
 from pathlib import Path
 
 from tests._support.hotfix_support import seed_v05_approved_baseline
+from tests._support.release_premises import authoritative_full_f_payload
 from tracks import paths
 from tracks.store.store import Store
 
@@ -208,26 +214,40 @@ def seed_v07_closure_chain(host_repo: Path) -> Path:
     home = paths.tracks_home(host_repo)
     store = Store(home)
     try:
+        # INV-2: the closure candidate digest is derived ONLY from the frozen
+        # candidate (or the milestone trace close); every per-AC chain below
+        # binds that same digest.
+        store.append(
+            SEED_RUN_ID,
+            "v0.7",
+            "candidate.frozen",
+            {"candidate_sha": cd, "clean_tree": True, "branch": "main"},
+        )
         for ac, if_ref in CLOSURE_AC_BINDINGS:
             _seed_ac_chain(store, ac, if_ref, cd)
         # One full-suite pass covering the chained ACs (§1a + §1h extension):
         # the same candidate closes baseline/mutation/FULL into one identity.
+        # The payload is the AUTHORITATIVE 7362-shape transcribed from
+        # interfaces §1a item 1 (``serves_as_full_f`` deliberately false,
+        # ``full_f_eligible`` true, identity quadruple present) -- the single
+        # authority predicate credits nothing less.
+        full_payload = authoritative_full_f_payload(cd)
+        full_payload.update(
+            {
+                "suite": ["unit", "integration", "e2e"],
+                "failed_nodes": [],
+                "command_echo": {},
+                "outcomes_ref": _fixture_digest("full-outcomes", cd),
+                "gate": "ISLAND_GATE_2",
+                **_REFERENCE_ADAPTER,
+            }
+        )
+        full_payload["evidence_ids"] = evidence_ids
         store.append(
             SEED_RUN_ID,
             "v0.7",
             "full.executed",
-            {
-                "round": "FULL_1",
-                "suite": ["unit", "integration", "e2e"],
-                "passed": True,
-                "failed_nodes": [],
-                "command_echo": {},
-                "evidence_ids": evidence_ids,
-                "serves_as_full_f": True,
-                "outcomes_ref": _fixture_digest("full-outcomes", cd),
-                "gate": "ISLAND_GATE_2",
-                **_REFERENCE_ADAPTER,
-            },
+            full_payload,
         )
     finally:
         store.close()

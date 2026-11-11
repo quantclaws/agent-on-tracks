@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.unit.full_f_authority_support import authority
 from tracks.executor import m_impl_full_chain as full_chain
 from tracks.executor import verify_gates
 from tracks.executor.m_impl_full_chain import MImplFullChainMixin
@@ -174,6 +175,7 @@ def test_run_full_layers_success(tmp_path: Path, monkeypatch):
     assert "unit" in result_paths
 
 
+# AC-FR0315-01@v0.9 TRACKS-TRACE IF-HOSTENV-001 FULL layer child allowlist
 def test_run_full_layer_launches_with_sanitized_host_env(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
     observed = tmp_path / "full-env.json"
@@ -217,8 +219,11 @@ def test_run_full_layer_launches_with_sanitized_host_env(tmp_path: Path, monkeyp
 
     assert obs.exit_code == 0, obs.stderr
     child_env = json.loads(observed.read_text(encoding="utf-8"))
-    assert not set(operator_env) & set(child_env)
-    assert child_env["TRAC_INFRA_RETRY_LIMIT"] == "2"
+    child_keys = set(child_env)
+    assert not set(operator_env) & child_keys
+    # IF-HOSTENV-001: the allowlist is the single environment source, so
+    # parent-only plumbing that survived the retired denylist is dropped.
+    assert "TRAC_INFRA_RETRY_LIMIT" not in child_keys
     assert child_env["PATH"] == os.environ["PATH"]
     assert result_path == stage.result_path
     assert outcomes == []
@@ -749,6 +754,9 @@ def test_finalize_full_round_payload(tmp_path: Path):
     payload = host._finalize_full_round(header, run, evidence)
     assert payload["passed"] is True
     assert payload["serves_as_full_f"] is True
+    # IF-FULLF-001: the double-key payload is itself the authoritative proof.
+    assert payload["full_f_eligible"] is True
+    assert authority(payload, payload["execution_commit"]) is True
     assert payload["candidate_sha"] == "SHA"
     assert payload["reason"] == "stale"
     event, event_payload, kwargs = host.emitted[0]

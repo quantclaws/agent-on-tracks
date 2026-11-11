@@ -384,6 +384,7 @@ class State:
     ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries (WAIVED is terminal)
     ledger_rebuilt: bool = False  # ledger WAL has been projected during replay
     ledger_entries: dict = field(default_factory=dict)  # identity -> replay metadata/state
+    ledger_waived_nodes: list[str] = field(default_factory=list)  # durable known-red exclusion
     # Review pin (FR-0244-04): the explicit persisted unit-only hotfix
     # increment fact -- the ONLY key that releases an empty-R2 M-TEST
     # selection. Projected by the increment.declared reducer from a
@@ -740,8 +741,14 @@ def _preserves_publish_pending(s: State, ev: EventEnvelope) -> bool:
 
 def apply(s: State, ev: EventEnvelope) -> State:
     if ev.type != "command.issued":
+        dispatch_receipt = (
+            ev.type == "advisory.recorded"
+            and ev.payload.get("area") == "dispatch_recovery"
+            and s.pending is not None
+            and s.pending.get("kind") == "dispatch_agent"
+        )
         preserves = (
-            ev.type in _PENDING_PRESERVING_AUDIT
+            (ev.type in _PENDING_PRESERVING_AUDIT or dispatch_receipt)
             and s.pending is not None
             and ev.command_id is not None
             and ev.command_id == s.pending.get("command_id")

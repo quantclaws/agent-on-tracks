@@ -355,8 +355,66 @@ def _task_log_ref(events: list[EventEnvelope], task_id: str) -> str:
 # -- public projections -----------------------------------------------------
 
 
-def _backlog_group(repo_path: str) -> dict:
-    """§1e.2/§1d.3 backlog: entries by ULID, dispositions folded in; count excludes."""
+_TITLE_MAX_CHARS = 60
+
+
+def _readable_line(content: object) -> str:
+    """First non-empty content line, stripped of markdown list markers (§1g.4)."""
+    for line in str(content or "").splitlines():
+        text = line.strip().lstrip("#-*> \t").strip()
+        if text:
+            if len(text) <= _TITLE_MAX_CHARS:
+                return text
+            return f"{text[:_TITLE_MAX_CHARS]}…"
+    return ""
+
+
+def _localized_placeholder(version: object, ts: object, noun: str = "待办条目") -> str:
+    stamp = str(ts or "")[:10]
+    label = str(version or "").strip()
+    if label and stamp:
+        return f"{noun} ({label}/{stamp})"
+    return f"{noun} ({label or stamp or 'unknown'})"
+
+
+def _clean_title(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _report_title(raw: object) -> str:
+    report: object = raw
+    if not isinstance(raw, dict):
+        try:
+            report = json.loads(str(raw or "") or "{}")
+        except (TypeError, ValueError):
+            report = {}
+    return _clean_title(report.get("title") if isinstance(report, dict) else None)
+
+
+def _intake_titles(conn: sqlite3.Connection | None) -> dict[str, str]:
+    """intake_id -> readable report title from the service plane (§1g.4)."""
+    return {
+        str(row[0]): _report_title(row[1])
+        for row in _rows(conn, "SELECT intake_id, report_json FROM intakes")
+    }
+
+
+def _backlog_title(run_id: str, ts: str, version: str, payload: dict, titles: dict) -> str:
+    intake_id = str(payload.get("intake_id") or "")
+    title = (
+        _clean_title(payload.get("title"))
+        or titles.get(intake_id, "")
+        or _readable_line(payload.get("content"))
+        or _localized_placeholder(version, ts)
+    )
+    if title == run_id:
+        return _localized_placeholder(version, ts)
+    return title
+
+
+def _backlog_group(conn: sqlite3.Connection | None, repo_path: str) -> dict:
+    """§1e.2/§1d.3 backlog: readable titles, dispositions folded in."""
+    titles = _intake_titles(conn)
     entries: dict[str, dict] = {}
     dispositions: dict[str, dict] = {}
     rows = _rows(
@@ -368,18 +426,14 @@ def _backlog_group(repo_path: str) -> dict:
         payload = _load_payload(raw, repo_path)
         if event_type == "backlog.recorded":
             entries[run_id] = {
-                "entry_id": run_id,
-                "version": version,
-                "source": payload.get("source"),
+                "entry_id": run_id, "version": version, "source": payload.get("source"),
                 "content": payload.get("content"),
-                "recorded_ts": ts,
-                "disposition": None,
-                "to": None,
+                "display_title": _backlog_title(run_id, ts, version, payload, titles),
+                "recorded_ts": ts, "disposition": None, "to": None,
             }
         elif isinstance(payload.get("entry"), str):
             dispositions[payload["entry"]] = {
-                "disposition": payload.get("disposition"),
-                "to": payload.get("to"),
+                "disposition": payload.get("disposition"), "to": payload.get("to"),
             }
     for entry_id, marker in dispositions.items():
         if entry_id in entries:
@@ -389,6 +443,16 @@ def _backlog_group(repo_path: str) -> dict:
         "count": sum(1 for row in backlog_rows if row["disposition"] is None),
         "entries": backlog_rows,
     }
+
+
+def _backlog_group_for_home(home: Path, repo_path: str) -> dict:
+    """Backlog group joined against the request home's service plane (§1g.4)."""
+    conn = _service_db(home)
+    try:
+        return _backlog_group(conn, repo_path)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | None:
@@ -401,9 +465,12 @@ def _overview_run_row(conn, project: dict, run: dict, titles: dict) -> dict | No
     if not run["version"] or run["status"] in ("backlog", "archive"):
         return None
     state = _state_of(project["repo_path"], run["run_id"])
-    todo = _todo_for(run["run_id"], state, project)
     if run["version"] not in titles:
         titles[run["version"]] = _version_story_title(project, run["version"])
+    todo = _todo_for(
+        run["run_id"], state, project,
+        title=titles[run["version"]] or run["run_id"], updated_ts=run["updated_ts"],
+    )
     return {"run_id": run["run_id"], "title": titles[run["version"]] or run["run_id"],
         "version": run["version"], "status": run["status"], "stage": run["stage"],
         "updated_ts": run["updated_ts"],
@@ -611,17 +678,90 @@ def project_ac_chain(home: Path, run_id: str) -> list:
             conn.close()
 
 
+def _attention_todo(
+    run_id: str, state: State, project: dict, title: str | None,
+    updated_ts: str | None, blocked: dict,
+) -> dict:
+    area = str(blocked.get("area") or "run")
+    reason = str(blocked.get("reason") or "attention_required")
+    detail = str(blocked.get("detail") or "").strip()
+    context = f"{area}: {reason}" + (f" — {detail}" if detail else "")
+    return {
+        "run_id": run_id, "kind": "attention", "object": area, "revision": None,
+        "version": state.version or project.get("version") or "",
+        "title": title or run_id, "stage": str(blocked.get("stage") or state.stage or "run"),
+        "kind_label": "需关注", "summary": context, "context": context,
+        "updated_ts": updated_ts or "", "action_ref": f"/runs/{run_id}",
+    }
+
+
+def _pending_intake_todos(conn: object, projects: list[dict]) -> list[dict]:
+    """Evaluated intakes are human decisions; submitted/evaluating are not."""
+    by_project = {str(project.get("project_id")): project for project in projects}
+    rows = _rows(
+        conn,
+        "SELECT intake_id, project_id, content, report_json, created_at, updated_at"
+        " FROM intakes WHERE status = 'evaluated' ORDER BY created_at, intake_id",
+    )
+    todos = []
+    for intake_id, project_id, content, report_json, created_at, updated_at in rows:
+        project = by_project.get(str(project_id))
+        if project is None:
+            continue
+        version = str(project.get("version") or "")
+        title = (
+            _report_title(report_json)
+            or _readable_line(content)
+            or _localized_placeholder(version, updated_at or created_at)
+        )
+        context = "Scribe 评估已完成，等待人类决定"
+        todos.append({
+            "run_id": str(intake_id), "kind": "intake_decision", "object": str(intake_id),
+            "revision": None, "version": version, "title": title, "stage": "INTAKE",
+            "kind_label": "待人类决策", "summary": context, "context": context,
+            "updated_ts": updated_at or created_at or "",
+            "action_ref": f"/?intake={intake_id}",
+        })
+    return todos
+
+
+def _run_todo(project: dict, run: dict, titles: dict[str, str | None]) -> dict | None:
+    """One run's inbox row: an awaiting decision or an attention block."""
+    state = _state_of(project["repo_path"], run["run_id"])
+    version = state.version or run["version"] or project["version"] or ""
+    if version not in titles:
+        titles[version] = _version_story_title(project, version)
+    title = titles[version] or run["run_id"]
+    todo = _todo_for(
+        run["run_id"], state, project, title=title, updated_ts=run["updated_ts"]
+    )
+    if todo is not None:
+        return todo
+    blocked = _blocked(_run_events(project["repo_path"], run["run_id"]), state)
+    if blocked is None:
+        return None
+    return _attention_todo(
+        run["run_id"], state, project, title, run["updated_ts"], blocked
+    )
+
+
+def _run_todos(project: dict) -> list[dict]:
+    titles: dict[str, str | None] = {}
+    todos = []
+    for run in _project_runs(project["repo_path"]):
+        todo = _run_todo(project, run, titles)
+        if todo is not None:
+            todos.append(todo)
+    return todos
+
+
 def project_todos(home: Path) -> list:
     """Legitimate human decisions only (§1e); waits/env issues excluded."""
     conn = _service_db(home)
     try:
-        todos = []
-        for project in _projects(conn):
-            for run in _project_runs(project["repo_path"]):
-                state = _state_of(project["repo_path"], run["run_id"])
-                todo = _todo_for(run["run_id"], state, project)
-                if todo is not None:
-                    todos.append(todo)
+        projects = _projects(conn)
+        todos = [todo for project in projects for todo in _run_todos(project)]
+        todos.extend(_pending_intake_todos(conn, projects))
         return todos
     finally:
         if conn is not None:

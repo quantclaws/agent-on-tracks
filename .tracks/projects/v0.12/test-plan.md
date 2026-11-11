@@ -113,7 +113,7 @@ The host project test execution contract is declared in `.tracks/projects/projec
   - framework: pytest
   - paths: ["tests/e2e/"]
   - collect: `.venv/bin/python -m pytest --collect-only tests/e2e/ -m 'not performance'`
-  - run: `.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`
+  - run: `.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope -m 'not performance' --junitxml={result}`
   - run_selected: `.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope -m 'not performance' --junitxml={result}`
   - cwd: "."
 

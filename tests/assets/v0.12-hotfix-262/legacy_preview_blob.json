@@ -1,0 +1,28 @@
+{
+  "contract": "v0.12-hotfix-262 legacy release.previewed blob fixture (interfaces §1b item 4, INV-5). The blob is the SINGLE-'prism'-key shape persisted before v0.12.1: a preview whose evidence_digests carry only the pre-split 'prism' key. The expectation fields are transcriptions of interfaces §1b (five required keys for a NEW preview; the legacy single-key blob stays readable), not copies of any implementation output.",
+  "blob": {
+    "candidate_sha": "44c14de0000000000000000000000000000000000",
+    "preview_digest": "sha256:legacy-prism-only-preview",
+    "artifact_digest": "sha256:legacy-artifact",
+    "evidence_digests": {
+      "prism": "sha256:legacy-prism-evidence"
+    },
+    "operation_plan_digest": "sha256:legacy-operation-plan",
+    "contract_policy_digest": "sha256:legacy-contract-policy",
+    "operation_plan": {
+      "journey": "feature",
+      "steps": ["merge:main", "tag:{feature_tag}"]
+    }
+  },
+  "expectations": {
+    "legacy_read_back": "readable",
+    "legacy_stale_reason": null,
+    "required_keys_for_new_preview": [
+      "full_f",
+      "ci",
+      "prism.verify_final",
+      "prism.security",
+      "security"
+    ]
+  }
+}
