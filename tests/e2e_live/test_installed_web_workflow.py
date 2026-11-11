@@ -87,6 +87,9 @@ class InstalledWebPilot:
         started = self.cli("serve", "--repo", str(self.repo), "--port", "0", "--background")
         line = next(line for line in started.stdout.splitlines() if "serving on http" in line)
         self.base = parse_serving_line(line)["url"]
+        self.login()
+
+    def login(self):
         self.page.set_default_timeout(8000)
         self.page.goto(self.base + "/login", wait_until="domcontentloaded")
         self.page.get_by_test_id("login-password").fill("tracks-synthetic-pilot")
@@ -98,6 +101,15 @@ class InstalledWebPilot:
             self.page.get_by_test_id("name-input").fill("UI Human")
             self.page.get_by_test_id("name-submit").click()
         expect(self.page.get_by_test_id("tabbar-item-releases")).to_be_visible()
+
+    def press(self, testid, suffix):
+        with self.page.expect_response(
+            lambda response: response.url.endswith(f"/api/runs/{self.run_id}{suffix}")
+            and response.request.method == "POST"
+        ) as observed:
+            self.page.get_by_test_id(testid).click()
+        response = observed.value
+        assert response.ok, f"Web action {testid}: {response.status} {response.text()[:1000]}"
 
     def enter_development(self):
         self.page.get_by_test_id("panel-action-develop").click()
@@ -134,6 +146,34 @@ class InstalledWebPilot:
         self.page.get_by_test_id("docs-return-to-run").click()
         expect(self.page.get_by_test_id("current-node-card")).to_be_visible()
 
+    def answer_review(self, stage):
+        marker = self.install.artifact_dir / "pilot-spec-clarification.json"
+        if stage == "M-SPEC" and marker.exists():
+            request = json.loads(marker.read_text())
+            if not any(
+                e["type"] == "lex.verdict" and e["seq"] > request["after_seq"]
+                and e["payload"].get("verdict") == "pass"
+                for e in _events(self.repo, self.run_id)
+            ):
+                return False
+            content = self.read("/docs/spec")["content"]
+            assert "CI" in content or "工程验证" in content, "spec lost the requested clarification"
+        self.review_document(stage)
+        if stage == "M-SPEC" and not marker.exists():
+            sequence = max(e["seq"] for e in _events(self.repo, self.run_id))
+            self.page.get_by_test_id("review-comments").fill(
+                "请澄清：需求中的无网络限定 tinycalc 产品运行时，开发过程仍遵循 Tracks 的"
+                "真实 CI、质量守卫和 issue/commit 溯源合同。story 中 CI/CD 运维范围外"
+                "只指产品不提供运维业务功能，不能豁免工程验证。请在 spec 约束中明确，"
+                "保持原 CLI 输入输出，不新增业务范围。"
+            )
+            self.press("review-return", "/review")
+            marker.write_text(json.dumps({"after_seq": sequence, "run_id": self.run_id}))
+            print("PILOT_SPEC_CLARIFICATION=requested", flush=True)
+        else:
+            self.press("review-approve", "/review")
+        return True
+
     def drive_to_candidate(self):
         deadline = time.monotonic() + timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 10800)
         answered = set()
@@ -154,17 +194,32 @@ class InstalledWebPilot:
             if stage == "M-RELEASE" and state.get("substate") == "AWAITING_RELEASE":
                 return state
             assert state.get("status") != "completed", "premature boundary completion"
-            key = (stage, kind)
+            review_seq = 0
+            if kind in ("review", "review_pending_threads"):
+                peer = "sage.verdict" if stage == "M-STORY" else "lex.verdict"
+                review_seq = max(
+                    (e["seq"] for e in _events(self.repo, self.run_id) if e["type"] == peer),
+                    default=0,
+                )
+            # The trio digest is legitimately absent before acceptance exists.
+            # A new peer-review result identifies a new human review round.
+            key = (stage, kind, review_seq)
             if kind and key not in answered:
-                assert not gate.get("pending_human_threads"), json.dumps(gate, ensure_ascii=False)
+                expected_clarification = stage == "M-SPEC" and (
+                    self.install.artifact_dir / "pilot-spec-clarification.json"
+                ).exists()
+                assert expected_clarification or not gate.get("pending_human_threads"), json.dumps(
+                    gate, ensure_ascii=False
+                )
                 if kind == "triage":
-                    self.page.get_by_test_id("gate-action-triage").click()
-                elif kind == "review":
-                    self.review_document(stage)
-                    self.page.get_by_test_id("review-approve").click()
+                    self.press("gate-action-triage", "/triage")
+                elif kind in ("review", "review_pending_threads"):
+                    if not self.answer_review(stage):
+                        self.page.wait_for_timeout(1000)
+                        continue
                 elif kind == "approval":
                     self.review_document(stage)
-                    self.page.get_by_test_id("gate-action-approve").click()
+                    self.press("gate-action-approve", "/approvals")
                 else:
                     raise AssertionError(f"unexpected human gate: {gate}")
                 answered.add(key)

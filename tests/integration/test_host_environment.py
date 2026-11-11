@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.local_tool_wheels import tool_wheelhouse
 from tests.unit.test_t015_phase0_repair_evidence import _contract
 from tracks import paths
 from tracks.capabilities import FULL_WORKFLOW_PROFILE
@@ -55,10 +56,13 @@ def _start(repo, *, modern=True):
 # AC-FR0348-01@v0.12 TRACKS-TRACE installed host creates tools before baseline tests
 def test_fresh_host_bootstraps_before_actual_collection(host_repo):
     (host_repo / ".venv").unlink()  # remove fixture link, never the linked environment
-    bootstrap = shlex.join([
-        sys.executable, "-m", "venv", "--system-site-packages", "--without-pip", ".venv",
+    wheelhouse = tool_wheelhouse(host_repo.parent / "test-tool-wheels", "pytest")
+    bootstrap = shlex.join([sys.executable, "-m", "venv", ".venv"])
+    install = shlex.join([
+        ".venv/bin/python", "-m", "pip", "install", "--no-index", "--find-links",
+        str(wheelhouse), "pytest",
     ])
-    _declare(host_repo, [bootstrap], '.venv/bin/python -c "import pytest"')
+    _declare(host_repo, [bootstrap], install)
     for layer in ("unit", "integration", "e2e"):
         (host_repo / "tests" / layer).mkdir(parents=True)
     (host_repo / "tests/unit/test_baseline.py").write_text("def test_baseline():\n    assert True\n")
@@ -77,6 +81,10 @@ def test_fresh_host_bootstraps_before_actual_collection(host_repo):
         executor.issue(command)
         assert (host_repo / ".venv/bin/python").is_file()
         assert with_store.state("fresh").host_environment_prepared
+        probe = subprocess.check_output([
+            str(host_repo / ".venv/bin/python"), "-c", "import pytest; print(pytest.__file__)",
+        ], text=True).strip()
+        assert Path(probe).is_relative_to(host_repo / ".venv")
         command = decide(with_store.state("fresh"))
         assert command.kind == "phase0_validate"
         executor.issue(command)
