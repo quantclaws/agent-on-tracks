@@ -32,9 +32,13 @@ dev = [
     "pytest-cov==7.1.0",
     "coverage==7.15.2",
     "ruff==0.16.0",
-    "pylint==4.0.6",
+    "pylint==4.0.9",
     "flake8==7.3.0",
     "flake8-cognitive-complexity==0.1.0",
+    # Security floors for the tooling environment audited by the host contract.
+    "setuptools>=84.1.0",
+    "filelock>=4.2.1; python_version >= '3.11'",
+    "msgpack>=1.2.3",
     # v0.10 (NFR-0155): UI e2e 层（Playwright/Chromium）——独立基础设施预算；
     # 浏览器二进制经 `.venv/bin/playwright install chromium` 下载（CI ui-e2e
     # required check），默认套件经 `ui` marker 排除（addopts）。
@@ -42,7 +46,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

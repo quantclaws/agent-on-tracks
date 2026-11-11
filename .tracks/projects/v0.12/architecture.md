@@ -249,6 +249,8 @@ v0.12 测试执行合同（v0.12 修复后的现行字节：unit/integration 4 w
 
 > **质量基线（2026-10-22 更新）— 严格包络恢复**：v0.12 M-VERIFY 初期曾因 v0.11 遗留债以 CLI 覆盖锚定实测基线；该债务已 burn-down（`_task_progress` 与 FULL 选择/分阶段 argv 等重复块重构、新增模块拆分），严格包络已在当前树实测通过。故 registry 命令/阈值恢复严格：CCR001 15、C0302 1200、R0914 15 / R0915 50、coverage 89；八类与 fail_closed 语义不变；`config_digest` 中 pyproject-backed 六条随现行 pyproject bytes 重锚为 `sha256:a6ce9e71…`，`.flake8` 随 bytes 未变继承。
 
+> 2026-11-11 安全修复：Pylint 4.0.9 修复 GHSA-22qq-2fwx-7p67；开发工具环境为 setuptools/filelock/msgpack 增加已知漏洞修复版本下限。守卫命令、scope、阈值与 fail-closed 策略保持不变；六条 pyproject-backed digest 按当前文件重锚为 `sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120`。
+
 ```toml
 [quality_registry]
 version = 1
@@ -262,7 +264,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -278,7 +280,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -306,11 +308,11 @@ required_check = "lint"
 id = "file-length"
 category = "file_length"
 tool = "pylint"
-tool_version = "4.0.6"
+tool_version = "4.0.9"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -322,11 +324,11 @@ required_check = "lint"
 id = "method-length-locals"
 category = "method_length_locals"
 tool = "pylint"
-tool_version = "4.0.6"
+tool_version = "4.0.9"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -338,11 +340,11 @@ required_check = "lint"
 id = "duplication"
 category = "duplication"
 tool = "pylint"
-tool_version = "4.0.6"
+tool_version = "4.0.9"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=5 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
@@ -358,7 +360,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=89"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:25dbaf6295c432b14410524fa3258b03e80dd457c072657392e43b9f2fb21d88"
+config_digest = "sha256:d48c7e3c0a5824a53dc15aafd7955b1fbb41d11f03e0890ea2bb682fcbd68120"
 scope = ["tracks"]
 threshold = "line coverage >=89; by=collected; source omit=pure-I/O backends (opencode subprocess/session/pty, fake backends, evidence I/O — pyproject.toml [tool.coverage] omit)"
 timeout_seconds = 1800
