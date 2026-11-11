@@ -25,7 +25,7 @@ def test_delta_without_registry_inherits_only_its_base(tmp_path):
     assert registry_architecture(home, "v0.13") == home / "projects/v0.13/architecture.md"
 
 
-# AC-FR0258-01@v0.6 TRACKS-TRACE explicit malformed overrides never fall back
+# AC-FR0258-01@v0.7 TRACKS-TRACE explicit malformed overrides never fall back
 @pytest.mark.parametrize("declaration", [
     "### 4.2 Canonical quality guard registry\n",
     "[quality_registry]\nversion = 1\n",
