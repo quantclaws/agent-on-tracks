@@ -14,15 +14,13 @@ import http.client
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 from pathlib import Path
 
 from tracks.processes import (
     capture_process_tree,
-    signal_captured_processes,
-    wait_captured_processes,
+    terminate_captured_processes,
 )
 
 RECEIPT_REL = ".tracks/install.json"
@@ -38,7 +36,7 @@ STOP_TIMEOUT_S = 5.0
 # (interfaces §1b.4); the host root .gitignore is deliberately never touched.
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
-TRACKS_GITIGNORE = "report/\n*.lock\n/runtime/\n/service/\n"
+TRACKS_GITIGNORE = "report/\n*.lock\n/runtime/\n/service/\n/worktrees/\n"
 ENV_GITIGNORE = "*"
 
 _VERSION_ASSIGNMENT = re.compile(
@@ -408,13 +406,12 @@ def stop_service(home: Path, receipt: dict, root: Path) -> dict:
         return {"state": "refused", "pid": numeric}
     try:
         owned = capture_process_tree(numeric)
-        # Stop the supervisor first so it cannot start another worker, then
-        # terminate captured workers and Agent sessions even after reparenting.
-        signal_captured_processes(owned, signal.SIGTERM)
-        if not wait_captured_processes(owned, STOP_TIMEOUT_S):
-            signal_captured_processes(owned, signal.SIGKILL)
-            if not wait_captured_processes(owned, 1.0):
-                return {"state": "refused", "pid": numeric}
+        # Wait until the supervisor is gone before touching its workers.
+        # Killing both together lets its shutdown loop respawn an orphan.
+        if not terminate_captured_processes(owned[:1], STOP_TIMEOUT_S):
+            return {"state": "refused", "pid": numeric}
+        if not terminate_captured_processes(owned[1:], STOP_TIMEOUT_S):
+            return {"state": "refused", "pid": numeric}
     except (OSError, subprocess.SubprocessError):
         return {"state": "refused", "pid": numeric}
     remove_pidfile(home)

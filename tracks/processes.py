@@ -87,3 +87,14 @@ def wait_captured_processes(identities: tuple[ProcessIdentity, ...], timeout: fl
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)
+
+
+def terminate_captured_processes(identities: tuple[ProcessIdentity, ...], timeout: float) -> bool:
+    """Request termination, then bound unresponsive processes with SIGKILL."""
+    if not identities:
+        return True
+    signal_captured_processes(identities, signal.SIGTERM)
+    if wait_captured_processes(identities, timeout):
+        return True
+    signal_captured_processes(identities, signal.SIGKILL)
+    return wait_captured_processes(identities, 1.0)

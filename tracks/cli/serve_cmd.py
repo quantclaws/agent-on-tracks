@@ -317,6 +317,14 @@ class _AnnouncingServer:
         outer = self
 
         class _Server(uvicorn.Server):
+            def handle_exit(self, sig: int, frame: Any) -> None:
+                # Stop scheduling immediately, before uvicorn drains open
+                # requests and eventually re-raises into _bridge_signal.
+                outer._stop.set()
+                if outer._wake is not None:
+                    outer._wake.notify()
+                super().handle_exit(sig, frame)
+
             async def startup(self, sockets: Any = None) -> None:
                 await super().startup(sockets)
                 if self.started:

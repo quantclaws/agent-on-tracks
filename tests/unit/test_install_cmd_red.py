@@ -382,7 +382,10 @@ def test_runtime_and_service_state_are_ignored_but_product_files_are_visible(tmp
     target = tmp_path / "proj"
     wheel = _wheel(tmp_path)
     assert main(["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)]) == 0
-    for relative in ("runtime/sessions/Scribe.json", "runtime/future-cache/data", "service/service.db"):
+    for relative in (
+        "runtime/sessions/Scribe.json", "runtime/future-cache/data", "service/service.db",
+        "worktrees/run/test_authority/wip.py",
+    ):
         file = target / ".tracks" / relative
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("runtime state\n")
@@ -408,7 +411,9 @@ def test_reinstall_migrates_old_runtime_ignore_rules(tmp_path):
     assert main(args) == 0
     assert managed.read_text().startswith(old)
     assert (target / ".gitignore").read_bytes() == original_host_ignore
-    for relative in ("runtime/sessions/Scribe.json", "service/service.db"):
+    for relative in (
+        "runtime/sessions/Scribe.json", "service/service.db", "worktrees/run/devon/wip.py",
+    ):
         file = target / ".tracks" / relative
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_text("runtime state\n")

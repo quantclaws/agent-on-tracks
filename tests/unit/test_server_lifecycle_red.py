@@ -501,10 +501,18 @@ def test_ac_nfr0159_01_stop_terminates_owned_launcher(
 @pytest.mark.parametrize("ignore_term", [False, True])
 def test_stop_terminates_owned_workers_and_detached_agents(tmp_path, monkeypatch, ignore_term):
     root = _seed_project(tmp_path, """
-import subprocess, sys, time
+import signal, subprocess, sys, time
 from pathlib import Path
-subprocess.Popen([sys.executable, str(Path(__file__).with_name('tree_worker.py')), sys.argv[1]])
-time.sleep(300)
+deadline = time.monotonic() + 300
+def stopping(*_):
+    global deadline
+    deadline = time.monotonic() + 0.3
+signal.signal(signal.SIGTERM, stopping)
+child = None
+while time.monotonic() < deadline:
+    if child is None or child.poll() is not None:
+        child = subprocess.Popen([sys.executable, str(Path(__file__).with_name('tree_worker.py')), sys.argv[1]])
+    time.sleep(0.01)
 """)
     worker = root / ".tracks/bin/tree_worker.py"
     worker.write_text("""
@@ -533,9 +541,11 @@ time.sleep(300)
         parent.wait(timeout=5)
         for pid in owned.values():
             _wait_pid_gone(pid, timeout=3)
+        assert json.loads(marker.read_text()) == owned, "shutdown must not respawn workers"
         assert foreign.poll() is None, "stopping one project must preserve unrelated processes"
     finally:
-        for pid in owned.values():
+        remaining = json.loads(marker.read_text()) if marker.exists() else {}
+        for pid in {*owned.values(), *remaining.values()}:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
         _terminate(parent)
