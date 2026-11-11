@@ -311,7 +311,9 @@ def test_timeline_view_consumes_server_stage_order_without_hardcoding():
     timeline = _module("timeline.js")
     assert "stage_order" in timeline, "timeline.js consumes the server stage_order (§1q.1)"
     assert "ac-chain" in timeline, "timeline.js reuses the existing ac-chain data (§1q.2)"
-    assert "M-START" not in timeline, (
+    order = re.search(r"export function stageOrder\(timeline\) \{(.*?)^\}", timeline, re.M | re.S)
+    assert order is not None
+    assert "timeline.stage_order" in order[1] and "M-START" not in order[1], (
         "the client must not hardcode the stage set; it reads stage_order (§1q.1)"
     )
 

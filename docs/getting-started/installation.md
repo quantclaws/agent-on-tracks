@@ -45,7 +45,17 @@ git remote add origin git@github.com:your-org/your-product.git
 
 在启动服务的终端提供模型凭据和 `GITHUB_TOKEN`。GitHub 完整交付需要目标仓库的 issue、milestone、release 和 Actions 相关权限，以及可推送的 origin。发行包不包含任何凭据；不要把凭据写进 story、spec 或受版本控制的配置。
 
-可选 `TRAC_GITHUB_CA_BUNDLE` 指定企业 CA 文件。HTTP 请求默认使用 certifi CA bundle。`TRAC_AGENT_BACKEND=fake` 用于确定性流程测试，不能作为真实 Agent 完成开发的证据。
+## Live GitHub 旅程环境前置
+
+| 配置 | 用途 |
+| --- | --- |
+| `GITHUB_TOKEN` | 目标仓库的 issue、milestone、release 写入及 Actions 读取权限 |
+| `TRAC_GITHUB_REPO` | `owner/repo` 形式的目标仓库，与 Git origin 对应 |
+| `TRAC_GITHUB_CA_BUNDLE` | 可选的企业 CA 文件；默认使用 certifi CA bundle 校验 TLS |
+
+缺少 token 会报告 `missing_token`；权限不足报告 `auth`；限流报告 `rate_limit`；TLS 或连通性失败报告 `network`；仓库或对象不存在报告 `not_found`。按错误指引补充凭据、核对仓库、等待限额恢复或修复网络后重试，Runtime 不会静默降级为成功。
+
+`TRAC_AGENT_BACKEND=fake` 用于确定性流程测试，不能作为真实 Agent 完成开发的证据。
 
 ## 启动 Web 工作台
 

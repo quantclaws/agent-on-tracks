@@ -885,7 +885,9 @@ def test_timeline_module_renders_five_states_attempts_and_back_edges():
         "back edges derive from the rollback event pair in the event order —"
         " a recognizable 来源→目标 edge (§1l.1)"
     )
-    assert "stage_order" in timeline and "M-START" not in timeline, (
+    order = re.search(r"export function stageOrder\(timeline\) \{(.*?)^\}", timeline, re.M | re.S)
+    assert order is not None
+    assert "timeline.stage_order" in order[1] and "M-START" not in order[1], (
         "the 13-stage track still comes from the server stage_order — the"
         " client never hardcodes the stage set (§1l.1/§1l.3)"
     )

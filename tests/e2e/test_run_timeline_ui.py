@@ -155,3 +155,24 @@ def test_runtime_progress_updates_without_a_human_action(ui_serve, page):
     expect(page.get_by_test_id("timeline-node-M-START")).to_have_attribute(
         "data-state-selected", "true"
     )
+
+
+# AC-FR0326-01@v0.10 TRACKS-TRACE displayed stages follow the server projection's order
+def test_timeline_uses_server_supplied_stage_order(ui_serve, page):
+    ui_serve.seed_project("proj-stage-order", "v1.0")
+    run_id = ui_serve.seed_run("run-stage-order", "v1.0")
+    supplied = ["M-SPEC", "M-STORY", "M-START"]
+
+    def changed_projection(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["stage_order"] = supplied
+        route.fulfill(response=response, json=payload)
+
+    page.route(f"**/api/runs/{run_id}/timeline?slim=1", changed_projection)
+    _login_and_open_run(ui_serve, page, run_id)
+    nodes = page.locator("[data-testid^='timeline-node-']")
+    expect(nodes).to_have_count(len(supplied))
+    assert [nodes.nth(i).get_attribute("data-testid") for i in range(len(supplied))] == [
+        f"timeline-node-{stage}" for stage in supplied
+    ]
