@@ -313,7 +313,7 @@ def wheel_resources(wheel: Path) -> dict[str, bytes]:
         forbidden = {
             name
             for name in names
-            if set(PurePosixPath(name).parts) & {"tests", "e2e_live", "scenarios"}
+            if _test_only_wheel_member(name)
         }
         if forbidden:
             raise RuntimeError(f"test-only files leaked into wheel: {sorted(forbidden)}")
@@ -321,6 +321,16 @@ def wheel_resources(wheel: Path) -> dict[str, bytes]:
         if missing:
             raise RuntimeError(f"runtime resources missing from wheel: {sorted(missing)}")
         return {path: archive.read(f"tracks/{path}") for path in RUNTIME_RESOURCE_PATHS}
+
+
+def _test_only_wheel_member(name: str) -> bool:
+    parts = set(PurePosixPath(name).parts)
+    if parts & {"e2e_live", "scenarios"}:
+        return True
+    shipped_host_tests = (
+        "tracks/assets/demo_host/tests/", "tracks/assets/reference_host/tests/",
+    )
+    return "tests" in parts and not name.startswith(shipped_host_tests)
 
 
 def find_external_opencode() -> Path:
@@ -342,6 +352,10 @@ def install_opencode_shim(artifact_dir: Path, source: Path) -> tuple[Path, Path]
     tools_bin = artifact_dir / "tools" / "bin"
     tools_bin.mkdir(parents=True, exist_ok=True)
     shim = tools_bin / "opencode"
+    if shim.is_symlink():
+        if shim.resolve() == source.resolve():
+            return tools_bin, shim
+        shim.unlink()
     try:
         shim.symlink_to(source)
     except OSError:
@@ -358,7 +372,11 @@ from importlib.resources import files
 from pathlib import Path
 
 import tracks
+from tracks.cli.main import main
 from tracks.effects.opencode import OpencodeBackend
+from tracks.server.app import create_app
+
+assert callable(main) and callable(create_app)
 
 resource_paths = {RUNTIME_RESOURCE_PATHS!r}
 workspace = Path(os.environ["WORKSPACE_ROOT"]).resolve()
@@ -562,7 +580,7 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         if create.returncode != 0:
             failed(f"isolated venv creation failed: {create.stderr.strip()}")
         install = run_logged(
-            [str(isolated_python), "-m", "pip", "install", "--no-deps", str(wheel)],
+            [str(isolated_python), "-m", "pip", "install", "--force-reinstall", str(wheel)],
             artifact_dir,
             clean,
             install_log,
@@ -570,6 +588,12 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         )
         if install.returncode != 0:
             failed(f"wheel installation failed: {install.stderr.strip()}")
+        dependencies = run_logged(
+            [str(isolated_python), "-m", "pip", "check"],
+            artifact_dir, clean, install_log, timeout=install_timeout,
+        )
+        if dependencies.returncode != 0:
+            failed(f"installed dependencies are inconsistent: {dependencies.stdout.strip()}")
         if not (isolated_bin / "trac").is_file():
             failed(f"installed trac executable missing: {isolated_bin / 'trac'}")
         live_path_value = live_path(isolated_bin, tools_bin)
