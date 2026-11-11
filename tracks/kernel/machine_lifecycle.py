@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
     s.run_id, s.version = ev.run_id, ev.version
+    s.workflow_profile = p.get("workflow_profile")
 
 
 def _reset_m_impl_cycle(s: State) -> None:

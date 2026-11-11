@@ -139,6 +139,7 @@ def _on_hotfix_requested(s: State, p: dict, ev) -> None:
     fallback, never overridden here.
     """
     s.run_id = ev.run_id
+    s.workflow_profile = p.get("workflow_profile")
     s.hotfix_issue = p.get("issue")
     s.hotfix_scenario = p.get("scenario")
 

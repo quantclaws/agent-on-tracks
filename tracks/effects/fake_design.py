@@ -254,7 +254,7 @@ class FakeDesignMixin:
         """Reach entrypoint declarations are an M-IMPL (v0.5) artifact of the
         Fake fixture; older flow versions (v0.1/v0.4) and malformed versions
         end at the M-TEST boundary and must not declare extra config files."""
-        return supports_m_impl(self.version)
+        return supports_m_impl(getattr(self, "workflow_profile", None) or self.version)
 
     def _reach_entry_lines(self) -> list[str]:
         """Deterministic reach entrypoint module names for every acceptance AC:

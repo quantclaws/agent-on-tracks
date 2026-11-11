@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from tracks.capabilities import FULL_WORKFLOW_PROFILE
 from tracks.executor import version_extensions
 from tracks.executor.helpers import _git_stdout as _git
 from tracks.kernel.events import Command
@@ -250,6 +251,7 @@ class V08Extension:
 
 
 version_extensions.register_extension(EXTENSION_VERSION, V08Extension())
+version_extensions.register_extension(FULL_WORKFLOW_PROFILE, V08Extension())
 # 2026-09-24 (island-2 boundary, run 01M2QTJB v0.9): the release pipeline
 # (M-VERIFY -> M-SECURITY -> M-RELEASE) is a version-INHERITED capability --
 # every version from RELEASE_PIPELINE_VERSION onward gets the same

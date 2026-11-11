@@ -61,6 +61,12 @@ def _serving_line(stdout: str) -> str:
 
 def _assert_capability_resources(project: Path, wheel: Path) -> None:
     members = wheel_members(wheel)
+    locked_site = project / receipt(project)["site_packages"]
+    for name, content in members.items():
+        if name.startswith(("tracks/agents/", "tracks/skills/", "tracks/templates/")):
+            assert (locked_site / name).read_bytes() == content, (
+                f"install must retain runtime resources in the locked package: {name}"
+            )
     assert (project / "opencode.json").read_bytes() == members["tracks/assets/opencode.json"], (
         "the default harness config must be the wheel's asset"
     )
@@ -99,6 +105,46 @@ def test_install_from_official_wheel(v012_global, v012_wheels, tmp_path):
     _assert_capability_resources(project, v012_wheels["current"])
     status = v012_global.run("status", cwd=project)
     assert status.returncode == 0, status.stderr
+
+
+# AC-FR0348-01@v0.12 TRACKS-TRACE fresh installed project pins the full workflow at v0.1
+def test_fresh_project_pins_full_workflow(v012_global, tmp_path):
+    project = tmp_path / "first-product"
+    installed = _install(v012_global, project, tmp_path)
+    assert installed.returncode == 0, installed.stderr
+    started = v012_global.run("start", "v0.1", cwd=project, stdin="实现一个整数加法函数。")
+    assert started.returncode == 0, started.stderr
+    run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
+    replay = v012_global.run("replay", run_id, cwd=project)
+    assert replay.returncode == 0, replay.stderr
+    assert '"workflow_profile": "full-v1"' in replay.stdout
+    assert (project / ".tracks" / "projects" / "v0.1" / "story.md").is_file()
+    assert not (project / ".tracks" / "projects" / "full-v1").exists()
+
+
+# AC-FR0348-01@v0.12 TRACKS-TRACE installed v0.1 product traverses the full release workflow
+def test_installed_product_full_release_journey(v012_global, host_repo, ci_echo_standin):
+    """Use the installed CLI; Agent and external-channel fixtures remain deterministic."""
+    from tests.e2e.helpers import walk_to_awaiting_release
+
+    installed = v012_global.run("install", str(host_repo), cwd=host_repo.parent)
+    assert installed.returncode == 0, installed.stderr
+
+    def installed_trac(*args, stdin=None, simulate=None):
+        env = {"TRAC_FAKE_SIMULATE": simulate} if simulate else None
+        return v012_global.run(*args, cwd=host_repo, stdin=stdin, env=env, timeout=300)
+
+    installed_trac.repo = host_repo
+    run_id = walk_to_awaiting_release(installed_trac, version="v0.1")
+    released = installed_trac("release", "--action", "release")
+    assert released.returncode == 0, released.stderr
+    driven = installed_trac("run", "--no-watch")
+    assert driven.returncode == 0, driven.stderr
+    status = installed_trac("status")
+    assert "terminal=released" in status.stdout, status.stdout
+    replay = installed_trac("replay", run_id)
+    for stage in ("M-IMPL", "M-VERIFY", "M-SECURITY", "M-PUBLISH", "M-MILESTONE"):
+        assert f'"stage": "{stage}"' in replay.stdout
 
 
 # AC-FR0350-01@v0.12 TRACKS-TRACE project background server roundtrip

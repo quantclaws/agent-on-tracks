@@ -76,6 +76,17 @@ class ProjectCorrupt(Exception):
     """Install artifacts exist but the receipt/site-packages are unusable."""
 
 
+def new_run_metadata(repo: Path) -> dict:
+    """Pin installed projects to the full workflow, preserving legacy runs."""
+    from tracks.capabilities import FULL_WORKFLOW_PROFILE
+
+    root = find_project(repo)
+    if root is None:
+        return {}
+    read_receipt(root)
+    return {"workflow_profile": FULL_WORKFLOW_PROFILE}
+
+
 def find_project(cwd: Path) -> Path | None:
     """Return the nearest installed project root, or None outside a project.
 

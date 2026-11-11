@@ -1,8 +1,9 @@
 [project]
 name = "agent-on-tracks"
 version = "0.12.1"
-description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.5)"
-requires-python = ">=3.10"
+description = "Agent on Tracks — event-sourced runtime for spec-driven agent development"
+readme = "README.md"
+requires-python = ">=3.11"
 # v0.9 (ARCH-009): web 后台持续驱动与最小工作台的首个运行时依赖。
 # starlette: >=1.3.1 clears PYSEC-2026-161/248/249/2280/2281 (security gate
 # 2026-10-04); the tracked surface (routes/middleware/StaticFiles) is
@@ -89,6 +90,7 @@ tracks = [
     "server/static/vendor/vditor/js/i18n/*",
     "server/static/vendor/vditor/js/icons/*",
     "server/static/vendor/vditor/images/*",
+    "server/static/vendor/mermaid/*",
     "server/static/app/*",
 ]
 

@@ -49,6 +49,8 @@ def resolve_capability(version: str, capability: str):
     """
     extension = _EXTENSIONS.get(version)
     if extension is None:
+        if version.startswith("full-"):
+            raise CapabilityBlockedError(f"unsupported workflow profile {version!r}")
         return None
     try:
         return getattr(extension, capability)

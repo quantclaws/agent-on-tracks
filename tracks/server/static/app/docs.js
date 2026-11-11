@@ -166,6 +166,23 @@ export function renderDocsView(body, context = {}) {
       body.append(degradedMessage("No documents"));
       return;
     }
+    if (context.returnToRun && context.returnToRun.runId) {
+      const back = element("button", {
+        type: "button",
+        "data-testid": "docs-return-to-run",
+        text: "返回运行",
+      });
+      back.addEventListener("click", async () => {
+        const { openTab } = await import("./tabs.js");
+        openTab("releases", {
+          feature: "releases",
+          title: "releases",
+          projectId,
+          ...context.returnToRun,
+        });
+      });
+      body.append(back);
+    }
     // The docs window shows documents, not a category banner (the main
     // header strip is gone entirely — 2026-10-09 operator directive).
     const workbench = createDocsWorkbench(projectId, versions);

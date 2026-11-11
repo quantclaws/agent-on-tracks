@@ -237,7 +237,16 @@ class ExecPhase0Mixin:
         rebuilds the identical phase0_status/seal/blocked fields."""
         if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
             return
-        baseline_version = _phase0_baseline_version(self.version)
+        if state.workflow_profile:
+            baseline = (
+                state.hotfix_target_version or self.store.latest_released_version(self.version)
+            )
+            if baseline is None:
+                self._validate_initial_baseline(cmd)
+                return
+            baseline_version = baseline
+        else:
+            baseline_version = _phase0_baseline_version(self.version)
         if baseline_version is None:
             self._emit_phase0_blocked(
                 cmd,
@@ -258,6 +267,14 @@ class ExecPhase0Mixin:
         if self._phase0_guard_harden(cmd, baseline_version, baseline_dir):
             return
         self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+
+    def _validate_initial_baseline(self, cmd) -> None:
+        """A first release has no prior requirements; still audit tests and guards."""
+        inputs = self._phase0_validation_inputs(cmd, "initial")
+        if inputs is None or not self._phase0_coverage_gate(cmd, {}, inputs):
+            return
+        if not self._phase0_guard_harden(cmd, "initial", None):
+            self._emit_phase0_sealed(cmd, "initial", None)
 
     def _phase0_validation_inputs(self, cmd, baseline_version: str):
         """Collect the baseline inventory + per-node digests, or None (blocked)."""
@@ -358,7 +375,7 @@ class ExecPhase0Mixin:
         )
 
     def _phase0_guard_harden(
-        self, cmd, baseline_version: str, baseline_dir: Path
+        self, cmd, baseline_version: str, baseline_dir: Path | None
     ) -> bool:
         """Guard-hardening gate (§1d): park when no registry/parity evidence
         exists or the registry is invalid; otherwise harden. Returns True when
@@ -390,7 +407,7 @@ class ExecPhase0Mixin:
             return True
         return False
 
-    def _emit_phase0_sealed(self, cmd, baseline_version: str, baseline_dir: Path) -> None:
+    def _emit_phase0_sealed(self, cmd, baseline_version: str, baseline_dir: Path | None) -> None:
         """Emit the terminal ``phase0.sealed`` event (interfaces §1c).
 
         Builds the seal manifest from the baseline documents and the frozen
@@ -404,7 +421,7 @@ class ExecPhase0Mixin:
         env_digest = hashlib.sha256(contract_toml.read_bytes()).hexdigest()
         manifest = build_seal_manifest(
             baseline_version,
-            _phase0_document_digests(baseline_dir),
+            _phase0_document_digests(baseline_dir) if baseline_dir is not None else {},
             _phase0_frozen_test_digests(Path(self.repo), self._frozen_test_paths()),
             (),
             env_digest,

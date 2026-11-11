@@ -171,6 +171,20 @@ def test_ac_0348_02_incomplete_wheel_rejected(tmp_path, capsys):
     assert not (target / ".tracks" / "env" / "9.9.9").exists()
 
 
+# AC-FR0348-02@v0.12 TRACKS-TRACE partially missing runtime resources are rejected before install
+def test_individual_required_resource_missing_is_rejected(tmp_path, capsys):
+    for index, missing in enumerate((
+        "tracks/templates/story.md", "tracks/templates/test-plan.md",
+        "tracks/agents/Shield.md", "tracks/skills/tracks-devon-rgr/SKILL.md",
+    )):
+        target = tmp_path / f"missing-resource-{index}"
+        wheel = _wheel(tmp_path / str(index), "9.9.9", omit=missing)
+        rc = main(["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)])
+        assert rc == 1
+        _reason(capsys, "package_incomplete")
+        assert not (target / ".tracks" / "install.json").exists()
+
+
 # AC-FR0348-01@v0.12 TRACKS-TRACE IF-INSTALLPKG-001 full resources installed
 # AC-FR0351-02@v0.12 TRACKS-TRACE IF-PROJLAYOUT-001 empty dir becomes project
 # AC-FR0354-01@v0.12 TRACKS-TRACE IF-INSTALL-001 success means usable project

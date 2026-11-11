@@ -755,6 +755,8 @@ export function renderTimelineView(body, context = {}) {
   /* the gate-follow re-render target (scheduleGateRefresh): the in-place
    * refresh re-invokes this function over the same host and context. */
   lastTimelineMount = { body, context };
+  const generation = (body.__timelineGeneration || 0) + 1;
+  body.__timelineGeneration = generation;
   return (async () => {
     const encoded = encodeURIComponent(runId);
     // the heading renders FIRST from the cheap faces (no overview round
@@ -780,7 +782,7 @@ export function renderTimelineView(body, context = {}) {
     // A newer activation replaced this body while the fetches were in
     // flight: never let the stale mount close the newer run's stream or
     // append to a detached face (rapid run switching / landing focus).
-    if (!body.isConnected) return null;
+    if (!body.isConnected || body.__timelineGeneration !== generation) return null;
     if (!timeline || !detail) {
       // unknown run (404): readable degradation in place — no crash, no
       // blank tab (§1l.5). The releases window keeps its heading so the
@@ -816,6 +818,9 @@ export function renderTimelineView(body, context = {}) {
               : { type: delivered.type };
           const line = body.querySelector('[data-testid="timeline-last-event"]');
           if (line) line.textContent = lastEventText(state.last);
+          if (LIVE_STATE_EVENTS.has(state.last.type)) {
+            scheduleLiveStateRefresh(body, context);
+          }
         },
       });
       detailStreams.set(runId, stream);
@@ -858,6 +863,11 @@ export function renderTimelineView(body, context = {}) {
     });
     lower.append(detailPane(detail, events, stageOrder(timeline)));
     body.append(lower);
+    if (context.selectedStage) {
+      const selected = Array.from(root.querySelectorAll("[data-testid^='timeline-node-']"))
+        .find((node) => node.getAttribute("data-testid") === `timeline-node-${context.selectedStage}`);
+      if (selected) selectNode(selected, context.selectedStage, detail, events);
+    }
     return null;
   })();
 }
@@ -2806,6 +2816,9 @@ function nodeDetail(stage, detail, events) {
  * face pins detail-owning-surface: the jump link carries it (the owning
  * surface entry), so exactly one exists per pane. */
 function owningDocForStage(stage) {
+  if (stage === "M-START" || stage === "M-STORY") return "story";
+  if (stage === "M-SPEC") return "spec";
+  if (stage === "M-ACC" || stage === "M-REQ-APPROVAL") return "acceptance";
   if (stage === "M-DESIGN") return "architecture";
   if (stage === "M-TEST") return "test-plan";
   if (stage === "M-IMPL") return "interfaces";
@@ -2824,6 +2837,11 @@ function owningSurfaceEntry({ projectId = null, version = null, doc = "architect
     // Open the exact version/document owning the current stage.
     const host = jump.closest("[data-run-id]");
     const runId = host ? host.getAttribute("data-run-id") : null;
+    const view = jump.closest(".view");
+    const selected = view && view.querySelector("[data-state-selected='true']");
+    const selectedStage = selected
+      ? selected.getAttribute("data-testid").replace("timeline-node-", "")
+      : null;
     const { openTab } = await import("./tabs.js");
     openTab("docs", {
       feature: "docs",
@@ -2831,23 +2849,8 @@ function owningSurfaceEntry({ projectId = null, version = null, doc = "architect
       ...(projectId ? { projectId } : {}),
       ...(version ? { version } : {}),
       doc,
+      returnToRun: runId ? { runId, selectedStage } : null,
     });
-    globalThis.setTimeout(async () => {
-      const { openTab: reopen } = await import("./tabs.js");
-      const releases = reopen("releases", {
-        feature: "releases",
-        title: "releases",
-        ...(runId ? { runId } : {}),
-      });
-      void releases;
-      if (runId) {
-        try {
-          globalThis.history.replaceState(null, "", `/runs/${encodeURIComponent(runId)}`);
-        } catch (error) {
-          /* non-fatal */
-        }
-      }
-    }, 300);
   });
   const aliased = element("span", {
     class: "owning-surface-alias",
@@ -3318,9 +3321,29 @@ function actionButton(encoded, path, params, label) {
 let followTimer = null;
 let lastTimelineMount = null;
 
+const LIVE_STATE_EVENTS = new Set([
+  "stage.entered", "stage.exited", "run.completed", "attention.required",
+  "outcome.received", "verdict.failed", "review.round_started", "task.started",
+  "task.completed", "candidate.frozen", "release.previewed", "phase0.blocked",
+]);
+
+function scheduleLiveStateRefresh(body, context) {
+  if (!body.isConnected) return;
+  globalThis.clearTimeout(body.__liveRefreshTimer);
+  body.__liveRefreshTimer = globalThis.setTimeout(() => {
+    if (!body.isConnected) return;
+    const selected = body.querySelector("[data-state-selected='true']");
+    if (selected) {
+      context.selectedStage = selected.getAttribute("data-testid").replace("timeline-node-", "");
+    }
+    body.replaceChildren();
+    renderTimelineView(body, context);
+  }, 300);
+}
+
 function rerenderTimeline() {
   const mount = lastTimelineMount;
-  if (!mount) return;
+  if (!mount || !mount.body.isConnected) return;
   mount.body.replaceChildren();
   renderTimelineView(mount.body, mount.context);
 }

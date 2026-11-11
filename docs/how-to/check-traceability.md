@@ -68,7 +68,7 @@ trac check trace --version v0.4 --json
 >
 > 需求追踪的经典研究包括 Gotel 与 Finkelstein 1994 年的 *An Analysis of the Requirements Traceability Problem*。Tracks 将传统的人工追踪矩阵变成可重复运行的程序检查。
 
-当前 marker 检查是逐行文本扫描。规范要求 marker 紧邻测试函数，但工具尚未验证邻接关系，也不验证 `@version` 是否与 `--version` 完全相等。因此，trace closure 证明的是“存在声明绑定”，测试是否忠实表达 AC 仍需独立评审和执行证据。
+marker 的版本需要与目标需求版本对应。新安装项目使用完整工作流，追踪检查还会核对候选提交绑定的测试节点、基线执行、反例实验和全量测试证据。缺失或属于其他候选的证据会使检查失败。marker 声明本身不证明测试忠实表达了自然语言需求，仍需独立评审和行为测试。
 
 ## `trac check reach`
 

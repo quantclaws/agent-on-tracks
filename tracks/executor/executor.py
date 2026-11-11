@@ -152,7 +152,11 @@ def hotfix_entry_run(repo, store, issue_number: int, scenario: str) -> str:
         if report.status == "pass"
         else f"hotfix-{issue_number}"
     )
-    store.append(run_id, version, "hotfix.requested", {"issue": issue_number, "scenario": scenario})
+    from tracks.project_runtime import new_run_metadata
+
+    store.append(run_id, version, "hotfix.requested", {
+        "issue": issue_number, "scenario": scenario, **new_run_metadata(repo),
+    })
     store.append(run_id, version, "stage.entered", {"stage": "M-HOTFIX-TRIAGE"})
     ex = Executor(store, repo, run_id)
     ex.version = version  # pre-PRECHECK state cannot re-derive the target
@@ -237,10 +241,13 @@ class Executor(
         self.store = store
         self.repo = repo
         self.run_id = run_id
-        self.version = _resolve_run_version(store.state(run_id))
+        initial = store.state(run_id)
+        self.version = _resolve_run_version(initial)
+        self.workflow_profile = initial.workflow_profile
         # run_id 传入 opencode backend 启用 D-39 用户简化版（#44）session
         # 复用（fake backend 忽略该参数）。
         self.backend = select_backend(repo, self.version, run_id=run_id)
+        self.backend.workflow_profile = self.workflow_profile
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
         # Optional context-manager factory the CLI uses to release the

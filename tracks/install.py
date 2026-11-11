@@ -23,6 +23,8 @@ from pathlib import Path, PurePosixPath
 
 import tracks
 from tracks import project_runtime
+from tracks.baseline import BASELINE_DOC_NAMES
+from tracks.deliverables import DELIVERABLES
 from tracks.project_runtime import (
     ENV_GITIGNORE,
     LAUNCHER_REL,
@@ -45,6 +47,10 @@ _SKILL_MEMBER = re.compile(r"tracks/skills/[^/]+/SKILL\.md")
 _OPENCODE_MEMBER = "tracks/assets/opencode.json"
 _PACKAGE_INIT = "tracks/__init__.py"
 _RUNNING_DIST_NAME = "agent-on-tracks"
+_PACKAGE_ROOT = Path(tracks.__file__).resolve().parent
+_REQUIRED_RESOURCES = tuple(
+    "tracks/" + path.relative_to(_PACKAGE_ROOT).as_posix() for path in DELIVERABLES
+) + tuple("tracks/templates/" + name for name in BASELINE_DOC_NAMES)
 
 INSTALL_USAGE = (
     "usage: trac install <path> [--version <X.Y.Z>] [--wheel <path>]"
@@ -360,6 +366,7 @@ def _validate_members(names: tuple[str, ...]) -> None:
         missing.append("assets/opencode.json")
     if _PACKAGE_INIT not in available:
         missing.append("tracks/__init__.py")
+    missing.extend(name for name in _REQUIRED_RESOURCES if name not in available)
     if missing:
         raise InstallError("package_incomplete", "missing " + ", ".join(missing))
 
@@ -397,6 +404,10 @@ def _validate_running_resources(package_dir: Path) -> None:
     asset = package_dir / "assets" / "opencode.json"
     if not asset.is_file():
         missing.append("assets/opencode.json")
+    missing.extend(
+        name for name in _REQUIRED_RESOURCES
+        if not (package_dir / name.removeprefix("tracks/")).is_file()
+    )
     if missing:
         raise InstallError("package_incomplete", "missing " + ", ".join(missing))
     _validate_opencode(asset.read_text(encoding="utf-8"))
@@ -490,7 +501,9 @@ def _materialize(
     if not opencode_dir.exists():
         rollback.defer_remove_empty_dir(opencode_dir)
     for name in ("agents", "skills", "templates"):
-        rollback.replace_dir(opencode_dir / name, staged_tracks / name)
+        managed = staged_tracks.parent.parent / "managed" / name
+        shutil.copytree(staged_tracks / name, managed)
+        rollback.replace_dir(opencode_dir / name, managed)
     seeded = _seed_opencode(
         target, staged_tracks / "assets" / "opencode.json", rollback
     )

@@ -35,6 +35,24 @@ _WAIT_MS = 8_000
 _SEED_TEXT = "给发布清单页加一个导出按钮，导出为 CSV。"
 
 
+# AC-FR0338-01@v0.11 TRACKS-TRACE pending decision refresh cannot interrupt document reading
+def test_background_decision_refresh_keeps_docs_open(trac, tmp_path, page):
+    repo = _prepared_repo(trac)
+    with _entry_serve(tmp_path, repo, "refresh-docs") as base:
+        _login(page, base)
+        _submit_via_ui(page, base, _SEED_TEXT)
+        page.clock.install()
+        page.get_by_test_id("panel-action-archive").click()
+        # Archive differs from Scribe's recommendation; confirm that choice.
+        page.get_by_test_id("panel-action-archive").click()
+        expect(page.get_by_test_id("wizard-modal")).to_be_hidden()
+        page.get_by_test_id("tabbar-item-docs").click()
+        expect(page.get_by_test_id("view-docs")).to_be_visible()
+        page.clock.fast_forward(35_000)
+        expect(page.get_by_test_id("view-docs")).to_be_visible()
+        expect(page.get_by_test_id("tabbar-item-docs")).to_have_attribute("aria-current", "page")
+
+
 def _prepared_repo(trac):
     """The host repo as a runnable tracks project (web journey recipe)."""
     repo = trac.repo
@@ -74,10 +92,10 @@ def _entry_serve(tmp_path, repo, marker: str):
         stop_serve(proc)
 
 
-def _login(page, base_url: str) -> None:
+def _login(page, base_url: str, password: str = SERVE_PASSWORD) -> None:
     page.set_default_timeout(_WAIT_MS)
     page.goto(base_url + "/login", wait_until="domcontentloaded")
-    page.get_by_test_id("login-password").fill(SERVE_PASSWORD)
+    page.get_by_test_id("login-password").fill(password)
     page.get_by_test_id("login-submit").click()
     page.get_by_test_id("name-input").fill("UI Human")
     page.get_by_test_id("name-submit").click()

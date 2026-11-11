@@ -383,17 +383,22 @@ function showScribePanel(body, pid, intakeId) {
 /** The wizard's hotfix face lands here: focus the created run in place,
  * then re-focus on a short tail until the entry dispatch lands the fix
  * branch (same document, no navigation). */
-function focusHotfixRun(runId) {
+async function focusHotfixRun(runId) {
   if (!runId) {
     refreshReleasesWindow();
     return;
   }
-  openFocusedRun(runId);
+  await openFocusedRun(runId);
+  const origin = document.querySelector('[data-testid="view-releases"]');
   let tries = 0;
   const timer = globalThis.setInterval(() => {
+    if (!origin || !origin.isConnected) {
+      globalThis.clearInterval(timer);
+      return;
+    }
     tries += 1;
     requestJson(`/api/runs/${encodeURIComponent(runId)}`).then((detail) => {
-      if (detail && detail.branch) {
+      if (detail && detail.branch && origin.isConnected) {
         globalThis.clearInterval(timer);
         openFocusedRun(runId);
       } else if (tries >= 24) {
@@ -409,20 +414,22 @@ function focusHotfixRun(runId) {
  * (backlog entry / new version row / archive row) presents. In-place
  * re-render (same document — FR-0316): the decision executes synchronously
  * server-side, so re-render now and on a longer tail to cover branch/run
- * visibility settle. A full reload backs both (cache-proof). */
+ * visibility settle. Navigation away cancels these refreshes. */
 function refreshReleasesWindow() {
+  let origin = document.querySelector('[data-testid="view-releases"]');
   const rerender = async () => {
     try {
       const { renderView } = await import("./views.js");
       const mainArea = document.querySelector('[data-testid="main-area"]');
-      if (!mainArea) return false;
+      if (!mainArea || !origin || !origin.isConnected) return false;
       const { activeWindow } = await import("./tabs.js");
       const current = activeWindow();
+      if (!current || current.route !== "releases") return false;
       const context = { ...((current && current.context) || {}), view: "releases" };
       delete context.runId;
       delete context.runTitle;
       if (current) current.context = context;
-      renderView("releases", mainArea, context);
+      origin = renderView("releases", mainArea, context).body;
       return true;
     } catch (error) {
       return false;
@@ -434,13 +441,6 @@ function refreshReleasesWindow() {
   globalThis.setTimeout(() => {
     rerender().catch(() => undefined);
   }, 10000);
-  globalThis.setTimeout(() => {
-    try {
-      globalThis.location.reload();
-    } catch (error) {
-      /* non-fatal */
-    }
-  }, 30000);
 }
 
 async function firstProjectId() {
@@ -607,6 +607,7 @@ export async function renderReleasesView(body, context = {}) {
   await renderTimelineView(body, {
     runId: focusedId,
     runTitle: known ? runRowFullLabel(known) : undefined,
+    selectedStage: context.selectedStage,
   });
   return null;
 }

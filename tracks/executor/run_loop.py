@@ -1052,13 +1052,12 @@ the host Executor keeps construction and the command handlers."""
         """True when the declared stage transition must stop at a boundary at
         execution time instead of entering ``nxt``.
 
-        ``_NEXT_STAGE`` stays declarative (single source of truth); the v0.5
-        feature gate lives here, at transition execution. ``M-TEST ->
-        M-IMPL`` applies only to runs on v0.5+ (``supports_m_impl`` from the
-        neutral ``tracks.capabilities``); historical v0.1/v0.4 runs and
-        malformed versions complete at the M-TEST boundary.
+        Installed runs use their persisted workflow profile; historical
+        runs retain the original version-based boundary. ``_NEXT_STAGE``
+        remains declarative.
         """
-        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(self.version)
+        capability = getattr(self, "workflow_profile", None) or self.version
+        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(capability)
 
     def _release_boundary_route(self, state):
         """M-IMPL boundary guard (architecture §1.1 / IF-VERIFY-001): a
@@ -1075,7 +1074,7 @@ the host Executor keeps construction and the command handlers."""
         into the release pipeline while sub-threshold hotfixes keep the v0.6
         boundary completion byte-identical."""
         callback = _version_extensions.resolve_capability(
-            base_version(self.version or ""), "after_m_impl"
+            state.workflow_profile or base_version(self.version or ""), "after_m_impl"
         )
         return callback(state) if callback is not None else None
 

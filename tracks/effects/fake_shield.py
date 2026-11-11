@@ -273,7 +273,7 @@ class FakeShieldMixin:
         M-TEST boundary — no implementation phase ever turns the test green —
         so they keep the legacy legit M-TEST stub token (stub_token_failure).
         """
-        if supports_m_impl(self.version):
+        if supports_m_impl(getattr(self, "workflow_profile", None) or self.version):
             return self._behavioral_test_body(slug, if_id, marker)
         return f'{marker}\ndef test_{slug}():\n    raise NotImplementedError("IF-MTEST-001")\n'
 

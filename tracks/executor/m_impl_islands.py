@@ -198,7 +198,7 @@ class MImplIslandsMixin:
         ``event_log``) never receives the events.  Inject a store-emit flush
         so the demonstration lands on the public event outlet.
         """
-        callback = _resolve_island_gate_2(state.version or "")
+        callback = _resolve_island_gate_2(state.workflow_profile or state.version or "")
         if callback is None:
             return None
 

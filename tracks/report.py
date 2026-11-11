@@ -437,12 +437,18 @@ def _closure_blocks(events: list) -> list[str]:
     non-v0.7 reports byte-identical (FR-0264-02 schema isolation).
     """
     blocks: list[str] = []
+    profiles = {
+        event.run_id: event.payload.get("workflow_profile")
+        for event in events
+        if event.type in ("story.requested", "hotfix.requested")
+        and isinstance(event.payload, dict)
+    }
     for event in events:
         payload = event.payload if isinstance(event.payload, dict) else None
         if not payload or "records" not in payload or "gate" not in payload:
             continue
         renderer = version_extensions.resolve_capability(
-            str(event.version), "render_closure"
+            profiles.get(event.run_id) or str(event.version), "render_closure"
         )
         if renderer is None:
             continue

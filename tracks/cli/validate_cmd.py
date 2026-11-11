@@ -235,11 +235,8 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     # whose extension provides the trace capability takes the candidate-bound
     # closure exit (§2c), which needs no version directory; early versions
     # resolve nothing and keep their classic behaviour untouched.
-    checker = version_extensions.resolve_capability(base_version(version), "trace")
+    checker, release_builder = _trace_callbacks(home, version)
     if checker is not None:
-        release_builder = version_extensions.resolve_optional_capability(
-            base_version(version), "release_trace"
-        )
         return _cmd_check_trace_v07(
             repo, home, version, checker, use_json, release_builder
         )
@@ -302,6 +299,27 @@ def _merge_baseline_repair(entry: dict, payload: dict) -> None:
     digest = bound_node.get("digest")
     if isinstance(digest, str) and digest:
         entry["baseline_candidate"] = digest
+
+
+def _trace_callbacks(home: Path, version: str) -> tuple:
+    capability = _trace_capability(home, version)
+    return (
+        version_extensions.resolve_capability(capability, "trace"),
+        version_extensions.resolve_optional_capability(capability, "release_trace"),
+    )
+
+
+def _trace_capability(home: Path, version: str) -> str:
+    store = Store(home)
+    try:
+        runs = store.runs_for_version(version)
+        if runs:
+            profile = store.state(runs[0]).workflow_profile
+            if profile:
+                return profile
+        return base_version(version)
+    finally:
+        store.close()
 
 
 def _merge_mutation_manifest(entry: dict, payload: dict) -> None:

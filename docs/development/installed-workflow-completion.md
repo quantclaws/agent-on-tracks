@@ -1,0 +1,39 @@
+# 安装与工作流闭环修复
+
+本次修复以真实安装包的使用路径为验收依据：安装 wheel，在新项目提出 story，由 Web 参与需求评审，Runtime 推进测试、实现与交付，并能阅读文档和观察运行状态。
+
+## 已修复的阻断
+
+安装器此前把 `agents/skills/templates` 从暂存运行包移动到了 `.opencode/`，随后将缺失这些目录的运行包锁定进项目。`--help` 健康检查能够通过，但 `trac start` 读取 `tracks/templates/story.md` 会失败。现在保留锁定包中的资源，同时复制到 harness 工作目录；单个必需 Agent、skill 或模板缺失也会拒绝安装。
+
+Web 服务此前没有注册刚安装的项目。首次启动后，用户只能看到未注册项目提示，没有需求入口。现在服务自动注册 `--repo` 指定的已安装项目，并复用既有注册身份与事件机制。
+
+工作流能力此前由宿主产品版本号选择：`v0.1` 会停在早期测试边界，`v1.0` 也没有注册对应的完整发布扩展。现在从已安装项目创建的新运行，将 `workflow_profile: full-v1` 写入 `story.requested` 或 `hotfix.requested`。产品版本继续决定文档、分支、AC 和发布标识；工作流标识决定进入哪些阶段、使用哪些证据检查。该标识属于事件事实，重放和升级不会改变它。没有此字段的历史运行保持原有语义。
+
+首次开发没有虚构的“前一个版本”。Runtime 对真实初始测试集合和质量守卫做检查，再记录初始基线。后续运行从实际已发布的历史中选择基线；已发布 hotfix 使用其目标版本的完整需求文档。需求、测试、质量与候选证据门禁继续执行。
+
+运行文档入口此前在 300 毫秒后强制返回运行页面，且需求决策后的延迟刷新可能覆盖 Docs 或重载整个页面。现在文档持续可读，由用户点击“返回运行”恢复原运行与阶段选择；离开 Releases 会使原窗口的延迟刷新失效。当前阶段对应的 story/spec/acceptance 入口也已纠正。
+
+运行卡片此前只在特定人工操作后跟随刷新。现在阶段、任务与门禁的关键事件会更新卡片，并保留选中的历史阶段。离开运行页面后，这些更新不会替换当前功能窗口。
+
+Mermaid 图库此前存在于源码，却没有被打进 wheel，导致安装后阶段图渲染失败。现在发行包包含该资源及许可证，安装包浏览器测试直接验证 SVG，并核对全部 Web 静态资源已进入 wheel。
+
+包元数据和安装说明已对齐 Python 3.11+，README、首次使用、文档阅读和状态查看说明已更新。质量守卫的配置摘要按实际包元数据重新计算，守卫阈值未放宽。
+
+## 行为证据
+
+| 验收目标 | 回归入口 |
+| --- | --- |
+| 任意产品版本使用完整流程，历史运行回放不变 | `tests/unit/test_installed_workflow_profile.py` |
+| 锁定运行包保留资源；缺失单个必需资源时拒绝安装 | `tests/e2e/test_install_journey.py`、`tests/unit/test_install_cmd_red.py` |
+| 新安装的 `v0.1` 产品走到 `terminal=released` | `test_installed_product_full_release_journey` |
+| 首次 Web 启动、提交 story、立项、需求评审、文档和阶段图 | `tests/e2e/test_installed_project_ui.py` |
+| 文档停留阅读，返回指定运行和节点，后台状态更新 | `tests/e2e/test_run_timeline_ui.py` |
+| 决策后的延迟刷新不覆盖 Docs | `test_background_decision_refresh_keeps_docs_open` |
+| 全部浏览器资源进入发行包 | `tests/integration/test_install_package.py` |
+
+确定性全流程使用 fake Agent、本机 CI/GitHub 替身和真实本地 Git。它验证运行时路径、门禁衔接、安装资源及界面行为，不作为真实模型按自然语言需求完成实现的证明。
+
+另在全新的 Python 3.11 虚拟环境中，通过 pip 安装 wheel 及其真实依赖，创建项目、检查 deliverables、创建第一条 story、启动后台服务，并用 Chromium 验证登录、阶段图、文档阅读与返回；验证后停止服务。该过程使用 fake 后端，未连接模型或写入外部 GitHub 对象。
+
+真实 OpenCode/模型通道的验证因自动审批要求对已配置端点与测试内容另行明确授权而暂停。该项不能以跳过、fake 结果或旧候选证据替代；本次尚未进行公开发布。

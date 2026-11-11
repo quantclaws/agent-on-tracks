@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tracks import paths
+from tracks.capabilities import base_version
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import State, project
 
@@ -262,6 +263,18 @@ class Store:
             (version,),
         )
         return [row[0] for row in cur.fetchall()]
+
+    def latest_released_version(self, exclude: str) -> str | None:
+        """Find a real published baseline, independently of version numbering."""
+        rows = self.conn.execute(
+            "SELECT run_id, version FROM runs WHERE status = 'completed' "
+            "AND version != ? ORDER BY updated_ts DESC", (exclude,),
+        ).fetchall()
+        for run_id, version in rows:
+            baseline = base_version(version)
+            if baseline != exclude and self.state(run_id).terminal_state == "released":
+                return baseline
+        return None
 
     def rebuild_projections(self) -> None:
         """NFR-04: projections are derivable from events alone."""

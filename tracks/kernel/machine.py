@@ -303,6 +303,7 @@ from .stage_registry import (
 class State:
     run_id: str | None = None
     version: str | None = None
+    workflow_profile: str | None = None
     status: str = "active"  # active | completed | awaiting_human
     stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL | M-DESIGN
     substate: str | None = None
@@ -836,7 +837,7 @@ def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
     status = s.phase0_status
     if status == "SEALED":
         return False, None
-    before_mtest = _resolve_before_mtest(s.version)
+    before_mtest = _resolve_before_mtest(s.workflow_profile or s.version)
     if before_mtest is None:
         return False, None
     if status == "BLOCKED":

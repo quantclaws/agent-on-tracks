@@ -10,6 +10,7 @@ with the document-center jump, and the five-state labels carried by
 from __future__ import annotations
 
 import pytest
+from playwright.sync_api import expect
 
 from tests._support.ui_browser import SERVE_PASSWORD  # noqa: F401  helpers + constants
 
@@ -105,4 +106,52 @@ def test_run_timeline_view(ui_serve, page):
     pane_text = pane.inner_text()
     assert "M-" in pane_text or "revision" in pane_text.lower(), (
         "the pane must show the node timing/artifact information"
+    )
+
+
+# AC-FR0336-01@v0.11 TRACKS-TRACE read owning document and return to selected run node
+def test_owning_document_stays_open_until_explicit_return(ui_serve, page):
+    ui_serve.seed_project("proj-doc-return", "v1.0")
+    ui_serve.seed_version_docs("v1.0")
+    run_id = ui_serve.seed_run("run-doc-return", "v1.0")
+    ui_serve.seed_run("run-newer-unrelated", "v2.0")
+    _login_and_open_run(ui_serve, page, run_id)
+    page.get_by_test_id("timeline-node-M-DESIGN").click()
+    page.get_by_test_id("detail-owning-surface").click()
+
+    expect(page.get_by_test_id("view-docs")).to_be_visible()
+    expect(page.get_by_test_id("doc-editor-content").first).to_have_value(
+        "\n# v1.0 interfaces.md\n\nfixture body for interfaces.md\n"
+    )
+    # Reading must survive the former 300 ms forced-return timer.
+    page.wait_for_timeout(800)
+    expect(page.get_by_test_id("view-docs")).to_be_visible()
+    page.get_by_test_id("docs-return-to-run").click()
+    expect(page.get_by_test_id("current-node-card")).to_be_visible()
+    expect(page.get_by_test_id("run-heading")).to_have_text("v1.0")
+    expect(page.get_by_test_id("timeline-node-M-DESIGN")).to_have_attribute(
+        "data-state-selected", "true"
+    )
+    expect(page).to_have_url(ui_serve.base_url + f"/runs/{run_id}")
+
+
+# AC-FR0358-01@v0.12 TRACKS-TRACE runtime progress updates the visible card without a human action
+def test_runtime_progress_updates_without_a_human_action(ui_serve, page):
+    from tracks import paths
+    from tracks.store import Store
+
+    ui_serve.seed_project("proj-live-state", "v1.0")
+    run_id = ui_serve.seed_run("run-live-state", "v1.0", stage="M-STORY")
+    _login_and_open_run(ui_serve, page, run_id)
+    expect(page.get_by_test_id("card-status")).to_contain_text("M-STORY")
+    page.get_by_test_id("timeline-node-M-START").click()
+    store = Store(paths.tracks_home(ui_serve.repo))
+    try:
+        store.append(run_id, "v1.0", "stage.exited", {"stage": "M-STORY"})
+        store.append(run_id, "v1.0", "stage.entered", {"stage": "M-SPEC"})
+    finally:
+        store.close()
+    expect(page.get_by_test_id("card-status")).to_contain_text("M-SPEC", timeout=15_000)
+    expect(page.get_by_test_id("timeline-node-M-START")).to_have_attribute(
+        "data-state-selected", "true"
     )
