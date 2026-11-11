@@ -497,6 +497,51 @@ def test_ac_nfr0159_01_stop_terminates_owned_launcher(
             os.kill(daemon_pid, signal.SIGKILL)
 
 
+# AC-NFR0159-01@v0.12 TRACKS-TRACE IF-SERVERLIFE-001 stop clears detached agents
+@pytest.mark.parametrize("ignore_term", [False, True])
+def test_stop_terminates_owned_workers_and_detached_agents(tmp_path, monkeypatch, ignore_term):
+    root = _seed_project(tmp_path, """
+import subprocess, sys, time
+from pathlib import Path
+subprocess.Popen([sys.executable, str(Path(__file__).with_name('tree_worker.py')), sys.argv[1]])
+time.sleep(300)
+""")
+    worker = root / ".tracks/bin/tree_worker.py"
+    worker.write_text("""
+import json, os, subprocess, sys, time
+from pathlib import Path
+code = 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); time.sleep(300)' if os.environ['IGNORE_AGENT_TERM'] == '1' else 'import time; print("ready", flush=True); time.sleep(300)'
+child = subprocess.Popen([sys.executable, '-c', code], start_new_session=True, stdout=subprocess.PIPE, text=True)
+assert child.stdout.readline().strip() == 'ready'
+Path(sys.argv[1]).write_text(json.dumps({'worker': os.getpid(), 'agent': child.pid}))
+time.sleep(300)
+""")
+    monkeypatch.setenv("TRAC_CLI_ENTRY", "1")
+    monkeypatch.delenv("TRAC_PROJECT_ACTIVE", raising=False)
+    monkeypatch.setenv("IGNORE_AGENT_TERM", "1" if ignore_term else "0")
+    monkeypatch.setattr("tracks.project_runtime.STOP_TIMEOUT_S", 0.1)
+    marker = tmp_path / "owned-children.json"
+    parent = subprocess.Popen([sys.executable, str(root / ".tracks/bin/trac.py"), str(marker)],
+        start_new_session=True)
+    foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"],
+        start_new_session=True)
+    owned = {}
+    try:
+        owned = json.loads(_wait_file(marker))
+        _write_pidfile(root, parent.pid, 1)
+        assert serve_cmd.cmd_serve(root, "--repo", str(root), "--stop") == 0
+        parent.wait(timeout=5)
+        for pid in owned.values():
+            _wait_pid_gone(pid, timeout=3)
+        assert foreign.poll() is None, "stopping one project must preserve unrelated processes"
+    finally:
+        for pid in owned.values():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        _terminate(parent)
+        _terminate(foreign)
+
+
 # AC-NFR0159-01@v0.12 TRACKS-TRACE IF-SERVERLIFE-001 foreign pid is not stopped
 def test_ac_nfr0159_01_stop_refuses_foreign_pid(
     tmp_path, capsys, monkeypatch

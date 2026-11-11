@@ -17,8 +17,13 @@ import re
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
+
+from tracks.processes import (
+    capture_process_tree,
+    signal_captured_processes,
+    wait_captured_processes,
+)
 
 RECEIPT_REL = ".tracks/install.json"
 LAUNCHER_REL = ".tracks/bin/trac.py"
@@ -401,20 +406,16 @@ def stop_service(home: Path, receipt: dict, root: Path) -> dict:
     numeric = int(pid)
     if not launcher_owns_pid(root, receipt, numeric):
         return {"state": "refused", "pid": numeric}
-    with contextlib.suppress(ProcessLookupError):
-        os.kill(numeric, signal.SIGTERM)
-    if not _wait_pid_gone(numeric, STOP_TIMEOUT_S):
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(numeric, signal.SIGKILL)
-        _wait_pid_gone(numeric, 1.0)
+    try:
+        owned = capture_process_tree(numeric)
+        # Stop the supervisor first so it cannot start another worker, then
+        # terminate captured workers and Agent sessions even after reparenting.
+        signal_captured_processes(owned, signal.SIGTERM)
+        if not wait_captured_processes(owned, STOP_TIMEOUT_S):
+            signal_captured_processes(owned, signal.SIGKILL)
+            if not wait_captured_processes(owned, 1.0):
+                return {"state": "refused", "pid": numeric}
+    except (OSError, subprocess.SubprocessError):
+        return {"state": "refused", "pid": numeric}
     remove_pidfile(home)
     return {"state": "stopped", "pid": numeric}
-
-
-def _wait_pid_gone(pid: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not pid_alive(pid)
