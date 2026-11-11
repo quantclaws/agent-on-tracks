@@ -157,6 +157,28 @@ def test_runtime_progress_updates_without_a_human_action(ui_serve, page):
     )
 
 
+# AC-FR0358-01@v0.12 TRACKS-TRACE first future event type updates the active approval gate
+def test_late_first_agent_outcome_presents_the_human_gate(ui_serve, page):
+    from tracks import paths
+    from tracks.store import Store
+
+    ui_serve.seed_project("proj-first-outcome", "v1.0")
+    run_id = ui_serve.seed_run("run-first-outcome", "v1.0", stage="M-STORY")
+    _login_and_open_run(ui_serve, page, run_id)
+    expect(page.get_by_test_id("gate-action-triage")).to_have_count(0)
+    # All startup catch-up drains have finished before the first Agent result.
+    # A real model finishes later; a quick fake can mask a missing SSE listener.
+    page.wait_for_timeout(2000)
+    store = Store(paths.tracks_home(ui_serve.repo))
+    try:
+        store.append(run_id, "v1.0", "outcome.received", {
+            "role": "scribe", "status": "done", "self_report": "triage completed",
+        })
+    finally:
+        store.close()
+    expect(page.get_by_test_id("gate-action-triage")).to_be_visible(timeout=15_000)
+
+
 # AC-FR0358-01@v0.12 TRACKS-TRACE environment preparation progress is readable as it happens
 def test_environment_progress_is_visible_without_reloading(ui_serve, page):
     from tracks import paths
@@ -165,6 +187,7 @@ def test_environment_progress_is_visible_without_reloading(ui_serve, page):
     ui_serve.seed_project("proj-environment", "v0.1")
     run_id = ui_serve.seed_run("run-environment", "v0.1", stage="M-TEST")
     _login_and_open_run(ui_serve, page, run_id)
+    page.wait_for_timeout(2000)
     for event_type, label in (
         ("environment.preparation_started", "准备开发环境"),
         ("environment.step_completed", "环境准备步骤完成"),

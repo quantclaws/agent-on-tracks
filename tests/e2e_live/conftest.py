@@ -19,6 +19,7 @@ from tests._support.fixtures import (  # noqa: F401  re-export
     steps,
     trac,
 )
+from tests._support.ui_browser import browser, context, page  # noqa: F401
 from tests.e2e_live.harness import (
     LIVE_ENV,
     InstalledBackend,
@@ -123,9 +124,7 @@ def _host_config(config: dict[str, str]) -> dict:
                     "apiKey": "{env:TRAC_LIVE_API_KEY}",
                 },
                 "models": {
-                    "glm-5.2": {"name": "glm-5.2"},
-                    "qwen-3.8-max": {"name": "qwen-3.8-max"},
-                    "deepseek-v4-flash": {"name": "deepseek-v4-flash"},
+                    config["TRAC_LIVE_MODEL"]: {"name": config["TRAC_LIVE_MODEL"]},
                 },
             }
         },

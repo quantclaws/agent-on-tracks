@@ -813,7 +813,11 @@ export function renderTimelineView(body, context = {}) {
       const stream = connectEventStream({
         runId,
         event_cursor: (timeline && timeline.cursor) || null,
-        eventTypes: Array.from(new Set(events.map((event) => event.type))),
+        // Future results are absent from the initial snapshot. EventSource
+        // needs typed listeners before those first live frames arrive.
+        eventTypes: Array.from(new Set([
+          ...events.map((event) => event.type), ...LIVE_STATE_EVENTS,
+        ])),
         onEvent: (delivered) => {
           state.last =
             delivered.payload && delivered.payload.type
@@ -3329,6 +3333,10 @@ const LIVE_STATE_EVENTS = new Set([
   "outcome.received", "verdict.failed", "review.round_started", "task.started",
   "task.completed", "candidate.frozen", "release.previewed", "phase0.blocked",
   "environment.preparation_started", "environment.step_completed", "environment.prepared",
+  "sage.verdict", "lex.verdict", "prism.verdict", "verdict.passed",
+  "stage.rolled_back", "stage.recovered", "run.breaker_tripped", "phase0.sealed",
+  "human.triage", "human.review", "human.approval", "approval.recorded",
+  "human.return", "human.retry", "human.recover",
 ]);
 
 function scheduleLiveStateRefresh(body, context) {
