@@ -615,9 +615,9 @@ async def ac_chain(request: Any) -> Any:
     """GET /api/runs/{run_id}/ac-chain: cheap existence gate + AC evidence chain."""
     home = _home(request)
     run_id = str(request.path_params.get("run_id", ""))
-    if _project_for_run(home, run_id) is None:
+    if (project := _project_for_run(home, run_id)) is None:
         return _not_found("run", run_id)
-    return _response(200, request, projections.project_ac_chain(home, run_id))
+    return _response(200, request, projections.project_ac_chain(home, run_id, project=project))
 
 
 # -- GET /api/runs/{run_id}/todos and GET /api/todos -------------------------

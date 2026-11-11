@@ -665,17 +665,25 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
             conn.close()
 
 
-def project_ac_chain(home: Path, run_id: str) -> list:
+def project_ac_chain(home: Path, run_id: str, *, project: dict | None = None) -> list:
     """AC -> test node -> result -> candidate -> evidence chain (§1e)."""
-    conn = _service_db(home)
+    if project is None:
+        conn = _service_db(home)
+        try:
+            project = _project_for_run(conn, run_id)
+        finally:
+            if conn is not None:
+                conn.close()
+    if project is None:
+        return []
+    runtime_db = _tracks_db(project["repo_path"])
     try:
-        project = _project_for_run(conn, run_id)
-        if project is None:
-            return []
-        return _chain_rows(project["repo_path"], project["version"], run_id)
+        rows = _rows(runtime_db, "SELECT version FROM runs WHERE run_id = ?", (run_id,))
     finally:
-        if conn is not None:
-            conn.close()
+        if runtime_db is not None:
+            runtime_db.close()
+    version = rows[0][0] if rows else project["version"]
+    return _chain_rows(project["repo_path"], version, run_id)
 
 
 def _attention_todo(
