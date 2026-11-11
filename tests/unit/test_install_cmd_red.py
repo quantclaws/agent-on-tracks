@@ -433,3 +433,20 @@ def test_failed_reinstall_restores_legacy_ignore_rules(tmp_path):
             output.writestr(member, body)
     assert main(["install", str(target), "--version", "9.9.9", "--wheel", str(broken)]) == 1
     assert managed.read_bytes() == old
+
+
+# AC-FR0352-01@v0.12 TRACKS-TRACE a linked managed ignore cannot modify the host ignore
+def test_managed_ignore_symlink_does_not_write_the_host_file(tmp_path):
+    target = tmp_path / "proj"
+    init_git_project(target)
+    (target / ".tracks").mkdir()
+    linked = target / ".tracks/.gitignore"
+    linked.symlink_to("../.gitignore")
+    host_ignore = target / ".gitignore"
+    before = (host_ignore.read_bytes(), host_ignore.stat().st_mtime_ns)
+    head = git(target, "rev-parse", "HEAD").stdout
+    wheel = _wheel(tmp_path)
+    assert main(["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)]) == 1
+    assert linked.is_symlink()
+    assert (host_ignore.read_bytes(), host_ignore.stat().st_mtime_ns) == before
+    assert git(target, "rev-parse", "HEAD").stdout == head

@@ -212,7 +212,8 @@ def install_project(
         raise InstallError("install_failed", str(exc)) from None
     rollback = _Rollback(target, staging / "backup", tracks_existed)
     try:
-        rollback.save_file(target / ".tracks" / ".gitignore")
+        if not (target / ".tracks" / ".gitignore").is_symlink():
+            rollback.save_file(target / ".tracks" / ".gitignore")
         scaffold_tracks_dirs(target)
         staged_tracks = _stage_site(staging / "site-packages", source)
         seeded = _materialize(target, staged_tracks, requested, rollback)

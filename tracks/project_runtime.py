@@ -186,6 +186,8 @@ def _write_if_absent(path: Path, text: str) -> None:
 
 def _ensure_ignore_rules(path: Path, rules: str) -> None:
     """Migrate only the Tracks-owned ignore file, retaining existing custom rules."""
+    if path.is_symlink():
+        raise ValueError("Tracks-owned .gitignore must not be a symbolic link")
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     present = set(existing.splitlines())
     missing = [rule for rule in rules.splitlines() if rule not in present]
