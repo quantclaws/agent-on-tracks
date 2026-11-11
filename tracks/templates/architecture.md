@@ -77,14 +77,17 @@ sha:
 <!-- 模板指引（填写完成后删除本注释，交付的文档只留内容）：
   - 至少覆盖：integration/e2e 测试基础设施、GitHub CI、pre-commit、release version、
     build/artifact、发布恢复。每项写合同（外部可观察）与责任方（Runtime / 门禁 / Agent）
-  - 测试执行合同：Archer 必须在 M-DESIGN 阶段产出 `.tracks/project/project.toml`，
+  - 测试执行合同：Archer 必须在 M-DESIGN 阶段产出 `.tracks/projects/project.toml`，
     声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。
     v0.4 仅支持 framework = "pytest"。collect/run 命令必须使用宿主项目自己的
     Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的
     解释器或依赖。该合同在 M-DESIGN 阶段随 architecture.md 一起提交。
+  - 新安装项目还必须声明 [host-contract]。bootstrap 数组声明可重试的环境创建、
+    hook 生效命令；install 声明宿主解释器的依赖安装命令。Runtime 在 M-TEST
+    收集测试之前按顺序执行；声明不能为空合同或占位的空质量检查。
 -->
 
-### 4.1 测试执行合同（`.tracks/project/project.toml`）
+### 4.1 测试执行合同（`.tracks/projects/project.toml`）
 
 {声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。
 collect 命令用于 M-TEST 测试收集阶段（SM-01.5），run 命令用于 RED_CHECK（SM-01.9）。

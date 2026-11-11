@@ -157,20 +157,37 @@ def test_runtime_progress_updates_without_a_human_action(ui_serve, page):
     )
 
 
+# AC-FR0358-01@v0.12 TRACKS-TRACE environment preparation progress is readable as it happens
+def test_environment_progress_is_visible_without_reloading(ui_serve, page):
+    from tracks import paths
+    from tracks.store import Store
+
+    ui_serve.seed_project("proj-environment", "v0.1")
+    run_id = ui_serve.seed_run("run-environment", "v0.1", stage="M-TEST")
+    _login_and_open_run(ui_serve, page, run_id)
+    for event_type, label in (
+        ("environment.preparation_started", "准备开发环境"),
+        ("environment.step_completed", "环境准备步骤完成"),
+        ("environment.prepared", "开发环境已就绪"),
+    ):
+        store = Store(paths.tracks_home(ui_serve.repo))
+        try:
+            store.append(run_id, "v0.1", event_type, {"step": 0})
+        finally:
+            store.close()
+        expect(page.get_by_test_id("timeline-last-event")).to_contain_text(label, timeout=15_000)
+
+
 # AC-FR0326-01@v0.10 TRACKS-TRACE displayed stages follow the server projection's order
 def test_timeline_uses_server_supplied_stage_order(ui_serve, page):
     ui_serve.seed_project("proj-stage-order", "v1.0")
     run_id = ui_serve.seed_run("run-stage-order", "v1.0")
-    supplied = ["M-SPEC", "M-STORY", "M-START"]
-
-    def changed_projection(route):
-        response = route.fetch()
-        payload = response.json()
-        payload["stage_order"] = supplied
-        route.fulfill(response=response, json=payload)
-
-    page.route(f"**/api/runs/{run_id}/timeline?slim=1", changed_projection)
-    _login_and_open_run(ui_serve, page, run_id)
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/api/runs/{run_id}/timeline?slim=1")
+    ) as observed:
+        _login_and_open_run(ui_serve, page, run_id)
+    supplied = observed.value.json()["stage_order"]
+    assert supplied, "the actual server response must declare its stage order"
     nodes = page.locator("[data-testid^='timeline-node-']")
     expect(nodes).to_have_count(len(supplied))
     assert [nodes.nth(i).get_attribute("data-testid") for i in range(len(supplied))] == [

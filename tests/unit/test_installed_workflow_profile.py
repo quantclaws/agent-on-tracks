@@ -25,7 +25,9 @@ def test_full_profile_reaches_implementation_and_release(host_repo, version):
         executor = Executor(store, host_repo, "fresh")
         assert not executor._is_boundary_transition("M-TEST", "M-IMPL")
         command = decide(store.state("fresh"))
-        assert command.kind == "phase0_validate", "the full profile must keep its entry gate"
+        assert command.kind == "prepare_host_environment"
+        store.append("fresh", version, "environment.prepared", {})
+        assert decide(store.state("fresh")).kind == "phase0_validate"
 
         store.append("fresh", version, "stage.entered", {"stage": "M-IMPL"})
         store.append("fresh", version, "stage.exited", {"stage": "M-IMPL"})

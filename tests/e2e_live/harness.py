@@ -433,8 +433,8 @@ evidence = {"agent": agent_name, "materialized": False, "cleaned": False}
 original_materialize = backend._materialize
 original_cleanup = backend._cleanup
 
-def checked_materialize(name):
-    info = original_materialize(name)
+def checked_materialize(name, root=None):
+    info = original_materialize(name, root=root)
     assert Path(info["dest"]).read_bytes() == expected
     evidence["materialized"] = True
     return info

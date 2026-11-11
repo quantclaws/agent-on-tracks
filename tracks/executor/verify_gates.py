@@ -38,70 +38,14 @@ from tracks.executor.test_select import (
     make_selection_id,
     rebuild_ledger,
 )
+from tracks.host_contract_defaults import _DEFAULT_HOST_CONTRACT_TOML
 from tracks.kernel.events import Command
 from tracks.project import ContractError, load_contract
-
-# Runtime-materialized host contract (IF-HOSTCONTRACT-001): when the host
-# declares no ``[host-contract]`` table of its own, the M-VERIFY chain
-# materializes this baseline so the release pipeline can proceed — the
-# runtime executes only what it materialized (never guessed host language
-# semantics). An undeclared host MUST NOT pass quality verification
-# silently, but its quality face cannot be guessed either: the
-# materialized default gate is a declared no-op (``true``) and the
-# fail-closed stop moves to the CI face, where the host's credentials
-# stand-in (TRAC_GITHUB_REPO / TRAC_GITHUB_API_BASE / GITHUB_TOKEN) decides
-# the A-class outcome (missing credentials -> attention.required
-# reason=missing_token, never a silent pass) — every downstream producer
-# stays reachable from the fixture environment while an unseen
-# quality/toolchain claim still fails at its natural gate. Persisted
-# under .tracks/runtime (untracked, never dirties the frozen tree) with
-# the host_contract.materialized event recording its digest and source.
-_DEFAULT_HOST_CONTRACT_TOML = """\
-[host-contract]
-version = 1
-language = "runtime-default"
-toolchain = "runtime-default"
-install = "true"
-
-[[host-contract.local_gate]]
-kind = "quality"
-command = "true"
-result_channel = "exit_code"
-timeout_seconds = 60
-
-[[host-contract.security_scan]]
-id = "runtime-default-scan"
-tool = "runtime-default"
-install = "true"
-command = "true"
-result_channel = "exit_code"
-threshold = "violations=0"
-timeout_seconds = 60
-
-[host-contract.ci]
-repo_env = "TRAC_GITHUB_REPO"
-workflow = "ci.yml"
-required_checks = []
-conclusion = "success"
-
-[host-contract.tracker]
-repo_env = "TRAC_GITHUB_REPO"
-project_env = "TRAC_GITHUB_PROJECT"
-
-[host-contract.operations.feature]
-steps = ["merge:main"]
-
-[host-contract.operations.post_release]
-steps = ["merge:main"]
-
-[host-contract.operations.dev]
-steps = ["merge:main"]
-"""
 
 
 class ExecVerifyGatesMixin:
     """freeze candidate, full-F judgment, host contract loading and local gates;
-the runtime-materialized default contract lives here."""
+historical runs may use the imported compatibility contract."""
 
     def _do_freeze_candidate(self, cmd, state, task_id, reconcile):
         """M-VERIFY chain head (IF-VERIFY-001, AC-FR0267-01/02): bind the
@@ -541,7 +485,7 @@ the runtime-materialized default contract lives here."""
 
     def _load_or_default_contract(self, cmd, candidate_sha):
         """Load the host-declared canonical contract, or the
-        runtime-materialized default when the host declares NONE
+        runtime-materialized default for historical runs when the host declares NONE
         (IF-HOSTCONTRACT-001: the default is written under .tracks/runtime,
         untracked — never dirties the frozen tree). A DECLARED-but-invalid
         contract fail-closes (never silently replaced by the default).
@@ -575,6 +519,12 @@ the runtime-materialized default contract lives here."""
                     cmd, candidate_sha, "missing_contract", str(err)
                 )
                 return None, None, None
+        if getattr(self.store.state(self.run_id), "workflow_profile", None):
+            self._fail_verify_block(
+                cmd, candidate_sha, "missing_contract",
+                "M-DESIGN must declare [host-contract] in .tracks/projects/project.toml",
+            )
+            return None, None, None
         try:
             runtime = paths.runtime_dir(paths.tracks_home(self.repo))
             runtime.mkdir(parents=True, exist_ok=True)
@@ -598,7 +548,7 @@ the runtime-materialized default contract lives here."""
             for event in self.store.events(self.run_id)
         )
 
-    def _materialize_contract_target(self):
+    def _materialize_contract_target(self, require_explicit=False):
         """Resolve the contract Archer declared, or the runtime default.
 
         IF-HOSTCONTRACT-002: the M-DESIGN completion materialization reads
@@ -608,6 +558,7 @@ the runtime-materialized default contract lives here."""
         ``(contract, digest, source, path, error)``; a declared-but-unreadable
         or malformed declaration returns an error string instead of a
         contract (fail closed, never silently replaced by the default).
+        Modern workflow callers require an explicit design declaration.
         """
         contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
         raw = None
@@ -632,6 +583,11 @@ the runtime-materialized default contract lives here."""
                     contract_path,
                     None,
                 )
+        if require_explicit:
+            return (
+                None, None, None, contract_path,
+                "M-DESIGN must declare [host-contract] in .tracks/projects/project.toml",
+            )
         path = (
             paths.runtime_dir(paths.tracks_home(self.repo))
             / "materialized-host-contract.toml"
@@ -660,7 +616,9 @@ the runtime-materialized default contract lives here."""
         ``host_contract.invalid`` (no downstream gate may run on it).
         Idempotent per contract digest (never two records for the same
         bytes)."""
-        contract, digest, source, path, error = self._materialize_contract_target()
+        contract, digest, source, path, error = self._materialize_contract_target(
+            require_explicit=bool(getattr(state, "workflow_profile", None))
+        )
         if contract is None or error is not None:
             self._emit(
                 "host_contract.invalid",
@@ -900,7 +858,9 @@ the runtime-materialized default contract lives here."""
         scope = self._release_version_facts(state)
         needs_n = any(
             "{n}" in command
-            for command in (contract.install, contract.build_command, *contract.smoke)
+            for command in (
+                *contract.bootstrap, contract.install, contract.build_command, *contract.smoke
+            )
         )
         facts, error = complete_version_facts(
             self.repo, scope, contract.version.patch_line, needs_n=needs_n

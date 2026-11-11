@@ -66,6 +66,7 @@ CONTRACT_TABLES = frozenset(
         "language",
         "toolchain",
         "install",
+        "bootstrap",
         "local_gate",
         "version_scheme",
         "build",
@@ -189,6 +190,8 @@ class HostContract:
     # IF-HOSTENV-001 escape hatch: host-declared non-secret variables that
     # may cross the process boundary in addition to the base allowlist.
     env_allowlist: tuple[str, ...] = ()
+    # Restart-safe environment/hook setup, executed before M-TEST collection.
+    bootstrap: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -292,6 +295,15 @@ def _load_env_allowlist(table: dict) -> tuple[str, ...]:
     return tuple(raw)
 
 
+def _load_bootstrap(table: dict) -> tuple[str, ...]:
+    raw = table.get("bootstrap", [])
+    if not isinstance(raw, list) or any(
+        not isinstance(step, str) or not step.strip() for step in raw
+    ):
+        _fail_closed("[host-contract].bootstrap must be an array of nonempty commands")
+    return tuple(raw)
+
+
 def load_host_contract(path: Path) -> HostContract:
     """Parse the ``[host-contract.*]`` tables of a project.toml (fail-closed)."""
     with open(path, "rb") as handle:
@@ -347,6 +359,7 @@ def load_host_contract(path: Path) -> HostContract:
         smoke_result_channel=_optional_channel(table.get("smoke", {}), "smoke"),
         smoke_timeout_seconds=int(table.get("smoke", {}).get("timeout_seconds", 600)),
         env_allowlist=_load_env_allowlist(table),
+        bootstrap=_load_bootstrap(table),
     )
 
 
@@ -400,6 +413,8 @@ def validate_host_contract(contract: HostContract, repo: Path) -> tuple[str, ...
     """Report unknown placeholders across every declared command-bearing field."""
     errors: list[str] = []
     _scan_placeholders(errors, contract.install, BASE_PLACEHOLDERS, "install")
+    for step in contract.bootstrap:
+        _scan_placeholders(errors, step, BASE_PLACEHOLDERS, "bootstrap")
     for gate in contract.local_gates:
         _scan_placeholders(errors, gate.command, BASE_PLACEHOLDERS, f"local_gate[{gate.kind}]")
     for template in (

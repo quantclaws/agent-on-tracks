@@ -60,7 +60,7 @@ tracks 的 `.githooks/pre-commit` 等宿主 hook 遵守：
 - **path-scoped**：带显式路径参数时只检查这些路径；无参数时只检查 staged ACMR（`git diff --cached --name-only --diff-filter=ACMR`）。未提交的 out-of-scope 脏文件不得否决提交。
 - **lint-only / RGR-compatible**：只跑 lint、复杂度、长度、重复度等静态检查，**永不执行测试**；因此 RED 阶段提交可通过 hook，测试结论由 Runtime gate 负责。
 - **显式路径 + env hints**：`TRACKS_HOOK_ROOT`（默认 git toplevel）指定树根/配置权威；`TRACKS_HOOK_BIN`（默认 `$ROOT/.venv/bin`）指定工具目录。Runtime 在 gate worktree 中调用宿主 hook 时传主仓 root/bin，使 gate 文件用主仓工具链检查。
-- **宿主自持/不透明**：宿主项目提供自己的 hook 脚本与工具链；Runtime 只按 `git config core.hooksPath` 解析并执行 `<hooksPath>/pre-commit`（缺省 `.githooks/pre-commit`），不硬编码 Python/工具、不假定 `.githooks`，也**绝不写** `core.hooksPath`（worktree 临时覆盖用 `git -c`）。
+- **宿主自持/不透明**：宿主项目提供自己的 hook 脚本与工具链；Runtime 按 `git config core.hooksPath` 解析并执行 `<hooksPath>/pre-commit`（缺省 `.githooks/pre-commit`），不硬编码 Python/工具、不假定 `.githooks`。首次启用 hook 必须由 Archer 写入 `[host-contract].bootstrap`，由 Runtime 执行该声明；Runtime 不自行猜测或写入 hook 配置（worktree 临时覆盖用 `git -c`）。
 - **执行点**：Runtime 的 checkpoint/refactor 等产品提交走 `git commit`（hook 自动触发）；`commit-tree` 形成的正式 G 不触发 git hook，因此 Runtime 在 GREEN gate 内对 Devon 变更的 `.py` 路径显式调用宿主 hook；非零即 `verdict.failed(check="commit")` 并重派，hook 缺失/不可执行同样 fail closed。
 
 ### 2.2 JavaScript / TypeScript

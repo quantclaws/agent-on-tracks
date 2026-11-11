@@ -66,6 +66,9 @@ const EVENT_LABELS = {
   "verdict.failed": "校验未通过",
   "run.completed": "运行完成",
   "triage.recorded": "triage 裁决已记录",
+  "environment.preparation_started": "准备开发环境",
+  "environment.step_completed": "环境准备步骤完成",
+  "environment.prepared": "开发环境已就绪",
 };
 
 // 服务心跳事件（合并流每 ~5s 一次）：card-action 的“已等 X”以前一个
@@ -3325,6 +3328,7 @@ const LIVE_STATE_EVENTS = new Set([
   "stage.entered", "stage.exited", "run.completed", "attention.required",
   "outcome.received", "verdict.failed", "review.round_started", "task.started",
   "task.completed", "candidate.frozen", "release.previewed", "phase0.blocked",
+  "environment.preparation_started", "environment.step_completed", "environment.prepared",
 ]);
 
 function scheduleLiveStateRefresh(body, context) {

@@ -44,6 +44,7 @@ from tracks.executor.doc_gap_runtime import (
     DocGapCapabilities,
     DocGapRuntime,
 )
+from tracks.executor.environment_face import ExecEnvironmentMixin
 from tracks.executor.escape_face import ExecEscapeMixin
 from tracks.executor.helpers import (  # noqa: F401  (m_impl_runtime lazy-import seam)
     _scoped_commit_if_staged,
@@ -204,6 +205,7 @@ class Executor(
     ExecTestCollectMixin,
     ExecTestRunMixin,
     ExecPhase0Mixin,
+    ExecEnvironmentMixin,
     ExecDispatchMixin,
     ExecWorktreeMixin,
     ExecVerdictMixin,

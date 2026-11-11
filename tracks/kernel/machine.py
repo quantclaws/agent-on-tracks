@@ -377,6 +377,7 @@ class State:
     phase0_status: str | None = None  # UNSEALED|PHASE0_VALIDATING|SEALED|BLOCKED
     phase0_seal_id: str | None = None
     phase0_blocked_reason: str | None = None
+    host_environment_prepared: bool = False
     # v0.6 R6/D-41 selection semantics (interfaces §1c/§1j): the pre-WRITE R1
     # snapshot gate and the latest stamped selection identity.
     baseline_captured: bool = False  # test.baseline_captured(passed) persisted
@@ -651,6 +652,7 @@ _APPLY = {
     "phase0.guard_hardened": kernel_state.on_phase0_guard_hardened,
     "phase0.sealed": kernel_state.on_phase0_sealed,
     "phase0.blocked": on_phase0_blocked,
+    "environment.prepared": kernel_state.on_environment_prepared,
     # v0.8 release pipeline (SM-01, kernel/release reducers -- architecture
     # §338 "kernel/release 注册到 machine"): the five-stage projection over
     # the candidate-bound release event face (NFR-0143 same-identity chain).
@@ -708,6 +710,8 @@ _PENDING_PRESERVING_AUDIT = frozenset(
         "failure.injected",
         "worktree.opened",
         "worktree.closed",
+        "environment.preparation_started",
+        "environment.step_completed",
     }
 )
 
@@ -834,6 +838,8 @@ def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
     sealed, and ``(False, None)`` keeps the classic M-TEST routing (SEALED,
     or a version whose extension selects no Phase 0 callbacks).
     """
+    if s.workflow_profile and not s.host_environment_prepared:
+        return False, Command(kind="prepare_host_environment")
     status = s.phase0_status
     if status == "SEALED":
         return False, None

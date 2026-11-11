@@ -278,6 +278,7 @@ _SLIM_WORKFLOW_TYPES = frozenset({
     "command.issued", "outcome.received", "red.validated",
     "test.collected", "test.baseline_captured", "test.selected",
     "test.written", "test.committed",
+    "environment.preparation_started", "environment.step_completed", "environment.prepared",
     "candidate.frozen", "candidate.stale",
     "local_gate.passed", "local_gate.failed",
     "full.executed", "evidence.reused", "evidence.staled",

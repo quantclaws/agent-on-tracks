@@ -15,6 +15,7 @@ from tracks.capabilities import supports_m_impl
 from tracks.effects.backend import SHIELD_LAYERS
 from tracks.effects.fake_shield import _ac_slug
 from tracks.frontmatter import split_frontmatter
+from tracks.host_contract_defaults import _DEFAULT_HOST_CONTRACT_TOML
 
 # spec items the fake acceptance draft must cover (FR-0170 trace)
 _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
@@ -237,7 +238,8 @@ class FakeDesignMixin:
             'writable = ["tracks/", "tests/unit/"]\n\n'
             "[layout.shield]\n"
             'writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", '
-            '"tests/assets/", "tests/counterexamples/"]\n',
+            '"tests/assets/", "tests/counterexamples/"]\n'
+            + (_DEFAULT_HOST_CONTRACT_TOML if getattr(self, "workflow_profile", None) else ""),
             encoding="utf-8",
         )
         # Review-1 pairing: a declared layer's collect command must see a
