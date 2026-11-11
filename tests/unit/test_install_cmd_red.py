@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 from tracks.cli.main import main
@@ -374,3 +375,61 @@ def test_ac_0354_01_same_version_reinstall_converges(tmp_path, capsys):
     assert json.loads((target / "opencode.json").read_text(encoding="utf-8"))[
         "agent"
     ].keys() >= {"Archer", "Devon", "Shield"}
+
+
+# AC-FR0348-01@v0.12 TRACKS-TRACE installed runtime metadata cannot dirty a release candidate
+def test_runtime_and_service_state_are_ignored_but_product_files_are_visible(tmp_path):
+    target = tmp_path / "proj"
+    wheel = _wheel(tmp_path)
+    assert main(["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)]) == 0
+    for relative in ("runtime/sessions/Scribe.json", "runtime/future-cache/data", "service/service.db"):
+        file = target / ".tracks" / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("runtime state\n")
+    assert git(target, "status", "--porcelain", "--untracked-files=all").stdout == ""
+    (target / "product.py").write_text("value = 1\n")
+    assert git(target, "status", "--porcelain").stdout.strip() == "?? product.py"
+    assert not (target / ".gitignore").exists()
+
+
+# AC-FR0352-01@v0.12 TRACKS-TRACE reinstall migrates managed rules without editing host ignores
+def test_reinstall_migrates_old_runtime_ignore_rules(tmp_path):
+    target = tmp_path / "proj"
+    init_git_project(target)
+    wheel = _wheel(tmp_path)
+    args = ["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)]
+    assert main(args) == 0
+    managed = target / ".tracks/.gitignore"
+    old = "# custom Tracks ignore\ncustom-cache/\nreport/\n*.lock\n"
+    managed.write_text(old)
+    git(target, "add", "-f", ".tracks/.gitignore")
+    git(target, "commit", "-m", "legacy scaffold")
+    original_host_ignore = (target / ".gitignore").read_bytes()
+    assert main(args) == 0
+    assert managed.read_text().startswith(old)
+    assert (target / ".gitignore").read_bytes() == original_host_ignore
+    for relative in ("runtime/sessions/Scribe.json", "service/service.db"):
+        file = target / ".tracks" / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("runtime state\n")
+    assert git(target, "status", "--porcelain", "--untracked-files=all").stdout == ""
+
+
+# AC-FR0354-01@v0.12 TRACKS-TRACE failed health check restores migrated ignore bytes
+def test_failed_reinstall_restores_legacy_ignore_rules(tmp_path):
+    target = tmp_path / "proj"
+    wheel = _wheel(tmp_path)
+    args = ["install", str(target), "--version", "9.9.9", "--wheel", str(wheel)]
+    assert main(args) == 0
+    managed = target / ".tracks/.gitignore"
+    old = b"# custom legacy rules\nreport/\n*.lock\n"
+    managed.write_bytes(old)
+    broken = tmp_path / "broken.whl"
+    with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(broken, "w") as output:
+        for member in source.namelist():
+            body = source.read(member)
+            if member == "tracks/cli/main.py":
+                body = b"def main(argv=None):\n    raise RuntimeError('health failure')\n"
+            output.writestr(member, body)
+    assert main(["install", str(target), "--version", "9.9.9", "--wheel", str(broken)]) == 1
+    assert managed.read_bytes() == old

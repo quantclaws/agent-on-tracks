@@ -33,7 +33,7 @@ STOP_TIMEOUT_S = 5.0
 # (interfaces §1b.4); the host root .gitignore is deliberately never touched.
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
-TRACKS_GITIGNORE = "report/\n*.lock\n"
+TRACKS_GITIGNORE = "report/\n*.lock\n/runtime/\n/service/\n"
 ENV_GITIGNORE = "*"
 
 _VERSION_ASSIGNMENT = re.compile(
@@ -184,6 +184,16 @@ def _write_if_absent(path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def _ensure_ignore_rules(path: Path, rules: str) -> None:
+    """Migrate only the Tracks-owned ignore file, retaining existing custom rules."""
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    present = set(existing.splitlines())
+    missing = [rule for rule in rules.splitlines() if rule not in present]
+    if missing:
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        path.write_text(existing + separator + "\n".join(missing) + "\n", encoding="utf-8")
+
+
 def scaffold_tracks_dirs(root: Path) -> None:
     """Create the idempotent ``.tracks`` scaffold without touching the host.
 
@@ -193,7 +203,7 @@ def scaffold_tracks_dirs(root: Path) -> None:
     tracks_dir = Path(root) / ".tracks"
     for name in ("projects", "runtime", "wiki"):
         (tracks_dir / name).mkdir(parents=True, exist_ok=True)
-    _write_if_absent(tracks_dir / ".gitignore", TRACKS_GITIGNORE)
+    _ensure_ignore_rules(tracks_dir / ".gitignore", TRACKS_GITIGNORE)
     _write_if_absent(tracks_dir / "runtime" / ".gitignore", RUNTIME_GITIGNORE)
     _write_if_absent(tracks_dir / "projects" / ".gitignore", PROJECTS_GITIGNORE)
     for name in ("projects", "wiki"):
