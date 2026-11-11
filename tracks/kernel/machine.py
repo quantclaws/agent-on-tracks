@@ -303,6 +303,7 @@ from .stage_registry import (
 class State:
     run_id: str | None = None
     version: str | None = None
+    workflow_profile: str | None = None
     status: str = "active"  # active | completed | awaiting_human
     stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL | M-DESIGN
     substate: str | None = None
@@ -376,6 +377,7 @@ class State:
     phase0_status: str | None = None  # UNSEALED|PHASE0_VALIDATING|SEALED|BLOCKED
     phase0_seal_id: str | None = None
     phase0_blocked_reason: str | None = None
+    host_environment_prepared: bool = False
     # v0.6 R6/D-41 selection semantics (interfaces §1c/§1j): the pre-WRITE R1
     # snapshot gate and the latest stamped selection identity.
     baseline_captured: bool = False  # test.baseline_captured(passed) persisted
@@ -384,6 +386,7 @@ class State:
     ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries (WAIVED is terminal)
     ledger_rebuilt: bool = False  # ledger WAL has been projected during replay
     ledger_entries: dict = field(default_factory=dict)  # identity -> replay metadata/state
+    ledger_waived_nodes: list[str] = field(default_factory=list)  # durable known-red exclusion
     # Review pin (FR-0244-04): the explicit persisted unit-only hotfix
     # increment fact -- the ONLY key that releases an empty-R2 M-TEST
     # selection. Projected by the increment.declared reducer from a
@@ -649,6 +652,7 @@ _APPLY = {
     "phase0.guard_hardened": kernel_state.on_phase0_guard_hardened,
     "phase0.sealed": kernel_state.on_phase0_sealed,
     "phase0.blocked": on_phase0_blocked,
+    "environment.prepared": kernel_state.on_environment_prepared,
     # v0.8 release pipeline (SM-01, kernel/release reducers -- architecture
     # §338 "kernel/release 注册到 machine"): the five-stage projection over
     # the candidate-bound release event face (NFR-0143 same-identity chain).
@@ -706,6 +710,8 @@ _PENDING_PRESERVING_AUDIT = frozenset(
         "failure.injected",
         "worktree.opened",
         "worktree.closed",
+        "environment.preparation_started",
+        "environment.step_completed",
     }
 )
 
@@ -740,8 +746,14 @@ def _preserves_publish_pending(s: State, ev: EventEnvelope) -> bool:
 
 def apply(s: State, ev: EventEnvelope) -> State:
     if ev.type != "command.issued":
+        dispatch_receipt = (
+            ev.type == "advisory.recorded"
+            and ev.payload.get("area") == "dispatch_recovery"
+            and s.pending is not None
+            and s.pending.get("kind") == "dispatch_agent"
+        )
         preserves = (
-            ev.type in _PENDING_PRESERVING_AUDIT
+            (ev.type in _PENDING_PRESERVING_AUDIT or dispatch_receipt)
             and s.pending is not None
             and ev.command_id is not None
             and ev.command_id == s.pending.get("command_id")
@@ -826,10 +838,12 @@ def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
     sealed, and ``(False, None)`` keeps the classic M-TEST routing (SEALED,
     or a version whose extension selects no Phase 0 callbacks).
     """
+    if s.workflow_profile and not s.host_environment_prepared:
+        return False, Command(kind="prepare_host_environment")
     status = s.phase0_status
     if status == "SEALED":
         return False, None
-    before_mtest = _resolve_before_mtest(s.version)
+    before_mtest = _resolve_before_mtest(s.workflow_profile or s.version)
     if before_mtest is None:
         return False, None
     if status == "BLOCKED":

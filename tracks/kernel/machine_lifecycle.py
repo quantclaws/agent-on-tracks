@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
     s.run_id, s.version = ev.run_id, ev.version
+    s.workflow_profile = p.get("workflow_profile")
 
 
 def _reset_m_impl_cycle(s: State) -> None:
@@ -84,6 +85,8 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         # already-resolved run identity (`_emit` stamps `self.version`).
         s.version = ev.version
     s.stage = p["stage"]
+    if s.stage == "M-DESIGN":
+        s.host_environment_prepared = False
     sd = _STAGES.get(s.stage)
     if sd is None:
         # SM-01 five-stage release pipeline (architecture §338 "kernel/
@@ -134,6 +137,8 @@ def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["to_stage"]
+    if s.stage == "M-DESIGN":
+        s.host_environment_prepared = False
     # IF-RELEASE-003 (face C): re-entry routes via the target StageDef's
     # initial_substate (M-TEST=DISPATCH, M-IMPL=BASELINE) — no fossilized
     # DRAFT literal. Author stages keep DRAFT; the M-HOTFIX-TRIAGE branch

@@ -51,7 +51,7 @@ from tracks.baseline import revision_digest
 from tracks.discuss.parser import parse_threads
 from tracks.frontmatter import split_frontmatter
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
-from tracks.server import projections
+from tracks.server import projections, projections_run
 
 # E-06 material set (§2b #15-16, §1n.4): the six-piece doc domain with
 # `design` kept as the architecture alias. The mapping is owned by the
@@ -612,12 +612,12 @@ async def timeline(request: Any) -> Any:
 
 
 async def ac_chain(request: Any) -> Any:
-    """GET /api/runs/{run_id}/ac-chain: AC -> test node -> result -> evidence."""
+    """GET /api/runs/{run_id}/ac-chain: cheap existence gate + AC evidence chain."""
     home = _home(request)
     run_id = str(request.path_params.get("run_id", ""))
-    if projections.project_run_detail(home, run_id) is None:
+    if (project := _project_for_run(home, run_id)) is None:
         return _not_found("run", run_id)
-    return _response(200, request, projections.project_ac_chain(home, run_id))
+    return _response(200, request, projections.project_ac_chain(home, run_id, project=project))
 
 
 # -- GET /api/runs/{run_id}/todos and GET /api/todos -------------------------
@@ -955,10 +955,7 @@ def _registered_project(request: Any, pid: str) -> dict | None:
 
 
 def _registry_versions(repo_path: str) -> list[dict]:
-    """§1e.2 registry: runs grouped per version, numeric-descending order.
-
-    #224/#227 (NFR-0158-02): each run row carries its version's story.md
-    frontmatter title, falling back to the raw run id (the hotfix case)."""
+    """Build the release registry grouped by version."""
     import re
 
     groups: dict[str, list[dict]] = {}
@@ -981,9 +978,16 @@ def _registry_versions(repo_path: str) -> list[dict]:
             row["title"] = title or row["run_id"]
             row["version"] = version
     named = [name for name in groups if projections._version_sort_key(name)]
+    ordered = sorted(
+        named,
+        key=lambda v: (
+            not projections._registry_run_active(groups[v]),
+            projections._registry_version_key(v),
+        ),
+    )
     return [
-        {"version": version, "runs": groups[version]}
-        for version in sorted(named, key=projections._version_sort_key)
+        {"version": v, "runs": groups[v], "active": projections._registry_run_active(groups[v])}
+        for v in ordered
     ]
 
 
@@ -1011,7 +1015,7 @@ async def releases(request: Any) -> Any:
             "repo_name": Path(repo_path).name,
         },
         "versions": _registry_versions(repo_path),
-        "backlog": projections._backlog_group(repo_path),
+        "backlog": projections_run._backlog_group_for_home(home, repo_path),
         "archive": archive,
     }
     return _response(200, request, payload)
@@ -1042,6 +1046,7 @@ def _intake_json(row: dict, *, with_report: bool) -> dict:
     payload = {
         "intake_id": row.get("intake_id"),
         "source": row.get("source"),
+        "content": row.get("content"),
         "status": row.get("status"),
         "decision": row.get("decision"),
         "created_ts": row.get("created_at"),

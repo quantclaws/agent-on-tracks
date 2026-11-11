@@ -64,7 +64,8 @@ def test_collect_node_ids_helpers_append_the_verbosity_pin():
 def test_run_collect_command_retries_quiet_listing_with_pin(monkeypatch):
     calls = []
 
-    def fake_run(argv, cwd=None, capture_output=True, text=True):
+    def fake_run(argv, cwd=None, capture_output=True, text=True, env=None):
+        assert env is not None and "PATH" in env
         calls.append(list(argv))
         if len(calls) == 1:
             return _proc(stdout=_QUIET_LISTING)
@@ -87,7 +88,8 @@ def test_run_collect_command_retries_quiet_listing_with_pin(monkeypatch):
 def test_run_collect_command_keeps_node_listing_without_retry(monkeypatch):
     calls = []
 
-    def fake_run(argv, cwd=None, capture_output=True, text=True):
+    def fake_run(argv, cwd=None, capture_output=True, text=True, env=None):
+        assert env is not None and "PATH" in env
         calls.append(list(argv))
         return _proc(stdout=_NODE_LISTING)
 
@@ -100,7 +102,8 @@ def test_run_collect_command_keeps_node_listing_without_retry(monkeypatch):
 def test_run_collect_command_keeps_original_when_retry_does_not_recover(monkeypatch):
     calls = []
 
-    def fake_run(argv, cwd=None, capture_output=True, text=True):
+    def fake_run(argv, cwd=None, capture_output=True, text=True, env=None):
+        assert env is not None and "PATH" in env
         calls.append(list(argv))
         if len(calls) == 1:
             return _proc(stdout=_QUIET_LISTING)

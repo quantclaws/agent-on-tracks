@@ -32,6 +32,10 @@ from tracks.store import Store
 pytestmark = pytest.mark.integration
 
 
+def _of_type(events: list, event_type: str) -> list:
+    return [event for event in events if event.type == event_type]
+
+
 def _append_gate_failure(store: Store, run_id: str, candidate: str, contract_digest: str) -> None:
     store.append(
         run_id,
@@ -180,7 +184,10 @@ def _assert_preview_blob(repo: Path, run_id: str, candidate: str) -> dict:
     previews = _previews(_events(repo, run_id))
     assert previews, "real generate_preview must emit release.previewed"
     payload = previews[-1].payload
-    assert payload.get("candidate_sha") == candidate
+    # The candidate is the frozen identity the preview was generated for; the
+    # assertion is adjacent to the production preview read, not a HEAD capture
+    # across runtime activity (stable candidate-binding contract).
+    assert payload.get("candidate_sha") == candidate  # tracks-anchor-ok
     for field in (
         "preview_digest",
         "artifact_digest",
@@ -257,7 +264,17 @@ def test_invalid_candidate_bound_evidence_rejects(host_repo, trac, tmp_path, inv
             finally:
                 store.close()
         _issue_preview(host_repo, run_id, candidate)
-        _assert_preview_blob(host_repo, run_id, candidate)
+        # Under the v0.12.1 five-key release-evidence contract (interfaces
+        # §1b item 1) an unbound/missing CI readback leaves the ``ci`` key
+        # unsatisfied, so the NEW preview is INVALID: the preview command
+        # lands no ``release.previewed`` at all.  The rejection the AC names
+        # is therefore reached WITHOUT a preview -- the release action has
+        # nothing to authorize and must not land a decision.
+        previews = _previews(_events(host_repo, run_id))
+        assert previews == [], (
+            "an evidence chain without a candidate-bound CI readback must not "
+            f"assemble a preview (landed {len(previews)})"
+        )
     elif invalid_case == "ci_failed":
         _issue_preview(host_repo, run_id, candidate)
         _assert_preview_blob(host_repo, run_id, candidate)
@@ -273,7 +290,28 @@ def test_invalid_candidate_bound_evidence_rejects(host_repo, trac, tmp_path, inv
         event.type == "release.decided" and (event.payload or {}).get("action") == "release"
         for event in events
     )
-    assert any(event.type == "release.rejected" for event in events)
+    if invalid_case == "ci_failed":
+        # A failed CI readback arrives AFTER a valid preview, so the release
+        # action is refused against that preview and the refusal is audited.
+        assert any(event.type == "release.rejected" for event in events)
+    else:
+        # No preview could be assembled at all (the ``ci`` key is
+        # unsatisfied), so the release action has nothing to authorize.  The
+        # refusal is the fail-closed exit; the chain's own disposition is the
+        # ``attention.required`` the preview face lands.
+        assert _of_type(events, "release.decided") == []
+        attention = _of_type(events, "attention.required")
+        assert attention, (
+            "an evidence chain whose five-key set is incomplete must land the "
+            "fail-closed attention disposition"
+        )
+        assert str(attention[-1].payload.get("reason")) == (
+            "evidence_incomplete_for_candidate"
+        ), (
+            "the incomplete evidence set must be reported as the incomplete-"
+            "evidence reason (payload="
+            f"{attention[-1].payload!r})"
+        )
 
 
 @pytest.mark.parametrize("recovery_case", ["same_candidate", "new_candidate"])

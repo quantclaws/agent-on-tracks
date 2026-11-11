@@ -34,6 +34,7 @@ from tracks.executor.dispatch import (
     select_failure,  # noqa: F401
     static_parity_check,  # noqa: F401
 )
+from tracks.executor.dispatch_recovery import ExecDispatchRecoveryMixin
 from tracks.executor.doc_face import (
     _NEXT_STAGE,  # noqa: F401
     ExecDocMixin,
@@ -43,6 +44,7 @@ from tracks.executor.doc_gap_runtime import (
     DocGapCapabilities,
     DocGapRuntime,
 )
+from tracks.executor.environment_face import ExecEnvironmentMixin
 from tracks.executor.escape_face import ExecEscapeMixin
 from tracks.executor.helpers import (  # noqa: F401  (m_impl_runtime lazy-import seam)
     _scoped_commit_if_staged,
@@ -151,7 +153,11 @@ def hotfix_entry_run(repo, store, issue_number: int, scenario: str) -> str:
         if report.status == "pass"
         else f"hotfix-{issue_number}"
     )
-    store.append(run_id, version, "hotfix.requested", {"issue": issue_number, "scenario": scenario})
+    from tracks.project_runtime import new_run_metadata
+
+    store.append(run_id, version, "hotfix.requested", {
+        "issue": issue_number, "scenario": scenario, **new_run_metadata(repo),
+    })
     store.append(run_id, version, "stage.entered", {"stage": "M-HOTFIX-TRIAGE"})
     ex = Executor(store, repo, run_id)
     ex.version = version  # pre-PRECHECK state cannot re-derive the target
@@ -190,6 +196,7 @@ def hotfix_human_anchor(repo, store, run_id: str, refs: list[str]) -> int:
 
 
 class Executor(
+    ExecDispatchRecoveryMixin,
     MImplRuntimeMixin,
     ExecObserveMixin,
     ExecDocMixin,
@@ -198,6 +205,7 @@ class Executor(
     ExecTestCollectMixin,
     ExecTestRunMixin,
     ExecPhase0Mixin,
+    ExecEnvironmentMixin,
     ExecDispatchMixin,
     ExecWorktreeMixin,
     ExecVerdictMixin,
@@ -235,10 +243,13 @@ class Executor(
         self.store = store
         self.repo = repo
         self.run_id = run_id
-        self.version = _resolve_run_version(store.state(run_id))
+        initial = store.state(run_id)
+        self.version = _resolve_run_version(initial)
+        self.workflow_profile = initial.workflow_profile
         # run_id 传入 opencode backend 启用 D-39 用户简化版（#44）session
         # 复用（fake backend 忽略该参数）。
         self.backend = select_backend(repo, self.version, run_id=run_id)
+        self.backend.workflow_profile = self.workflow_profile
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
         # Optional context-manager factory the CLI uses to release the

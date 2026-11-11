@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 
 import pytest
 
+from tests._support.release_premises import append_verify_release_premises
 from tests.e2e.helpers import walk_to_awaiting_release
+from tracks import paths
+from tracks.executor.m_verify import freeze_candidate
 from tracks.executor.release_gate import compute_preview_digest
+from tracks.store import Store
 
 pytestmark = pytest.mark.integration
 
@@ -76,14 +81,13 @@ def test_stale_preview_reported(host_repo, trac, event_log, ci_echo_standin):
     assert judge_preview_stale({}, {}) is None
     assert judge_preview_stale({"candidate_sha": "a" * 40}, {"candidate_sha": "b" * 40}) == "candidate_drift"
 
-    walk_to_awaiting_release(trac, host_repo=host_repo)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     events = event_log()
     previewed = [e for e in events if e["type"] == "release.previewed"]
     assert previewed
     first_digest = previewed[0]["payload"]["preview_digest"]
     # Cause stale by creating a new commit (candidate drift)
     (host_repo / "stale.txt").write_text("x\n", encoding="utf-8")
-    import subprocess
 
     subprocess.run(["git", "add", "stale.txt"], cwd=host_repo, check=True)
     subprocess.run(["git", "commit", "-m", "stale"], cwd=host_repo, check=True)
@@ -96,8 +100,31 @@ def test_stale_preview_reported(host_repo, trac, event_log, ci_echo_standin):
     release_attempt = trac("release", "--action", "release")
     assert release_attempt.returncode != 0
     assert "stale" in (release_attempt.stdout + release_attempt.stderr).lower()
-    # Regeneration must create a new previewed event, old digest retained
-    trac("run")
+    # Regeneration must create a new previewed event, old digest retained.
+    # interfaces §1b item 1 binds the five release-evidence keys to the
+    # FROZEN candidate, so the post-drift preview needs the NEW candidate's
+    # authoritative evidence: freeze the post-drift HEAD, append the accepted
+    # upstream evidence premises bound to it (the shared premise helper), and
+    # drive the production preview command once (the extra drive).
+    identity = freeze_candidate(host_repo)
+    accepted = next(
+        e["payload"] for e in events if e["type"] == "security.assessed"
+    )
+    store = Store(paths.tracks_home(host_repo))
+    try:
+        append_verify_release_premises(
+            store,
+            run_id,
+            store.state(run_id).version or "v0.8",
+            identity.candidate_sha,
+            identity.branch,
+            str(accepted.get("contract_digest") or ""),
+            "",
+            str(accepted.get("policy_digest") or ""),
+        )
+    finally:
+        store.close()
+    assert trac("run").returncode == 0
     events2 = event_log()
     previewed2 = [e for e in events2 if e["type"] == "release.previewed"]
     assert len(previewed2) >= 2

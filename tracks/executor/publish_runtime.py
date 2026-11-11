@@ -16,6 +16,7 @@ from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
     load_host_contract,
 )
+from tracks.executor.milestone import emit_stage_handoff
 from tracks.executor.publish import plan_operations
 from tracks.executor.release_gate import (
     active_release_branch,
@@ -875,6 +876,10 @@ def _execute_record(
         fail(plan_error, None)
         return False
     if planned is not None:
+        # IF-STAGE-001 §1f: the first publish.planned of the batch is the
+        # M-RELEASE -> M-PUBLISH handoff point (visit-guarded, so a
+        # retry_tail replay of the batch never duplicates the pair).
+        emit_stage_handoff(emit, events, "M-RELEASE", "M-PUBLISH", command_id)
         emit("publish.planned", planned, command_id=command_id)
     kind = record["operation_kind"]
     if kind == "tag":

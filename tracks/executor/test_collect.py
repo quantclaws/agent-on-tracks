@@ -16,7 +16,8 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from tracks.executor.helpers import git, parse_collected_nodes, run_collect_command
-from tracks.executor.host_contract import declared_install_interpreter
+from tracks.executor.host_contract import contract_env_allowlist, declared_install_interpreter
+from tracks.executor.host_env import host_process_env
 from tracks.executor.test_select import (
     BaselineAssets,
     TestSelectError,
@@ -226,6 +227,9 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                env=host_process_env(
+                    contract_allowlist=contract_env_allowlist(cwd)
+                ),
             )
             rc = proc.returncode
             # M-TEST collection: test exit_code=5 ("no tests collected")

@@ -15,6 +15,11 @@ here (SM-01.3/SM-01.4). No I/O, no clock, no env reads (NFR-02).
 from __future__ import annotations
 
 
+def on_environment_prepared(state, payload: dict, event) -> None:
+    """The declared host setup finished before any test collection."""
+    state.host_environment_prepared = True
+
+
 def on_phase0_coverage(state, payload: dict, event) -> None:
     """Project ``phase0.coverage``: Phase 0 stays validating until sealed."""
     state.phase0_status = "PHASE0_VALIDATING"

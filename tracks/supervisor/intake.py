@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -280,6 +282,24 @@ def _now_iso() -> str:
 # create_run journey -> v0.8 precheck scenario (IF-HOTFIX-003 P-2 vocabulary).
 _HOTFIX_SCENARIOS = {"hotfix_post": "post-release", "hotfix_dev": "dev"}
 
+# IF-ATTN-001 §1d.1: GITHUB_TOKEN is the only canonical credential. When it
+# is absent but a legacy variable is exported, the preflight reports an
+# actionable hint instead of silently falling back to the legacy channel.
+_LEGACY_GITHUB_TOKEN_VARS = ("GITHUB_ACCESS_TOKEN", "GH_TOKEN")
+
+
+def canonical_credential_hint() -> str:
+    """One-line diagnostic hint for a present legacy GitHub token variable."""
+    if os.environ.get("GITHUB_TOKEN"):
+        return ""
+    for legacy in _LEGACY_GITHUB_TOKEN_VARS:
+        if os.environ.get(legacy):
+            return (
+                f"found {legacy} in environment; "
+                f'export GITHUB_TOKEN="${legacy}"'
+            )
+    return ""
+
 
 def _issue_number(value: Any) -> int | None:
     """The create_run ``issue`` param as an int; None when absent/uncoercible."""
@@ -414,16 +434,85 @@ def _append_backlog_event(
         store.close()
 
 
-def _hotfix_issue(repo: Path, issue_number: int | None) -> Any:
-    """Host issue snapshot for the precheck (IF-HOTFIX-003)"""
+def _hotfix_issue(repo: Path, issue_number: int | None) -> tuple[Any, Any]:
+    """Host issue snapshot plus its classified fetch failure (IF-HOTFIX-003).
+
+    ``(issue, None)`` on a confirmed read, ``(None, error)`` when the fetch
+    fails. The classification is preserved for the precheck so a missing
+    credential cannot be downgraded to ``issue_not_found`` (IF-ATTN-001
+    §1d.4).
+
+    IF-ATTN-001 §1d.1: the canonical-credential preflight runs HERE, before
+    the issue channel is selected, so the deterministic (fake) channel
+    cannot bypass it. A fake stand-in "finds" an issue without a
+    credential, which would report ``issue_not_found`` for what is
+    really a missing canonical credential.
+    """
     if issue_number is None:
-        return None
+        return None, None
     from tracks.effects.github import GithubIssuesError, select_issue_backend
 
+    if issue_channel() == "live" and not os.environ.get("GITHUB_TOKEN"):
+        return None, missing_credential_error()
     try:
-        return select_issue_backend(repo, "").fetch_issue(issue_number)
-    except GithubIssuesError:
-        return None
+        return select_issue_backend(repo, "").fetch_issue(issue_number), None
+    except GithubIssuesError as exc:
+        return None, exc
+
+
+def issue_channel() -> str:
+    """The issue channel this run writes through: ``live`` or ``stand_in``.
+
+    The AGENT channel (``TRAC_AGENT_BACKEND`` / ``TRAC_FAKE_SIMULATE``) and
+    the ISSUE channel are separate concerns: the agent channel decides who
+    produces the documents, the issue channel decides where the
+    operator-facing issues live. ``TRAC_ISSUE_CHANNEL`` names the issue
+    channel explicitly; without it the issue channel follows the agent
+    channel (the historical behaviour, so every existing journey keeps
+    its stand-in).
+
+    The explicit value is the seam the missing-token journey needs: it
+    selects the LIVE channel while the agent channel stays deterministic,
+    so the canonical-credential preflight is exercised for real.
+    """
+    explicit = os.environ.get("TRAC_ISSUE_CHANNEL", "").strip().lower()
+    if explicit in ("live", "stand_in"):
+        return explicit
+    if os.environ.get("TRAC_FAKE_SIMULATE"):
+        return "stand_in"
+    if os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake":
+        return "stand_in"
+    return "live"
+
+
+def _live_issue_channel() -> bool:
+    """True when the LIVE issue channel is selected (service-intake gate)."""
+    return issue_channel() == "live"
+
+
+def missing_credential_error() -> Any:
+    """The classified missing_token error for an absent canonical token."""
+    from tracks.effects.github_transport import GithubIssuesError
+
+    return GithubIssuesError(
+        "missing_token",
+        "GITHUB_TOKEN not set - see the live GitHub journey prerequisites "
+        "section in docs/getting-started/installation.md "
+        "(GITHUB_TOKEN / TRAC_GITHUB_REPO / TLS & TRAC_GITHUB_CA_BUNDLE)",
+    )
+
+
+def _fetch_failure_precheck(error: Any) -> Any:
+    """Classified hotfix rejection with the canonical-credential hint.
+
+    ``fetch_failure_report`` owns the IF-HOTFIX-011 classification -> next
+    mapping; a present legacy token variable adds the IF-ATTN-001 §1d.1
+    actionable hint without turning the legacy variable into a fallback.
+    """
+    from tracks.executor.hotfix import fetch_failure_report  # cycle-safe import
+
+    report = fetch_failure_report(getattr(error, "classification", "") or "network")
+    return _with_credential_hint(report)
 
 
 def _hotfix_precheck(repo: Path, issue_number: int | None, scenario: str) -> Any:
@@ -438,9 +527,20 @@ def _hotfix_precheck(repo: Path, issue_number: int | None, scenario: str) -> Any
             report, _issue = precheck_hotfix_report(repo, store, issue_number, scenario)
         finally:
             store.close()
-        return report
-    return precheck_hotfix(_hotfix_issue(repo, issue_number), scenario, _git_branch_lines(repo),
+        return _with_credential_hint(report)
+    issue, fetch_error = _hotfix_issue(repo, issue_number)
+    if fetch_error is not None:
+        return _fetch_failure_precheck(fetch_error)
+    return precheck_hotfix(issue, scenario, _git_branch_lines(repo),
         None, paths.projects_dir(tracks_home), set())
+
+
+def _with_credential_hint(report: Any) -> Any:
+    """Attach the IF-ATTN-001 §1d.1 hint to a classified fetch failure."""
+    hint = canonical_credential_hint()
+    if hint and getattr(report, "reason", None) == "issue_fetch_failed":
+        return replace(report, next=f"{hint}; {report.next or ''}".strip())
+    return report
 
 
 def _preflight_develop_gates(

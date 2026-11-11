@@ -7,6 +7,7 @@ never silently dropped (FR-0304).
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,21 @@ from tests.unit.test_server_projections_unit import _seed
 from tracks.server.projections import project_ac_chain
 
 pytestmark = pytest.mark.integration
+
+
+# AC-FR0304-01@v0.9 TRACKS-TRACE historical runs use their own acceptance registry
+def test_ac_chain_keeps_the_runs_version_when_project_moves_on(tmp_path):
+    home, repo = _seed(
+        tmp_path, run_id="historical", ac_ids=["AC-FR0304-01"],
+        events=[{"type": "stage.entered", "payload": {"stage": "M-IMPL"}}],
+    )
+    with sqlite3.connect(home / "service.db") as connection:
+        connection.execute("UPDATE projects SET version = 'v99.0'")
+    newer = repo / ".tracks/projects/v99.0/acceptance.md"
+    newer.parent.mkdir(parents=True)
+    newer.write_text("### AC-FR0304-99\n\nnewer requirement\n")
+    chain = project_ac_chain(home, "historical")
+    assert [row["ac_id"] for row in chain] == ["AC-FR0304-01"]
 
 
 # AC-FR0304-01@v0.9 TRACKS-TRACE ac chain complete

@@ -13,11 +13,15 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+from tests.unit.full_f_authority_support import (
+    CANDIDATE_SHA,
+    FOREIGN_SHA,
+    authoritative_payload,
+)
 from tracks.cli import validate_cmd
 from tracks.cli.validate_cmd import (
     _ac_base_ref,
     _active_hotfix_trace_context,
-    _apply_full_execution,
     _closure_evidence,
     _cmd_check_reach,
     _cmd_check_release_evidence,
@@ -29,7 +33,6 @@ from tracks.cli.validate_cmd import (
     _load_baseline,
     _merge_baseline_repair,
     _merge_mutation_manifest,
-    _merge_stream_event,
     _parse_check_reach_args,
     _parse_check_trace_args,
     _reject_unknown_host_contract_table,
@@ -313,48 +316,30 @@ def test_merge_baseline_repair_and_mutation_manifest():
     _merge_mutation_manifest(entry, {})
 
 
-def test_apply_full_execution_variants():
-    per_ac: dict = {}
-    _apply_full_execution(per_ac, ["AC-1"], {})
-    assert per_ac == {}
-    _apply_full_execution(
-        per_ac, ["AC-1", "AC-2"], {"serves_as_full_f": True, "evidence_ids": ["e1", "e2"]}
-    )
-    assert per_ac["AC-1"]["full_pass_evidence"] == "e1"
-    assert per_ac["AC-2"]["full_pass_evidence"] == "e1"
-    per_ac = {}
-    _apply_full_execution(
-        per_ac, ["AC-1"], {"serves_as_full_f": True, "outcomes_ref": "ref"}
-    )
-    assert per_ac["AC-1"]["full_pass_evidence"] == "ref"
+def test_merge_mutation_manifest_and_baseline_repair_entry():
+    entry: dict = {}
+    _merge_mutation_manifest(entry, {})
+    assert entry == {}
 
-
-def test_merge_stream_event_all_branches():
-    per_ac: dict = {}
-    digest = _merge_stream_event(
-        None,
-        per_ac,
-        ["AC-1"],
-        _ev("mutation.manifest", {"ac": "AC-1@v0.8", "candidate_digest": "d1"}),
+    entry = {"nodes": ["n0"], "baseline_evidence": "old"}
+    _merge_baseline_repair(
+        entry,
+        {
+            "evidence_id": "ev-1",
+            "bound_node": {"node_id": "n1", "digest": "digest-1"},
+        },
     )
-    assert digest == "d1"
-    assert "AC-1" in per_ac
+    assert entry["baseline_evidence"] == "ev-1"
+    assert entry["nodes"] == ["n0", "n1"]
+    assert entry["baseline_candidate"] == "digest-1"
 
-    digest = _merge_stream_event(
-        digest, per_ac, ["AC-1"], _ev("phase0.baseline_repaired", {"ac": "AC-1", "evidence_id": "e"})
-    )
-    assert digest == "d1"
-    assert per_ac["AC-1"]["baseline_evidence"] == "e"
+    _merge_baseline_repair(entry, {"bound_node": {"node_id": "n1"}})
+    assert entry["nodes"] == ["n0", "n1"]  # deduped
+    assert entry["baseline_evidence"] == "ev-1"  # preserved on absent evidence
 
-    _merge_stream_event(
-        digest,
-        per_ac,
-        ["AC-1"],
-        _ev("full.executed", {"serves_as_full_f": True, "evidence_ids": ["full-1"]}),
-    )
-    assert per_ac["AC-1"]["full_pass_evidence"] == "full-1"
-
-    assert _merge_stream_event(digest, per_ac, ["AC-1"], _ev("other")) == "d1"
+    _merge_mutation_manifest(entry, {"candidate_digest": "cand", "patch_digest": "patch"})
+    assert entry["mutation_candidate"] == "cand"
+    assert entry["mutation_evidence"] == "patch"
 
 
 class _FakeStore:
@@ -372,19 +357,182 @@ class _FakeStore:
         pass
 
 
+# AC-FR0267-01@v0.8 TRACKS-TRACE IF-FULLF-001 candidate from frozen, not manifest
+def test_closure_evidence_binds_candidate_from_frozen_not_manifest():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev(
+                    "mutation.manifest",
+                    {"ac": "AC-1@v0.8", "candidate_digest": "manifest-digest"},
+                ),
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev("full.executed", authoritative_payload()),
+            ]
+        },
+    )
+
+    digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert digest == CANDIDATE_SHA
+    assert per_ac["AC-1"]["mutation_candidate"] == "manifest-digest"
+    assert per_ac.get("AC-1", {}).get("full_pass_evidence") == "evidence-7362"
+
+
+# AC-FR0267-01@v0.8 TRACKS-TRACE IF-FULLF-001 trace_closed is a binding source
+def test_closure_evidence_uses_trace_closed_binding():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev("milestone.trace_closed", {"candidate_sha": CANDIDATE_SHA}),
+                _ev("full.executed", authoritative_payload()),
+            ]
+        },
+    )
+
+    digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert digest == CANDIDATE_SHA
+    assert per_ac.get("AC-1", {}).get("full_pass_evidence") == "evidence-7362"
+
+
+# AC-FR0267-01@v0.8 TRACKS-TRACE IF-FULLF-001 baseline repair joins the harvest
+def test_closure_evidence_merges_baseline_repair_under_frozen_candidate():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev(
+                    "phase0.baseline_repaired",
+                    {
+                        "ac": "AC-1@v0.8",
+                        "evidence_id": "baseline-ev",
+                        "bound_node": {"node_id": "n1", "digest": CANDIDATE_SHA},
+                    },
+                ),
+            ]
+        },
+    )
+
+    digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert digest == CANDIDATE_SHA
+    assert per_ac["AC-1"]["baseline_evidence"] == "baseline-ev"
+    assert per_ac["AC-1"]["nodes"] == ["n1"]
+    assert per_ac["AC-1"]["baseline_candidate"] == CANDIDATE_SHA
+
+
+# AC-FR0267-01@v0.8 TRACKS-TRACE IF-FULLF-001 late manifest never rebinds
+def test_closure_evidence_ignores_late_manifest_digest():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev(
+                    "mutation.manifest",
+                    {"ac": "AC-1@v0.8", "candidate_digest": "late-manifest-digest"},
+                ),
+                _ev("full.executed", authoritative_payload()),
+            ]
+        },
+    )
+
+    digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert digest == CANDIDATE_SHA
+    assert per_ac["AC-1"]["mutation_candidate"] == "late-manifest-digest"
+    assert per_ac.get("AC-1", {}).get("full_pass_evidence") == "evidence-7362"
+
+
+# AC-FR0268-01@v0.8 TRACKS-TRACE IF-FULLF-001 credit is candidate-bound
+def test_closure_evidence_rejects_foreign_execution_before_freeze():
+    """A foreign execution emitted before the freeze must stay uncredited.
+
+    The candidate digest is only known from the freeze; crediting with an
+    unknown candidate would let any earlier FULL execution slip in.
+    """
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev(
+                    "full.executed",
+                    authoritative_payload(
+                        execution_commit=FOREIGN_SHA, serves_as_full_f=True
+                    ),
+                ),
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+            ]
+        },
+    )
+
+    digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert digest == CANDIDATE_SHA
+    assert "full_pass_evidence" not in per_ac.get("AC-1", {})
+
+
+# AC-FR0268-01@v0.8 TRACKS-TRACE IF-FULLF-001 5896 shape is not credited
+def test_closure_evidence_rejects_ineligible_serves_true_execution():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev(
+                    "full.executed",
+                    authoritative_payload(
+                        serves_as_full_f=True, full_f_eligible=False
+                    ),
+                ),
+            ]
+        },
+    )
+
+    _digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
+
+    assert "full_pass_evidence" not in per_ac.get("AC-1", {})
+
+
+# AC-FR0268-01@v0.8 TRACKS-TRACE IF-FULLF-001 7362 shape is credited
+def test_closure_evidence_credits_7362_shape_for_current_candidate():
+    store = _FakeStore(
+        runs=["R1"],
+        events={
+            "R1": [
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev("full.executed", authoritative_payload(serves_as_full_f=False)),
+            ]
+        },
+    )
+
+    _digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1", "AC-2"])
+
+    assert per_ac.get("AC-1", {}).get("full_pass_evidence") == "evidence-7362"
+    assert per_ac.get("AC-2", {}).get("full_pass_evidence") == "evidence-7362"
+
+
 def test_closure_evidence_and_version_events():
     store = _FakeStore(
         runs=["R1", "R2"],
         events={
             "R1": [_ev("mutation.manifest", {"ac": "AC-1", "candidate_digest": "d1"})],
-            "R2": [_ev("full.executed", {"serves_as_full_f": True, "evidence_ids": ["f"]})],
+            "R2": [
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+                _ev("full.executed", authoritative_payload(evidence_ids=["f"])),
+            ],
         },
     )
     digest, per_ac = _closure_evidence(store, "v0.1", ["AC-1"])
-    assert digest == "d1"
-    assert per_ac["AC-1"]["full_pass_evidence"] == "f"
+    assert digest == CANDIDATE_SHA
+    assert per_ac.get("AC-1", {}).get("full_pass_evidence") == "f"
     assert [e.type for e in _version_events(store, "v0.1")] == [
         "mutation.manifest",
+        "candidate.frozen",
         "full.executed",
     ]
 
@@ -420,7 +568,12 @@ def test_trace_v07_report_assembles_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(validate_cmd, "approved_acs", lambda projects, version: ["AC-1", "AC-2"])
     store = _FakeStore(
         runs=["R1"],
-        events={"R1": [_ev("mutation.manifest", {"ac": "AC-1", "candidate_digest": "d1"})]},
+        events={
+            "R1": [
+                _ev("mutation.manifest", {"ac": "AC-1", "candidate_digest": "d1"}),
+                _ev("candidate.frozen", {"candidate_sha": CANDIDATE_SHA}),
+            ]
+        },
     )
     monkeypatch.setattr(validate_cmd, "Store", lambda home_arg: store)
     calls = {}
@@ -433,7 +586,7 @@ def test_trace_v07_report_assembles_inputs(tmp_path, monkeypatch):
     assert result_report is report
     assert release_segment is None
     assert calls["acs"] == ["AC-1", "AC-2"]
-    assert calls["digest"] == "d1"
+    assert calls["digest"] == CANDIDATE_SHA
     assert calls["harvested"]["AC-1"]["mutation_candidate"] == "d1"
     assert calls["harvested"]["AC-2"] == {}
 

@@ -1,13 +1,12 @@
 # 开始使用 Agent on Tracks
 
-## 适用场景
-<!-- 本节说明：帮助读者判断长期项目、交付审计项目和一次性原型是否适合使用 Tracks。 -->
+Tracks 适合需要持续维护、独立测试和可审计交付的软件项目。使用者负责定义产品行为、消除需求歧义并批准关键决定；Runtime 协调 Agent，将设计、测试、实现与交付证据接起来。
 
-## 前置条件
-<!-- 本节说明：列出安装和运行 Tracks 所需的 Python、Git、Agent harness 与工作区条件。 -->
+按以下顺序开始：
 
-## 最短路径
-<!-- 本节说明：给出从安装、初始化到发起 release 和查看状态的最短阅读与操作路径。 -->
+1. [安装发行包、创建项目并启动 Web](installation.md)。
+2. [提出第一条 story 并参与需求评审](first-release.md)。
+3. [查看运行、回放事件和导出证据](../how-to/inspect-run.md)。
+4. [理解需求、测试与生产入口的追踪检查](../how-to/check-traceability.md)。
 
-## 当前界面与未来 Web
-<!-- 本节说明：区分当前 CLI 加编辑器的交互方式和未来 Web 界面，并说明二者共享同一 Runtime。 -->
+Web 工作台已提供 Releases、Docs、Todos、Settings 和 Account。CLI 与 Web 共用同一运行时和项目事件库；新项目应使用 `trac install` 安装完整资源。

@@ -1,0 +1,93 @@
+{
+  "contract": "v0.12.0 event-slice fixtures for the v0.12-hotfix-262 FULL_F authority tests (test-plan §2.4). Each slice is a synthetic replica of the recorded v0.12.0 payload SHAPE: the 7362-shape (authoritative FULL_F), the 5896-shape (ineligible, foreign commit), the 7342-shape (pass+blocker security verdict) and the 7473-shape (legacy run without explicit stage events). The expected values are NOT copied from any implementation output: every 'expectation' field is a literal transcription of the contract text in interfaces.md §1a / §1c and of the acceptance clauses, and the fixtures carry no expected-value derivation.",
+  "candidate_sha": "44c14de0000000000000000000000000000000000",
+  "foreign_commit": "ee781bf0000000000000000000000000000000000",
+  "slices": {
+    "full_f_7362_shape": {
+      "seq": 7362,
+      "type": "full.executed",
+      "payload": {
+        "round": "FULL_F",
+        "suite": ["unit", "integration", "e2e"],
+        "passed": true,
+        "failed_nodes": [],
+        "waived_nodes": [],
+        "command_echo": ["pytest"],
+        "evidence_ids": ["ev-7362-a", "ev-7362-b", "ev-7362-c"],
+        "serves_as_full_f": false,
+        "full_f_eligible": true,
+        "outcomes_ref": ".tracks/runtime/blobs/full-7362.json",
+        "gate": "ISLAND_GATE_2",
+        "selection_id": "sel-7362",
+        "execution_commit": "44c14de0000000000000000000000000000000000",
+        "selection_event_seq": 7361,
+        "selection_command_id": "cmd-select-7362",
+        "identity_basis": ["tree-7362", ["pytest"], "env-7362", "sel-7362"],
+        "identity": {
+          "tree": "tree-7362",
+          "command": ["pytest"],
+          "env": "env-7362",
+          "selection_id": "sel-7362"
+        }
+      }
+    },
+    "full_f_5896_shape": {
+      "seq": 5896,
+      "type": "full.executed",
+      "payload": {
+        "round": "FULL_F",
+        "suite": ["unit", "integration", "e2e"],
+        "passed": true,
+        "failed_nodes": [],
+        "waived_nodes": [],
+        "command_echo": ["pytest"],
+        "evidence_ids": ["ev-5896-a"],
+        "serves_as_full_f": true,
+        "full_f_eligible": false,
+        "outcomes_ref": ".tracks/runtime/blobs/full-5896.json",
+        "gate": "ISLAND_GATE_2",
+        "selection_id": "sel-5896",
+        "execution_commit": "ee781bf0000000000000000000000000000000000",
+        "selection_event_seq": 5895,
+        "selection_command_id": "cmd-select-5896",
+        "identity_basis": ["tree-5896", ["pytest"], "env-5896", "sel-5896"],
+        "identity": {
+          "tree": "tree-5896",
+          "command": ["pytest"],
+          "env": "env-5896",
+          "selection_id": "sel-5896"
+        }
+      }
+    },
+    "prism_pass_with_blocker_7342_shape": {
+      "seq": 7342,
+      "type": "prism.verdict",
+      "payload": {
+        "scope": "security",
+        "verdict": "pass",
+        "candidate_sha": "44c14de0000000000000000000000000000000000",
+        "policy_digest": "policy-digest-7342",
+        "result_id": "res-7342",
+        "review_summary": "SEC-001: one blocker finding attached to a pass verdict",
+        "findings": [
+          {
+            "id": "SEC-001",
+            "severity": "blocker",
+            "summary": "blocking security finding carried by a pass verdict"
+          }
+        ]
+      }
+    },
+    "legacy_run_7473_shape": {
+      "seq": 7473,
+      "type": "story.requested",
+      "payload": {"raw_chars": 1}
+    }
+  },
+  "legacy_run_7473_events": [
+    {"seq": 7473, "type": "story.requested", "payload": {"raw_chars": 1}},
+    {"seq": 7481, "type": "publish.planned", "payload": {"candidate_sha": "44c14de0000000000000000000000000000000000"}},
+    {"seq": 7482, "type": "milestone.trace_closed", "payload": {"trace_digest": "sha256:legacy7473"}},
+    {"seq": 7483, "type": "run.completed", "payload": {"terminal_state": "released"}}
+  ]
+}

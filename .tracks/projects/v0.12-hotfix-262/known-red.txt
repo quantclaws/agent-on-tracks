@@ -1,0 +1,58 @@
+# v0.12-hotfix-262 FULL-gate known-red exclusions (inherited from v0.12)
+# The v0.12 baseline local-FULL exclusions are the browser-driven ui e2e
+# nodes; the hotfix's version dir has its own known-red.txt, so the baseline
+# list must be inherited explicitly (m_impl_full_chain._known_red_nodes reads
+# this version dir). Non-UI quality/legacy red stays burned down: no legacy
+# integration node is excluded here. CI ui-e2e remains their execution point.
+tests/e2e/test_intake_ui.py::test_develop_happy_creates_release
+tests/e2e/test_intake_ui.py::test_hotfix_entry_anchored_proceeds
+tests/e2e/test_intake_ui.py::test_scribe_panel_four_actions
+tests/e2e/test_releases_ui.py::test_fixed_pane_position_no_overlay
+tests/e2e/test_releases_ui.py::test_node_detail_fixed_pane
+tests/e2e/test_releases_ui.py::test_releases_sidebar_and_selection
+tests/e2e/test_releases_ui.py::test_timeline_full_rendering
+tests/e2e/test_workbench_ui.py::test_first_demo_milestone_journey
+tests/e2e/test_workbench_ui.py::test_many_runs_do_not_starve_view_rendering
+tests/e2e/test_workbench_ui.py::test_real_data_rendered
+tests/e2e/test_workbench_ui.py::test_runs_registry_human_titles
+tests/e2e/test_workbench_ui.py::test_sse_reconnect_backfill_monotonic
+tests/e2e/test_workbench_ui.py::test_unknown_values_degrade_visibly
+tests/e2e/test_workbench_ui.py::test_v010_rulings_regression
+tests/e2e/test_awaiting_ui.py::test_approve_release_in_panel
+tests/e2e/test_awaiting_ui.py::test_awaiting_panel_reason_impact_action
+tests/e2e/test_awaiting_ui.py::test_no_dangling_stage_review
+tests/e2e/test_awaiting_ui.py::test_review_round_doc_write
+tests/e2e/test_awaiting_ui.py::test_self_drive_next_gate_appears
+tests/e2e/test_awaiting_ui.py::test_stage_review_completed_in_panel
+tests/e2e/test_awaiting_ui.py::test_ui_writes_carry_headers
+tests/e2e/test_docs_ui.py::test_app_shell_pinned_chrome_while_document_scrolls
+tests/e2e/test_docs_ui.py::test_conflict_blocks_pane_close_and_window_switch
+tests/e2e/test_docs_ui.py::test_conflict_dialog_two_options
+tests/e2e/test_docs_ui.py::test_discussion_navigation_controls
+tests/e2e/test_docs_ui.py::test_docs_center_vditor_ir_same_origin
+tests/e2e/test_docs_ui.py::test_docs_tree_all_versions_and_no_banner
+tests/e2e/test_docs_ui.py::test_multi_pane_independent
+tests/e2e/test_docs_ui.py::test_no_discussion_write_controls
+tests/e2e/test_docs_ui.py::test_pane_cap_four
+tests/e2e/test_docs_ui.py::test_save_control_autosaves_and_gates_on_saved
+tests/e2e/test_docs_ui.py::test_typing_during_autosave_flight_is_never_marked_saved
+tests/e2e/test_docs_ui.py::test_ui_writes_carry_csrf_idempotency
+tests/e2e/test_docs_ui.py::test_unresolved_conflict_blocks_document_switch
+tests/e2e/test_docs_ui.py::test_vditor_failure_textarea_fallback
+tests/e2e/test_releases_ui.py::test_api_failure_feedback_new_surfaces
+tests/e2e/test_releases_ui.py::test_five_tabs_no_review
+tests/e2e/test_return_ui.py::test_return_confirm_face
+tests/e2e/test_workbench_ui.py::test_api_failure_visible_feedback
+tests/e2e/test_workbench_ui.py::test_first_login_name_collection
+tests/e2e/test_workbench_ui.py::test_function_set_settings_account
+tests/e2e/test_workbench_ui.py::test_login_dual_pane_and_persistent_session
+tests/e2e/test_workbench_ui.py::test_sidebar_tab_atomic_switch_and_coexistence
+tests/e2e/test_workbench_ui.py::test_spa_shell_navigation_no_reload
+tests/e2e/test_workbench_ui.py::test_tabbar_fixed_semantics
+tests/e2e/test_workbench_ui.py::test_tabs_not_persisted_and_content_titles
+tests/e2e/test_run_workflow_ui.py::test_per_round_detail_lazy_accordion
+tests/e2e/test_run_workflow_ui.py::test_review_two_decisions_thread_and_continue
+tests/e2e/test_run_workflow_ui.py::test_round_thinking_missing_message
+tests/e2e/test_run_workflow_ui.py::test_rounds_lazy_first_paint
+tests/e2e/test_run_workflow_ui.py::test_stage_path_degradation_readable
+tests/e2e/test_run_workflow_ui.py::test_stage_workflow_aggregated_folds

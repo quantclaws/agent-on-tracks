@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/release_preview.py b/tracks/executor/release_preview.py
+index d76cc8f..248bedb 100644
+--- a/tracks/executor/release_preview.py
++++ b/tracks/executor/release_preview.py
+@@ -86,7 +86,10 @@ def _evidence_key(event, payload: dict) -> str | None:
+     if event.type == "evidence.reused":
+         return "full_f" if payload.get("kind") == "full_f" else None
+     if event.type == "ci.run_observed":
+-        return "ci"
++        # COUNTEREXAMPLE: the CI readback contributes a non-contract
++        # evidence key, so the five-key completeness set is never
++        # satisfied and the preview can no longer be assembled.
++        return "ci_legacy"
+     if event.type == "prism.verdict":
+         # interfaces §1b item 2: only the two release scopes are evidence;
+         # M-DESIGN/M-TEST/M-IMPL verdicts never enter the release set.

@@ -1,0 +1,12 @@
+diff --git a/tracks/server/static/app/views.js b/tracks/server/static/app/views.js
+--- a/tracks/server/static/app/views.js
++++ b/tracks/server/static/app/views.js
+@@ -123,7 +123,7 @@
+   const title = todo.title || "未命名待办";
+   const stage = todo.stage || "unknown";
+   const kind = todo.kind_label || todo.kind || "待办";
+-  return `${version} · ${title} — ${stage} · ${kind}`;
++  return `${todo.run_id || "unknown"}`;
+ }
+
+ function renderTodos(body) {

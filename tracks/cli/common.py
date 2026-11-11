@@ -17,6 +17,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor import git
+from tracks.processes import process_alive as _pid_alive
 from tracks.store import Store
 
 
@@ -54,16 +55,6 @@ def _format_state(state) -> str:
             snippet = f"[{check}] {reason}" if reason else f"[{check}]"
             line += f" reason={snippet}"
     return line
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 @contextmanager

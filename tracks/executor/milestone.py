@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -38,6 +39,79 @@ def _event_seq(event) -> int:
     if isinstance(event, dict):
         return int(event.get("seq") or 0)
     return int(getattr(event, "seq", 0) or 0)
+
+
+# -- stage handoff emission (IF-STAGE-001, interfaces §1f) --------------------
+
+_STAGE_ENTRY_TYPES = ("stage.entered", "stage.recovered")
+
+
+def _event_stage(event) -> str:
+    payload = _event_payload(event)
+    return str(payload.get("stage") or payload.get("to_stage") or "")
+
+
+def _stage_entry_seq(events, stage: str) -> int | None:
+    """Sequence of the latest explicit entry into *stage* (None = no visit)."""
+    seqs = [
+        _event_seq(event)
+        for event in events or ()
+        if _event_type(event) in _STAGE_ENTRY_TYPES and _event_stage(event) == stage
+    ]
+    return max(seqs) if seqs else None
+
+
+def _stage_exited_after(events, stage: str, after_seq: int) -> bool:
+    return any(
+        _event_type(event) == "stage.exited"
+        and _event_stage(event) == stage
+        and _event_seq(event) > after_seq
+        for event in events or ()
+    )
+
+
+def _stage_entered_after(events, stage: str, after_seq: int) -> bool:
+    return any(
+        _event_type(event) in _STAGE_ENTRY_TYPES
+        and _event_stage(event) == stage
+        and _event_seq(event) > after_seq
+        for event in events or ()
+    )
+
+
+def emit_stage_handoff(
+    emit, events, from_stage: str, to_stage: str, command_id=None
+) -> bool:
+    """Emit the missing half(s) of one stage handoff, exactly once per visit.
+
+    The runtime release tail has no doc-style stage walk: the handoff
+    ``from_stage -> to_stage`` is emitted by the executor at the batch/tail
+    seam (interfaces §1f item 1). The latest explicit ``stage.entered`` for
+    *from_stage* scopes the visit; an exit after it (or an entry into
+    *to_stage* after it) is the visit's own witness and is never repeated on
+    a ``retry_tail`` re-entry. Legacy streams without the explicit visit stay
+    untouched -- the projection/UI synthesize their transitions instead.
+    """
+    entry_seq = _stage_entry_seq(events, from_stage)
+    if entry_seq is None:
+        return False
+    emitted = False
+    if not _stage_exited_after(events, from_stage, entry_seq):
+        emit("stage.exited", {"stage": from_stage}, command_id=command_id)
+        emitted = True
+    if not _stage_entered_after(events, to_stage, entry_seq):
+        emit("stage.entered", {"stage": to_stage}, command_id=command_id)
+        emitted = True
+    return emitted
+
+
+def emit_stage_exit(emit, events, stage: str, command_id=None) -> bool:
+    """Emit ``stage.exited`` for the current visit once (completion witness)."""
+    entry_seq = _stage_entry_seq(events, stage)
+    if entry_seq is None or _stage_exited_after(events, stage, entry_seq):
+        return False
+    emit("stage.exited", {"stage": stage}, command_id=command_id)
+    return True
 
 
 def _fold_previewed(trace: dict, ev, payload: dict) -> None:
@@ -431,24 +505,121 @@ def _list_refs(repo, namespace: str) -> list[str]:
 
 
 def clean_temp_refs(repo: Path, run_id: str) -> dict:
-    """Remove refs/trac/tmp/*; remaining is measured by re-listing (实测).
+    """Remove every temp ref of this run plus stale detached worktrees/staging.
 
-    Each ref is deleted with its own ``git update-ref -d``; the namespace is
-    then re-listed so ``remaining`` is the observed post-cleanup count, never
-    a hardcoded zero.
+    Interfaces §1h: ``refs/trac/tmp/*`` AND this run's
+    ``refs/trac/rgr/{run_id}/*`` are deleted; detached *temporary* worktrees
+    (anything outside the runtime's managed ``.tracks/worktrees`` tree) and a
+    stale ``.tracks/runtime/staging`` directory are reclaimed. ``remaining``
+    is the observed post-cleanup residue (measured, never a hardcoded zero):
+    remaining refs + remaining temp worktrees + a still-present staging dir.
     """
-    namespace = "refs/trac/tmp"
-    listed = _list_refs(repo, namespace)
-    removed: list[str] = []
-    for ref in listed:
-        proc = _git_refs(repo, "update-ref", "-d", ref)
-        if proc is not None and proc.returncode == 0:
-            removed.append(ref)
-    remaining_refs = _list_refs(repo, namespace)
+    namespaces = ["refs/trac/tmp", f"refs/trac/rgr/{run_id}"]
+    removed, remaining_refs = _remove_ref_namespaces(repo, namespaces)
+    removed_worktrees, remaining_worktrees = _clean_detached_worktrees(repo)
+    staging_removed, staging_remaining = _clean_staging(repo)
     return {
         "run_id": run_id,
-        "namespace": namespace,
+        "namespace": "refs/trac/tmp",
+        "namespaces": namespaces,
         "removed": removed,
-        "remaining": len(remaining_refs),
+        "remaining": (
+            len(remaining_refs)
+            + len(remaining_worktrees)
+            + (1 if staging_remaining else 0)
+        ),
         "remaining_refs": remaining_refs,
+        "removed_worktrees": removed_worktrees,
+        "remaining_worktrees": remaining_worktrees,
+        "staging_removed": staging_removed,
+        "staging_remaining": staging_remaining,
     }
+
+
+def _remove_ref_namespaces(
+    repo: Path, namespaces: list[str]
+) -> tuple[list[str], list[str]]:
+    """Delete every ref in each namespace; report (removed, residue)."""
+    removed: list[str] = []
+    for namespace in namespaces:
+        for ref in _list_refs(repo, namespace):
+            proc = _git_refs(repo, "update-ref", "-d", ref)
+            if proc is not None and proc.returncode == 0:
+                removed.append(ref)
+    remaining = [
+        ref for namespace in namespaces for ref in _list_refs(repo, namespace)
+    ]
+    return removed, remaining
+
+
+def _porcelain_worktrees(text: str) -> list[tuple[str, bool]]:
+    """Parse ``git worktree list --porcelain`` into (path, detached) rows."""
+    entries: list[tuple[str, bool]] = []
+    path: str | None = None
+    detached = False
+    for line in (text or "").splitlines():
+        if line.startswith("worktree "):
+            if path is not None:
+                entries.append((path, detached))
+            path = line[len("worktree "):].strip()
+            detached = False
+        elif line.strip() == "detached":
+            detached = True
+    if path is not None:
+        entries.append((path, detached))
+    return entries
+
+
+def _is_runtime_worktree(path: Path, repo: Path) -> bool:
+    """Task/gate worktrees are runtime-managed, never cleanup artefacts."""
+    try:
+        path.relative_to((repo / ".tracks" / "worktrees").resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _clean_detached_worktrees(repo: Path) -> tuple[list[str], list[str]]:
+    """Remove detached temporary worktrees, keeping runtime-managed ones."""
+    if str(repo) == "<repo>":
+        return [], []
+    proc = _git_refs(repo, "worktree", "list", "--porcelain")
+    if proc is None or proc.returncode != 0:
+        return [], []
+    repo_path = Path(repo).resolve()
+    removed: list[str] = []
+    remaining: list[str] = []
+    for raw_path, detached in _porcelain_worktrees(proc.stdout or ""):
+        result = _reclaim_detached_worktree(repo, repo_path, raw_path, detached)
+        if result is None:
+            continue
+        path, still_exists = result
+        (remaining if still_exists else removed).append(path)
+    _git_refs(repo, "worktree", "prune")
+    return removed, remaining
+
+
+def _reclaim_detached_worktree(
+    repo: Path, repo_path: Path, raw_path: str, detached: bool
+) -> tuple[str, bool] | None:
+    """Reclaim one detached temp worktree; None = not a cleanup artefact."""
+    if not detached:
+        return None
+    path = Path(raw_path).resolve()
+    if path == repo_path or _is_runtime_worktree(path, repo_path):
+        return None
+    removal = _git_refs(repo, "worktree", "remove", "--force", str(path))
+    if removal is None or removal.returncode != 0:
+        shutil.rmtree(path, ignore_errors=True)
+    return str(path), path.exists()
+
+
+def _clean_staging(repo: Path) -> tuple[bool, bool]:
+    """Drop a stale ``.tracks/runtime/staging`` tree; (removed, still_there)."""
+    if str(repo) == "<repo>":
+        return False, False
+    staging = Path(repo) / ".tracks" / "runtime" / "staging"
+    if not staging.exists():
+        return False, False
+    shutil.rmtree(staging, ignore_errors=True)
+    return True, staging.exists()

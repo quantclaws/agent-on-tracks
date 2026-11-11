@@ -22,6 +22,22 @@ from tracks.executor.worktree import (
 )
 
 
+def devon_seed_scope(state) -> list[str]:
+    """Phase-aware WIP seed scope for a Devon worktree.
+
+    RED must only see ``red_test_paths``. Seeding the GREEN product scope
+    into a RED worktree commits the prior implementation into the R
+    checkpoint, so the "RED" tree is already green and PRISM_RED has no
+    legitimate failing baseline (hotfix #262 T-004 re-RED, R 764e700).
+    GREEN/REFACTOR resume from the full allowed scope so accumulated
+    implementation WIP survives a re-dispatch.
+    """
+    manifest = state.current_manifest or {}
+    if state.substate == "RED":
+        return [p for p in (manifest.get("red_test_paths") or []) if isinstance(p, str)]
+    return [p for p in (manifest.get("allowed_paths") or []) if isinstance(p, str)]
+
+
 class ExecWorktreeMixin:
     """Devon/test-authority worktree open/replay/sync handlers."""
 
@@ -135,7 +151,7 @@ class ExecWorktreeMixin:
         missing manifest (no scope derivable) degrades loudly, never
         silently blind."""
         manifest = state.current_manifest or {}
-        scope = [p for p in (manifest.get("allowed_paths") or []) if isinstance(p, str)]
+        scope = devon_seed_scope(state)
         seeded = seed_worktree_with_cycle_wip(str(self.repo), worktree_path, scope)
         note = {"seeded_wip_paths": seeded}
         if seeded:

@@ -144,6 +144,9 @@ EVENT_TYPES = (
     "phase0.guard_hardened",
     "phase0.sealed",
     "phase0.blocked",
+    "environment.preparation_started",
+    "environment.step_completed",
+    "environment.prepared",
     # T-042 (SM-01 five-stage release closure, interfaces §1a rows 1-32):
     # the release-pipeline event face -- candidate identity, verify gates,
     # CI binding, security, preview/decision, publish, milestone terminal,
@@ -282,6 +285,7 @@ COMMAND_KINDS = (
     # the kernel entry guard through the before_mtest capability while
     # phase0_status != SEALED; executed by the Executor phase0 handler.
     "phase0_validate",
+    "prepare_host_environment",
     # M1-S1 (convergence plan 2026-09-05): mechanical oscillation signature —
     # consecutive GREEN_GATE failures swapped anchor outcomes; audit event
     # (the state change rides the paired verdict.failed contract_conflict).

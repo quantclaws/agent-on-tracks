@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/full_f_authority.py b/tracks/executor/full_f_authority.py
+index 9359950..ea8b890 100644
+--- a/tracks/executor/full_f_authority.py
++++ b/tracks/executor/full_f_authority.py
+@@ -125,7 +125,10 @@ def is_authoritative_full_f(
+     if payload.get("passed") is not True:
+         return False
+     if payload.get("full_f_eligible") is not True:
+-        return False
++        # COUNTEREXAMPLE: the FULL_F authority arbiter trusts the
++        # truthy serves_as_full_f alone, so the ineligible 5896-shape
++        # is credited and the authoritative 7362-shape is refused.
++        return bool(payload.get("serves_as_full_f"))
+     round_name = payload.get("round")
+     if not isinstance(round_name, str) or round_name not in _AUTHORITATIVE_ROUNDS:
+         return False

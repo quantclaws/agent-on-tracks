@@ -15,7 +15,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from tracks import paths, templating
+from tracks import paths, project_runtime, templating
 from tracks.executor import Executor, git
 from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import _resolve_run_version
@@ -130,7 +130,9 @@ def cmd_start(repo: Path, *args: str) -> int:
                 return 0
         run_id = new_ulid()
         branch = f"releases/{version}"
-        store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
+        store.append(run_id, version, "story.requested", {
+            "raw_chars": len(raw), **project_runtime.new_run_metadata(repo),
+        })
         _sweep_stale_worktrees(store, repo, run_id, version)
         store.append(run_id, version, "stage.entered", {"stage": "M-START"})
         # FR-04: create the release branch as a logged, reconcilable command.

@@ -1,132 +1,96 @@
 # 安装 Agent on Tracks
 
-## 系统要求
-
-当前仓库声明 Python `>=3.10`，但完整流程使用标准库 `tomllib`，实际建议使用 **Python 3.11 或更新版本**。
-
-还需要：
-
-- Git，且宿主项目已经初始化仓库；
-- POSIX 系统。Inline discussion 使用 `fcntl.flock`，当前不支持 Windows；
-- 默认 Agent backend 所需的 `opencode` CLI；使用 fake backend 时不需要 harness。
-
-Tracks 运行时没有第三方 Python dependency。测试、lint 与开发工具位于 `dev` extra。
-
-宿主项目最好有 `main` 分支，并配置 Git 用户名；`trac init` 会创建一次受控 commit。
+Tracks 0.12.1 需要 Python 3.11+、Git 和 macOS/Linux。默认 Agent 后端是 OpenCode；安装 Python 包不会自动配置模型提供方或 API 凭据。
 
 ## 安装发行包
 
-当前唯一经过 CI 与端到端测试验证的方式是从仓库做 editable install：
+下载当前发行 wheel，安装到独立环境：
 
 ```bash
-git clone <tracks-repository>
-cd tracks
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+python3 -m venv ~/.venvs/tracks
+~/.venvs/tracks/bin/pip install /absolute/path/agent_on_tracks-0.12.1-py3-none-any.whl
+export PATH="$HOME/.venvs/tracks/bin:$PATH"
+trac version
 ```
 
-验证 console script：
+`trac version` 显示版本和 global/project 作用域；`trac version --json` 提供机器可读结果。开发 Tracks 本身可在源码仓库使用 `pip install -e '.[dev]'`，普通使用者不需要安装开发工具。
+
+## 创建项目
+
+项目可以是空目录或已有 Git 仓库。安装器会创建受控提交，所以 Git 身份必须可用。以下做法只为该项目配置身份：
 
 ```bash
-.venv/bin/trac status
+git init -b main my-product
+git -C my-product config user.name "Your Name"
+git -C my-product config user.email "you@example.com"
+trac install ./my-product
+cd my-product
+trac version --json
 ```
 
-未初始化项目时应输出：
+安装器将 Agent、skill 和模板部署到 `.opencode/`，将锁定运行包放入 `.tracks/env/<version>/site-packages/`，并写入 `.tracks/install.json` 和项目启动器。模板也保留在锁定运行包中，供 Runtime 自身读取。`.tracks/projects/` 保存版本化文档，`.tracks/runtime/` 保存事件、证据和会话，`.tracks/wiki/` 保存跨版本资料。
 
-```text
-no runs yet
-```
+`trac init` 是旧项目的基础骨架入口；新项目使用 `trac install`，以获得完整资源、项目版本锁定与 Web 服务生命周期支持。
 
-当前 CLI 没有 `trac --version`，无参数也会打印 usage 并返回 1。不要用它们作为安装成功检查。
+## 模型和 GitHub
 
-仓库中的旧 `dist/` wheel 不包含当前全部功能，不能代表 HEAD；本文也不承诺包索引中的版本等于当前源码。
-
-开发本项目时可以启用 hooks：
-
-```bash
-git config core.hooksPath .githooks
-```
-
-## 初始化宿主项目
-
-切换到需要使用 Tracks 的宿主 Git 仓库：
-
-```bash
-cd <host-project>
-trac init
-```
-
-命令创建 `.tracks/` 的基础骨架并提交：
-
-```text
-.tracks/
-├── projects/
-├── runtime/
-└── wiki/
-```
-
-Projects 保存版本化文档；wiki 保存跨 release 决策；runtime 保存 SQLite、blob 和 lock。`.tracks/project/` 及其中的宿主测试合同会在流程进入相应设计阶段后产生，不由初始 scaffold 预先创建。
-
-Runtime 数据通过 `.tracks/runtime/.gitignore` 排除，讨论锁和临时文件通过 `.tracks/projects/.gitignore` 排除。目录骨架与配置进入版本控制，运行时数据库不进入。
-
-`trac init` 幂等。重复运行不会覆盖用户修改过的 `.gitignore`，没有 staged diff 时也不会创建空 commit。
-
-命令要求当前目录是 Git 仓库。非 Git 项目或 Git commit 失败会返回错误，不会退化成无版本控制模式。
-
-## Agent 后端
-
-默认 backend 是 opencode：
+先按 OpenCode 的说明配置可用的 provider/model，确认 `opencode` 在 PATH 中。Tracks 默认使用 OpenCode 已配置的模型，也可以显式覆盖：
 
 ```bash
 export TRAC_AGENT_BACKEND=opencode
+export TRAC_AGENT_MODEL=provider/model
+export TRAC_GITHUB_REPO=your-org/your-product
+git remote add origin git@github.com:your-org/your-product.git
 ```
 
-Runtime 调用 PATH 中的 `opencode run`，并在 assignment 期间把所需 Agent、skill 和 template 物化到宿主 `.opencode/`。结束后清理或还原原内容。
-
-测试和流程演练可以选择确定性的 fake backend：
-
-```bash
-export TRAC_AGENT_BACKEND=fake
-```
-
-常用环境变量：
-
-| 变量 | 用途 |
-|---|---|
-| `TRAC_AGENT_BACKEND` | `fake` 或 `opencode`；默认 opencode |
-| `TRAC_AGENT_MODEL` | 传给 opencode 的可选模型名 |
-| `TRAC_AGENT_CONSOLE_INPUT` | 传给 Agent 子进程 stdin 的文本 |
-| `TRAC_FAKE_SIMULATE` | 测试用 fake 场景注入；设置后强制 fake |
-
-`TRAC_LIVE_*` 是仓库 e2e_live 测试变量，不是产品配置。当前也没有生产用 `TRAC_AGENT_TIMEOUT`；等待过久时由操作员 Ctrl-C 取消。
-
-GitHub issue 后端另使用 `GITHUB_TOKEN`、`TRAC_GITHUB_REPO` 与 `TRAC_GITHUB_PROJECT`。真实通道下缺 token 会按 `missing_token` 分类拒绝（fail-closed）；fake issue backend 只在显式模拟通道（`TRAC_AGENT_BACKEND=fake` 或 `TRAC_FAKE_SIMULATE`）下启用。
+在启动服务的终端提供模型凭据和 `GITHUB_TOKEN`。GitHub 完整交付需要目标仓库的 issue、milestone、release 和 Actions 相关权限，以及可推送的 origin。发行包不包含任何凭据；不要把凭据写进 story、spec 或受版本控制的配置。
 
 ## Live GitHub 旅程环境前置
 
-live GitHub 通道（issue 创建/回读、required-CI 回读、release 与 milestone 关闭、hotfix 前检）在发起前需要以下环境前置全部就位；缺失或不可达时相关命令按 `GithubIssuesError` 分类（`missing_token` / `auth` / `rate_limit` / `network` / `not_found`）拒绝并携带对应的恢复指引，绝不静默降级为成功：
+| 配置 | 用途 |
+| --- | --- |
+| `GITHUB_TOKEN` | 目标仓库的 issue、milestone、release 写入及 Actions 读取权限 |
+| `TRAC_GITHUB_REPO` | `owner/repo` 形式的目标仓库，与 Git origin 对应 |
+| `TRAC_GITHUB_CA_BUNDLE` | 可选的企业 CA 文件；默认使用 certifi CA bundle 校验 TLS |
 
-| 前置 | 内容 |
-|---|---|
-| `GITHUB_TOKEN` | 具备目标仓库读写权限的 token（issues/milestones/releases/actions 读取） |
-| `TRAC_GITHUB_REPO` | 目标仓库标识，`owner/name` 形态 |
-| `TRAC_GITHUB_PROJECT` | 可选；Project 关联标识（缺失时跳过 Project 关联） |
-| TLS | 请求层显式使用 certifi CA bundle 发起 TLS 校验（标准 macOS Python 安装不再依赖系统钥匙串）；企业代理/自签 CA 场景经 `TRAC_GITHUB_CA_BUNDLE=/path/to/ca-bundle.pem` 显式覆盖 |
+缺少 token 会报告 `missing_token`；权限不足报告 `auth`；限流报告 `rate_limit`；TLS 或连通性失败报告 `network`；仓库或对象不存在报告 `not_found`。按错误指引补充凭据、核对仓库、等待限额恢复或修复网络后重试，Runtime 不会静默降级为成功。
 
-诊断路径：`TRAC_GITHUB_API_BASE` 指向 stand-in 时是测试通道；指向真实 API 的失败按上表分类呈现——`missing_token` 先补 `GITHUB_TOKEN`，`auth` 检查 token 权限，`rate_limit` 等待限额重置后重试，`network` 检查连通性与 TLS（含 `TRAC_GITHUB_CA_BUNDLE` 覆盖），`not_found` 核对 `TRAC_GITHUB_REPO` 拼写与对象是否存在。
+`TRAC_AGENT_BACKEND=fake` 用于确定性流程测试，不能作为真实 Agent 完成开发的证据。
 
-## 升级与卸载
-
-当前 package 版本为 `0.1.0`，Runtime schema version 为 1，尚无正式数据库迁移机制。因此升级前应保留宿主仓库和 `.tracks/runtime/` 的备份，并阅读目标版本说明。
-
-`trac check deliverables` 可以检查安装包内固定 Agent/skill 是否存在，以及最小 version/IQ frontmatter。它不验证 SemVer、跨文件版本一致性或 digest，不能替代完整发行包验证。
-
-卸载 Python 包不会删除宿主项目中的 `.tracks/`、文档、事件数据库或 Git 历史。重新安装前先确认新版本是否理解现有 schema；不要靠删除 `.tracks/` 完成升级。
-
-需要把 Runtime 数据移到默认目录之外时，可以设置：
+## 启动 Web 工作台
 
 ```bash
-export TRACKS_HOME=/absolute/path/to/tracks-home
+trac serve --repo "$PWD" --port 0
 ```
 
-若未设置，Tracks 使用当前工作目录下的 `.tracks`。该变量改变 projects、runtime、project 与 wiki 的共同根目录，应在发起 run 前固定，避免同一宿主项目产生两套互不相见的状态。
+首次前台启动会提示输入登录密码。浏览器打开输出的 URL，登录并填写显示名称。服务自动注册 `--repo` 指定的已安装项目，Releases 左侧的 **+** 即为需求入口。
+
+后台运行需预先提供密码：
+
+```bash
+export TRAC_SERVE_PASSWORD='set-your-own-local-password'
+trac serve --repo "$PWD" --port 0 --background
+trac serve --repo "$PWD" --status
+trac serve --repo "$PWD" --stop
+```
+
+`--password-stdin` 可替代环境变量。服务默认绑定 `127.0.0.1`。后台日志位于 `.tracks/service/serve.log`；前台日志输出到终端。运行中的服务使用它启动时的环境；修改模型或凭据后重启服务。
+
+## 升级
+
+全局入口与项目版本相互独立。升级全局包以后，已有项目继续使用 `.tracks/install.json` 锁定的版本。显式升级项目：
+
+```bash
+trac serve --repo "$PWD" --stop
+trac install "$PWD"
+```
+
+安装指定旧版本时，先准备对应的发行 wheel：
+
+```bash
+trac install "$PWD" --version 0.11.0 --wheel /absolute/path/agent_on_tracks-0.11.0-py3-none-any.whl
+```
+
+升级前保留宿主仓库和 `.tracks/runtime/` 的备份。卸载全局 Python 包不会删除项目文档、事件、证据或 Git 历史。不要通过删除 `.tracks/` 升级。
+
+继续阅读[第一次开发](first-release.md)。

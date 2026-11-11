@@ -43,11 +43,8 @@ import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import tomllib
 
 from tracks import paths
 from tracks.baseline import _TRIO, revision_digest
@@ -57,10 +54,11 @@ from tracks.server import auth, guard, projections
 from tracks.server.api_query import _DOC_FILES
 from tracks.supervisor import db as sdb
 from tracks.supervisor import readiness
+from tracks.supervisor.projects import register_project as _registered_project
+from tracks.supervisor.projects import repo_version as _repo_version
 from tracks.supervisor.service import Rejection, docs_revision
 
 _SESSION_COOKIE = "trac_session"
-_LOCAL_HOME_SENTINEL = "unknown"
 
 # Run-domain edit face doc set (interfaces §1o.1b): the trio only; design
 # documents live on the docs-centre face #35, whose docs_revision token
@@ -470,43 +468,6 @@ def _registration_rejected(
     return _error(status, reason, detail)
 
 
-def _repo_version(repo: Path) -> str:
-    """The host repo's declared version (pyproject project.version)."""
-    try:
-        data = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
-        version = str(data.get("project", {}).get("version", "")).strip()
-    except (OSError, tomllib.TOMLDecodeError):
-        version = ""
-    return version or _LOCAL_HOME_SENTINEL
-
-
-def _registered_project(home: Path, repo_path: str, version: str, actor: str) -> dict:
-    """Insert (or return) the projects row; the registration is idempotent."""
-    conn = sqlite3.connect(str(home / "service.db"))
-    try:
-        row = conn.execute(
-            "SELECT project_id, repo_path, version FROM projects WHERE repo_path = ?",
-            (repo_path,),
-        ).fetchone()
-        if row is not None:
-            return {"project_id": row[0], "repo_path": row[1], "version": row[2], "fresh": False}
-        project_id = uuid.uuid4().hex
-        conn.execute(
-            "INSERT INTO projects VALUES (?,?,?,?,?)",
-            (
-                project_id,
-                repo_path,
-                version,
-                actor,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        conn.commit()
-        return {"project_id": project_id, "repo_path": repo_path, "version": version, "fresh": True}
-    finally:
-        conn.close()
-
-
 # -- the route table (interfaces §2b mutation column) --------------------------
 
 
@@ -797,14 +758,20 @@ async def return_stage(request: Any) -> CommandResponse:
 async def retry_run(request: Any) -> CommandResponse:
     """POST /api/runs/{run_id}/retry -> retry_run (§1b #12, §2b #26)."""
     body = await _json_body(request)
+    clear_evidence = body.get("clear_evidence", False)
+    reset_dispatch = body.get("reset_dispatch", False)
     params = {
         "run_id": request.path_params.get("run_id"),
-        "clear_evidence": bool(body.get("clear_evidence", False)),
+        "clear_evidence": bool(clear_evidence),
+        "reset_dispatch": bool(reset_dispatch),
     }
     # guard.py's schema registry carries the required core param; the
-    # contract's optional boolean flag is closed-set checked here (§1b #12).
-    clear_evidence = body.get("clear_evidence", False)
-    if not set(body) <= {"clear_evidence"} or not isinstance(clear_evidence, bool):
+    # contract's optional boolean flags are closed-set checked here (§1b #12).
+    if (
+        not set(body) <= {"clear_evidence", "reset_dispatch"}
+        or not isinstance(clear_evidence, bool)
+        or not isinstance(reset_dispatch, bool)
+    ):
         session = _authenticated(request)
         if session is None:
             return _error(401, "unauthenticated", "an authenticated session is required")
@@ -814,7 +781,7 @@ async def retry_run(request: Any) -> CommandResponse:
             "retry_run",
             params,
             "validation_failed",
-            "retry accepts only the optional boolean clear_evidence flag",
+            "retry accepts only the optional boolean clear_evidence/reset_dispatch flags",
         )
     return await _mutate(
         request,

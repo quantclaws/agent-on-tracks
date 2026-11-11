@@ -14,11 +14,14 @@ import http.client
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
+
+from tracks.processes import (
+    capture_process_tree,
+    terminate_captured_processes,
+)
 
 RECEIPT_REL = ".tracks/install.json"
 LAUNCHER_REL = ".tracks/bin/trac.py"
@@ -33,7 +36,7 @@ STOP_TIMEOUT_S = 5.0
 # (interfaces §1b.4); the host root .gitignore is deliberately never touched.
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
-TRACKS_GITIGNORE = "report/\n*.lock\n"
+TRACKS_GITIGNORE = "report/\n*.lock\n/runtime/\n/service/\n/worktrees/\n"
 ENV_GITIGNORE = "*"
 
 _VERSION_ASSIGNMENT = re.compile(
@@ -74,6 +77,17 @@ if __name__ == "__main__":
 
 class ProjectCorrupt(Exception):
     """Install artifacts exist but the receipt/site-packages are unusable."""
+
+
+def new_run_metadata(repo: Path) -> dict:
+    """Pin installed projects to the full workflow, preserving legacy runs."""
+    from tracks.capabilities import FULL_WORKFLOW_PROFILE
+
+    root = find_project(repo)
+    if root is None:
+        return {}
+    read_receipt(root)
+    return {"workflow_profile": FULL_WORKFLOW_PROFILE}
 
 
 def find_project(cwd: Path) -> Path | None:
@@ -173,6 +187,18 @@ def _write_if_absent(path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+def _ensure_ignore_rules(path: Path, rules: str) -> None:
+    """Migrate only the Tracks-owned ignore file, retaining existing custom rules."""
+    if path.is_symlink():
+        raise ValueError("Tracks-owned .gitignore must not be a symbolic link")
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    present = set(existing.splitlines())
+    missing = [rule for rule in rules.splitlines() if rule not in present]
+    if missing:
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        path.write_text(existing + separator + "\n".join(missing) + "\n", encoding="utf-8")
+
+
 def scaffold_tracks_dirs(root: Path) -> None:
     """Create the idempotent ``.tracks`` scaffold without touching the host.
 
@@ -182,7 +208,7 @@ def scaffold_tracks_dirs(root: Path) -> None:
     tracks_dir = Path(root) / ".tracks"
     for name in ("projects", "runtime", "wiki"):
         (tracks_dir / name).mkdir(parents=True, exist_ok=True)
-    _write_if_absent(tracks_dir / ".gitignore", TRACKS_GITIGNORE)
+    _ensure_ignore_rules(tracks_dir / ".gitignore", TRACKS_GITIGNORE)
     _write_if_absent(tracks_dir / "runtime" / ".gitignore", RUNTIME_GITIGNORE)
     _write_if_absent(tracks_dir / "projects" / ".gitignore", PROJECTS_GITIGNORE)
     for name in ("projects", "wiki"):
@@ -378,20 +404,15 @@ def stop_service(home: Path, receipt: dict, root: Path) -> dict:
     numeric = int(pid)
     if not launcher_owns_pid(root, receipt, numeric):
         return {"state": "refused", "pid": numeric}
-    with contextlib.suppress(ProcessLookupError):
-        os.kill(numeric, signal.SIGTERM)
-    if not _wait_pid_gone(numeric, STOP_TIMEOUT_S):
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(numeric, signal.SIGKILL)
-        _wait_pid_gone(numeric, 1.0)
+    try:
+        owned = capture_process_tree(numeric)
+        # Wait until the supervisor is gone before touching its workers.
+        # Killing both together lets its shutdown loop respawn an orphan.
+        if not terminate_captured_processes(owned[:1], STOP_TIMEOUT_S):
+            return {"state": "refused", "pid": numeric}
+        if not terminate_captured_processes(owned[1:], STOP_TIMEOUT_S):
+            return {"state": "refused", "pid": numeric}
+    except (OSError, subprocess.SubprocessError):
+        return {"state": "refused", "pid": numeric}
     remove_pidfile(home)
     return {"state": "stopped", "pid": numeric}
-
-
-def _wait_pid_gone(pid: int, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not pid_alive(pid)

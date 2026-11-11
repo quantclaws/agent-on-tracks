@@ -26,6 +26,8 @@ from tracks.executor.file_identity import (
     TREE_STAMP_SKIP_PREFIXES as _TREE_STAMP_SKIP_PREFIXES,
 )
 from tracks.executor.file_identity import porcelain_path
+from tracks.executor.host_contract import contract_env_allowlist
+from tracks.executor.host_env import host_process_env
 from tracks.project import _SUPPORTED_FRAMEWORKS
 
 # The runner module invoked via ``-m`` is the single framework declared in the
@@ -397,7 +399,7 @@ class _PluginRun:
 
 def _anchor_run_env(repo: Path, plugin_root_str: str, tmp_path: Path) -> dict:
     """Environment for the isolated runner (surface output + PYTHONPATH)."""
-    env = os.environ.copy()
+    env = host_process_env(contract_allowlist=contract_env_allowlist(repo))
     env["TRACKS_SURFACE_OUT"] = str(tmp_path)
     repo_str = str(repo)
     if plugin_root_str != repo_str:

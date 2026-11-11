@@ -154,15 +154,34 @@ export function renderDocsView(body, context = {}) {
       if (rows.length) projectId = rows[0].project_id;
     }
     if (!projectId) projectId = "host";
+    if (!body.isConnected) return;
     const tree = await requestJson(
       `/api/projects/${encodeURIComponent(projectId)}/docs/tree`
     );
+    if (!body.isConnected) return;
     const all = Array.isArray(tree.versions) ? tree.versions : [];
     const versions = all.filter((version) => (version.docs || []).length);
     if (!versions.length) {
       renderSidebar({ title: "docs centre", nodes: [] });
       body.append(degradedMessage("No documents"));
       return;
+    }
+    if (context.returnToRun && context.returnToRun.runId) {
+      const back = element("button", {
+        type: "button",
+        "data-testid": "docs-return-to-run",
+        text: "返回运行",
+      });
+      back.addEventListener("click", async () => {
+        const { openTab } = await import("./tabs.js");
+        openTab("releases", {
+          feature: "releases",
+          title: "releases",
+          projectId,
+          ...context.returnToRun,
+        });
+      });
+      body.append(back);
     }
     // The docs window shows documents, not a category banner (the main
     // header strip is gone entirely — 2026-10-09 operator directive).
@@ -204,7 +223,10 @@ export function renderDocsView(body, context = {}) {
     body.__beforeUnmount = workbench.prepareUnmount;
     // Within the session the window reopens on the last document (any
     // version); a fresh session starts blank until the sidebar selects one.
-    const last = lastOpenDoc.get(projectId);
+    const requested = context.version && context.doc
+      ? { version: context.version, doc: context.doc }
+      : null;
+    const last = requested || lastOpenDoc.get(projectId);
     if (
       last &&
       versions.some(

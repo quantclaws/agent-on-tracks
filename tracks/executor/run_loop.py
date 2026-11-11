@@ -57,6 +57,15 @@ _VERIFY_RESUME_GUARD_KINDS = frozenset(
     }
 )
 
+def _attention_condition_cleared(attention) -> bool:
+    """True when a restored GITHUB_TOKEN unblocks issue creation."""
+    payload = attention.payload or {}
+    return (
+        payload.get("area") == "issue_creation"
+        and payload.get("reason") in ("missing_token", "missing_credentials")
+        and bool(os.environ.get("GITHUB_TOKEN"))
+    )
+
 
 class ExecRunLoopMixin:
     """Project -> decide -> issue -> execute loop and its recovery/boundary helpers;
@@ -183,6 +192,7 @@ the host Executor keeps construction and the command handlers."""
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
     ):
+        payload = self._attach_credential_hint(type, payload)
         ev = self.store.append(
             self.run_id, self.version, type, payload, command_id=command_id, task_id=task_id
         )
@@ -252,42 +262,52 @@ the host Executor keeps construction and the command handlers."""
         return proc.stdout.strip() if proc.returncode == 0 else ""
 
     def _pending_operator_attention(self, state: State):
-        """An unresolved M-VERIFY block that a plain re-drive cannot clear.
+        """An unresolved block that a plain re-drive cannot clear.
 
-        A repair commit (HEAD moved past the frozen candidate) or a fresh
-        repair round is operator evidence that the old block may be stale --
-        the chain re-walk owns the re-evaluation. Otherwise returning here
-        releases the writer lock for the operator's retry/return instead of
-        re-running unchanged evidence under it.
+        Any unresolved attention whose area is not auto-retryable parks the
+        loop: the operator must resolve it (configure a credential, clean the
+        tree, ...) or land a repair before a re-drive is meaningful. The
+        M-VERIFY candidate/repair exemptions stay scoped to verify blocks so
+        an unrelated earlier-stage attention is never silently skipped. The
+        caller releases the writer lock instead of re-running unchanged
+        evidence under it.
         """
-        if state.stage != "M-VERIFY":
-            return None
         pending = [
             attention
             for attention in unresolved_attentions(self.store.events(self.run_id))
-            if str((attention.payload or {}).get("stage") or "") == "M-VERIFY"
+            if str((attention.payload or {}).get("area") or "")
+            not in AUTO_RETRY_ATTENTION_AREAS
+            and not _attention_condition_cleared(attention)
         ]
         if not pending:
             return None
-        if any(
-            str((attention.payload or {}).get("area") or "")
-            in AUTO_RETRY_ATTENTION_AREAS
-            for attention in pending
-        ):
-            return None
+        if state.stage == "M-VERIFY":
+            pending = self._drop_stale_verify_attentions(state, pending)
+        return pending[-1] if pending else None
+
+    def _drop_stale_verify_attentions(self, state: State, pending: list):
+        """Apply the repair-commit/repair-round exemptions to verify blocks."""
         head = self._repo_head_sha()
-        if state.candidate_sha and head and head != state.candidate_sha:
-            return None  # repair commit: re-walk is legitimate
-        latest_seq = max(
-            int(getattr(attention, "seq", 0) or 0) for attention in pending
+        repair_round = max(
+            (
+                int(getattr(event, "seq", 0) or 0)
+                for event in self.store.events(self.run_id)
+                if event.type == "repair.round_started"
+            ),
+            default=0,
         )
-        if any(
-            event.type == "repair.round_started"
-            and int(getattr(event, "seq", 0) or 0) > latest_seq
-            for event in self.store.events(self.run_id)
-        ):
-            return None
-        return pending[-1]
+        fresh: list = []
+        for attention in pending:
+            stage = str((attention.payload or {}).get("stage") or "")
+            if stage != "M-VERIFY":
+                fresh.append(attention)
+                continue
+            if state.candidate_sha and head and head != state.candidate_sha:
+                continue  # repair commit: re-walk is legitimate
+            if int(getattr(attention, "seq", 0) or 0) < repair_round:
+                continue
+            fresh.append(attention)
+        return fresh
 
     def _event_payload(self, event) -> dict:
         """Resolve an event payload, dereferencing a stored blob when needed."""
@@ -468,16 +488,7 @@ the host Executor keeps construction and the command handlers."""
         state_after_recover = self.store.state(self.run_id)
         blocked_attention = self._pending_operator_attention(state_after_recover)
         if blocked_attention is not None:
-            payload = blocked_attention.payload or {}
-            print(
-                f"run {self.run_id}: operator attention "
-                f"{payload.get('area', '?')}:{payload.get('reason', '?')} "
-                "is unresolved; releasing the writer lock for the operator "
-                "(trac retry/return or a repair commit re-walks)",
-                file=sys.stderr,
-                flush=True,
-            )
-            return state_after_recover
+            return self._park_on_operator_attention(blocked_attention, state_after_recover)
         self._resume_release_chain(state_after_recover)
         try:
             return self._run_loop_body(dispatches, bound_substate)
@@ -492,11 +503,25 @@ the host Executor keeps construction and the command handlers."""
             if sys.exc_info()[0] is None:
                 self._observe_oob()
 
+    def _park_on_operator_attention(self, attention, state: State) -> State:
+        """Release the writer lock for an unresolved operator block."""
+        payload = attention.payload or {}
+        hint = f" next={payload['next']}" if payload.get("next") else ""
+        print(
+            f"run {self.run_id}: operator attention "
+            f"{payload.get('area', '?')}:{payload.get('reason', '?')} "
+            "is unresolved; releasing the writer lock for the operator "
+            f"(trac retry/return or a repair commit re-walks){hint}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return state
+
     def _run_loop_preflight(self) -> tuple[str, State | None]:
         """One loop-top iteration's checks (B43 drift fail-fast, D-36 OOB
-        observe, B44 breaker, SM-02 doc-gap lifecycle). Returns
-        ``("return", state)`` to stop the loop, ``("continue", None)`` to
-        restart the iteration, or ``("proceed", state)`` to fall through to
+        observe, B44 breaker, operator attention, SM-02 doc-gap lifecycle).
+        Returns ``("return", state)`` to stop the loop, ``("continue", None)``
+        to restart the iteration, or ``("proceed", state)`` to fall through to
         ``decide()`` with the freshly-read state."""
         self._fail_fast_on_code_drift()
         self._observe_oob()
@@ -504,7 +529,12 @@ the host Executor keeps construction and the command handlers."""
         tripped = self._check_breaker(state)
         if tripped is not None:
             return "return", tripped
+        pending = self._pending_operator_attention(state)
+        if pending is not None:
+            return "return", self._park_on_operator_attention(pending, state)
         if self._sm02_pre_decide(state):
+            return "continue", None
+        if self._reverify_repaired_full_candidate(state):
             return "continue", None
         return "proceed", state
 
@@ -1022,13 +1052,12 @@ the host Executor keeps construction and the command handlers."""
         """True when the declared stage transition must stop at a boundary at
         execution time instead of entering ``nxt``.
 
-        ``_NEXT_STAGE`` stays declarative (single source of truth); the v0.5
-        feature gate lives here, at transition execution. ``M-TEST ->
-        M-IMPL`` applies only to runs on v0.5+ (``supports_m_impl`` from the
-        neutral ``tracks.capabilities``); historical v0.1/v0.4 runs and
-        malformed versions complete at the M-TEST boundary.
+        Installed runs use their persisted workflow profile; historical
+        runs retain the original version-based boundary. ``_NEXT_STAGE``
+        remains declarative.
         """
-        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(self.version)
+        capability = getattr(self, "workflow_profile", None) or self.version
+        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(capability)
 
     def _release_boundary_route(self, state):
         """M-IMPL boundary guard (architecture §1.1 / IF-VERIFY-001): a
@@ -1045,7 +1074,7 @@ the host Executor keeps construction and the command handlers."""
         into the release pipeline while sub-threshold hotfixes keep the v0.6
         boundary completion byte-identical."""
         callback = _version_extensions.resolve_capability(
-            base_version(self.version or ""), "after_m_impl"
+            state.workflow_profile or base_version(self.version or ""), "after_m_impl"
         )
         return callback(state) if callback is not None else None
 

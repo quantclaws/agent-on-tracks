@@ -7,9 +7,19 @@ import json
 from pathlib import Path
 
 from tests.unit.helpers import git_repo, git_strip
+from tests.unit.hotfix262_release_support import (
+    MINIMAL_HOST_CONTRACT_TOML,
+    RELEASE_FACTS,
+    quality_gate_payload,
+)
+from tests.unit.hotfix262_release_support import (
+    full_payload as _full_evidence,
+)
+from tests.unit.hotfix262_release_support import (
+    release_evidence as _release_evidence,
+)
 from tracks import paths
 from tracks.executor.executor import Executor
-from tracks.executor.host_contract import GATE_RESULT_PROTOCOL, GATE_RESULT_VERSION
 from tracks.executor.release_authorization import assess_release
 from tracks.executor.release_gate import build_operation_plan
 from tracks.kernel.events import Command
@@ -30,45 +40,46 @@ def _evidence_digest(payload: dict) -> str:
     return _canonical_digest(material)
 
 
-def _host(tmp_path: Path) -> tuple[Executor, Store, Path, str, dict]:
-    repo = git_repo(tmp_path, gitignore=True)
+def _gate_payload(candidate: str, contract_digest: str) -> dict:
+    return quality_gate_payload(
+        candidate, contract_digest, summary={"result": "baseline"}
+    )
+
+
+def _expected_evidence_digests(
+    gate_payload: dict, evidence_events: list[tuple[str, dict]]
+) -> dict:
+    expected = {"quality[0]": _evidence_digest(gate_payload)}
+    for event_type, event_payload in evidence_events:
+        key = {
+            "full.executed": "full_f",
+            "ci.run_observed": "ci",
+            "security.assessed": "security",
+        }.get(event_type)
+        if event_type == "prism.verdict":
+            key = "prism." + event_payload["scope"]
+        assert key is not None
+        expected[key] = _evidence_digest(event_payload)
+    return expected
+
+
+def _write_contract(repo: Path) -> Path:
     projects = repo / ".tracks" / "projects"
     projects.mkdir(parents=True, exist_ok=True)
     contract_path = projects / "project.toml"
-    contract_path.write_text(
-        "[host-contract]\n"
-        "version = 1\n"
-        "language = 'python'\n"
-        "toolchain = 'cpython'\n"
-        "install = ''\n"
-        "\n[host-contract.version_scheme]\n"
-        "feature_tag = 'v{minor}.0'\n"
-        "patch_line = 'v{minor}.{n}'\n"
-        "prerelease_tag = 'v{minor}.{n}-pre.{ulid}'\n"
-        "\n[host-contract.operations.feature]\n"
-        "steps = ['tag:{feature_tag}']\n",
-        encoding="utf-8",
-    )
+    contract_path.write_text(MINIMAL_HOST_CONTRACT_TOML, encoding="utf-8")
     git_strip(repo, "add", "-f", ".tracks/projects/project.toml")
     git_strip(repo, "commit", "-m", "preview contract")
+    return contract_path
+
+
+def _host(tmp_path: Path) -> tuple[Executor, Store, Path, str, dict]:
+    repo = git_repo(tmp_path, gitignore=True)
+    contract_path = _write_contract(repo)
     candidate = git_strip(repo, "rev-parse", "HEAD")
     contract_digest = "sha256:" + hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    gate_payload = {
-        "kind": "quality",
-        "gate_identity": "quality[0]",
-        "candidate_sha": candidate,
-        "contract_digest": contract_digest,
-        "command_echo": ["quality"],
-        "normalized_result": {
-            "schema": GATE_RESULT_PROTOCOL,
-            "version": GATE_RESULT_VERSION,
-            "status": "passed",
-            "exit_code": 0,
-            "summary": {"result": "baseline"},
-            "gate_id": "quality",
-        },
-        "reason": None,
-    }
+    gate_payload = _gate_payload(candidate, contract_digest)
+    evidence_events = _release_evidence(candidate)
     store = Store(repo / ".tracks")
     store.append(
         "RUN",
@@ -81,30 +92,18 @@ def _host(tmp_path: Path) -> tuple[Executor, Store, Path, str, dict]:
             "frozen_at_seq": 1,
         },
     )
-    store.append(
-        "RUN",
-        "v0.8",
-        "local_gate.passed",
-        gate_payload,
-    )
+    store.append("RUN", "v0.8", "local_gate.passed", gate_payload)
+    for event_type, event_payload in evidence_events:
+        store.append("RUN", "v0.8", event_type, event_payload)
     executor = Executor(store, repo, "RUN")
-    facts = {
-        "version": "v0.8",
-        "major": "0",
-        "minor": "0.8",
-        "feature_tag": "v0.8.0",
-        "patch_line": "v0.8.{n}",
-        "prerelease_tag": "v0.8.{n}-pre.{ulid}",
-    }
-    contract = {
-        "operations": {"feature": {"steps": ["tag:{feature_tag}"]}}
-    }
+    facts = dict(RELEASE_FACTS)
+    contract = {"operations": {"feature": {"steps": ["tag:{feature_tag}"]}}}
     plan = build_operation_plan(contract, "feature", facts)
     return executor, store, contract_path, candidate, {
         "plan": plan,
         "operation_plan_digest": _canonical_digest(plan),
         "contract_policy_digest": contract_digest,
-        "evidence_digests": {"quality[0]": _evidence_digest(gate_payload)},
+        "evidence_digests": _expected_evidence_digests(gate_payload, evidence_events),
     }
 
 
@@ -118,23 +117,6 @@ def _previews(store: Store) -> list:
     return [event for event in store.events("RUN") if event.type == "release.previewed"]
 
 
-def _full_evidence(candidate: str, *, eligible: bool) -> dict:
-    return {
-        "candidate_sha": candidate,
-        "passed": eligible,
-        "full_f_eligible": eligible,
-        "selection_id": "selection-1",
-        "execution_commit": candidate,
-        "evidence_ids": ["evidence-1"],
-        "identity": {
-            "tree": "tree-1",
-            "command": ["pytest"],
-            "env": "env-1",
-            "selection_id": "selection-1",
-        },
-    }
-
-
 def test_release_preview_is_resolved_and_content_addressed(tmp_path):
     executor, store, _contract_path, candidate, expected = _host(tmp_path)
 
@@ -143,7 +125,7 @@ def test_release_preview_is_resolved_and_content_addressed(tmp_path):
     previews = _previews(store)
     assert len(previews) == 1
     payload = previews[0].payload
-    assert payload["candidate_sha"] == candidate
+    assert payload["candidate_sha"] == candidate  # tracks-anchor-ok: candidate comes from the _host capture; this test drives no HEAD-moving activity
     assert payload["operation_plan"] == expected["plan"]
     assert payload["operation_plan_digest"] == expected["operation_plan_digest"]
     assert payload["contract_policy_digest"] == expected["contract_policy_digest"]
@@ -180,29 +162,13 @@ def test_contract_change_does_not_reuse_old_preview(tmp_path):
 def test_evidence_change_does_not_reuse_old_preview(tmp_path):
     executor, store, _contract_path, candidate, _expected = _host(tmp_path)
     _emit_preview(executor, candidate)
-    store.append(
-        "RUN",
-        "v0.8",
-        "local_gate.passed",
-        {
-            "kind": "quality",
-            "candidate_sha": candidate,
-            "gate_identity": "quality[0]",
-            "contract_digest": "sha256:" + hashlib.sha256(
-                _contract_path.read_bytes()
-            ).hexdigest(),
-            "command_echo": ["quality-v2"],
-            "normalized_result": {
-                "schema": GATE_RESULT_PROTOCOL,
-                "version": GATE_RESULT_VERSION,
-                "status": "passed",
-                "exit_code": 0,
-                "summary": {"result": "changed"},
-                "gate_id": "quality",
-            },
-            "reason": None,
-        },
+    changed = quality_gate_payload(
+        candidate,
+        "sha256:" + hashlib.sha256(_contract_path.read_bytes()).hexdigest(),
+        summary={"result": "changed"},
     )
+    changed["command_echo"] = ["quality-v2"]
+    store.append("RUN", "v0.8", "local_gate.passed", changed)
 
     _emit_preview(executor, candidate)
 
@@ -263,6 +229,8 @@ def test_runtime_default_contract_preview_reads_authorized(tmp_path):
             "frozen_at_seq": 1,
         },
     )
+    for event_type, event_payload in _release_evidence(candidate):
+        store.append("RUN", "v0.8", event_type, event_payload)
     executor = Executor(store, repo, "RUN")
     _emit_preview(executor, candidate)
 
@@ -288,27 +256,10 @@ def test_latest_failed_gate_revokes_previous_pass_evidence(tmp_path):
     executor, store, contract_path, candidate, _expected = _host(tmp_path)
     _emit_preview(executor, candidate)
     contract_digest = "sha256:" + hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    store.append(
-        "RUN",
-        "v0.8",
-        "local_gate.failed",
-        {
-            "kind": "quality",
-            "gate_identity": "quality[0]",
-            "candidate_sha": candidate,
-            "contract_digest": contract_digest,
-            "command_echo": ["quality"],
-            "normalized_result": {
-                "schema": GATE_RESULT_PROTOCOL,
-                "version": GATE_RESULT_VERSION,
-                "status": "failed",
-                "exit_code": 7,
-                "summary": {"result": "failed"},
-                "gate_id": "quality",
-            },
-            "reason": "gate_failed",
-        },
+    failed_gate = quality_gate_payload(
+        candidate, contract_digest, status="failed", summary={"result": "failed"}
     )
+    store.append("RUN", "v0.8", "local_gate.failed", failed_gate)
 
     _emit_preview(executor, candidate)
 
@@ -324,8 +275,13 @@ def test_latest_noneligible_full_evidence_revokes_previous_pass(tmp_path):
 
     _emit_preview(executor, candidate)
 
-    assert len(_previews(store)) == 2
-    assert "full_f" not in _previews(store)[-1].payload["evidence_digests"]
+    assert len(_previews(store)) == 1, (
+        "missing full_f must invalidate the new preview, not land a partial set"
+    )
+    attention = [e for e in store.events("RUN") if e.type == "attention.required"]
+    assert attention and attention[-1].payload["reason"] == (
+        "evidence_incomplete_for_candidate"
+    )
 
 
 def test_full_failure_without_execution_commit_revokes_old_success(tmp_path):
@@ -339,8 +295,13 @@ def test_full_failure_without_execution_commit_revokes_old_success(tmp_path):
 
     _emit_preview(executor, candidate)
 
-    assert len(_previews(store)) == 2
-    assert "full_f" not in _previews(store)[-1].payload["evidence_digests"]
+    assert len(_previews(store)) == 1, (
+        "missing full_f must invalidate the new preview, not land a partial set"
+    )
+    attention = [e for e in store.events("RUN") if e.type == "attention.required"]
+    assert attention and attention[-1].payload["reason"] == (
+        "evidence_incomplete_for_candidate"
+    )
 
 
 def test_full_success_with_mismatched_execution_commit_is_rejected(tmp_path):
@@ -353,8 +314,13 @@ def test_full_success_with_mismatched_execution_commit_is_rejected(tmp_path):
 
     _emit_preview(executor, candidate)
 
-    assert len(_previews(store)) == 2
-    assert "full_f" not in _previews(store)[-1].payload["evidence_digests"]
+    assert len(_previews(store)) == 1, (
+        "missing full_f must invalidate the new preview, not land a partial set"
+    )
+    attention = [e for e in store.events("RUN") if e.type == "attention.required"]
+    assert attention and attention[-1].payload["reason"] == (
+        "evidence_incomplete_for_candidate"
+    )
 
 
 def test_stale_barrier_allows_recovery_after_fresh_evidence(tmp_path):
@@ -367,27 +333,13 @@ def test_stale_barrier_allows_recovery_after_fresh_evidence(tmp_path):
         {"candidate_sha": candidate, "reason": "human_return"},
     )
     contract_digest = "sha256:" + hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    store.append(
-        "RUN",
-        "v0.8",
-        "local_gate.passed",
-        {
-            "kind": "quality",
-            "gate_identity": "quality[0]",
-            "candidate_sha": candidate,
-            "contract_digest": contract_digest,
-            "command_echo": ["quality-retry"],
-            "normalized_result": {
-                "schema": GATE_RESULT_PROTOCOL,
-                "version": GATE_RESULT_VERSION,
-                "status": "passed",
-                "exit_code": 0,
-                "summary": {"result": "fresh"},
-                "gate_id": "quality",
-            },
-            "reason": None,
-        },
+    fresh_gate = quality_gate_payload(
+        candidate, contract_digest, summary={"result": "fresh"}
     )
+    fresh_gate["command_echo"] = ["quality-retry"]
+    store.append("RUN", "v0.8", "local_gate.passed", fresh_gate)
+    for event_type, event_payload in _release_evidence(candidate):
+        store.append("RUN", "v0.8", event_type, event_payload)
 
     _emit_preview(executor, candidate)
 

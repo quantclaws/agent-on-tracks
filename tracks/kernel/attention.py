@@ -45,6 +45,7 @@ CANDIDATE_SCOPED_AREAS = frozenset(
 # A later same-stage exit, a successful same-command outcome, or an operator
 # reset also resolves generically (see attention_resolved).
 RECOVERY_EVENTS = {
+    "host_environment": ("environment.prepared",),
     "freeze": ("candidate.frozen",),
     "issue_creation": ("issue.created", "issues.created", "issue.mapped"),
     "issue_close": ("issue.closed",),
@@ -96,6 +97,7 @@ AUTO_RETRY_ATTENTION_AREAS = frozenset(
 # the run never became a formal escalation (M-VERIFY freeze/gate/CI blocks).
 RETRYABLE_ATTENTION_AREAS = frozenset(
     {
+        "host_environment",
         "freeze",
         "host_contract",
         "local_gate",

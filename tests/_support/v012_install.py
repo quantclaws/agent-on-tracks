@@ -33,7 +33,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PYTHON = Path(sys.executable)
-CURRENT_VERSION = "0.12.0"
+CURRENT_VERSION = "0.12.1"
 OLD_VERSION = "0.11.0"
 
 _GIT_IDENTITY = {

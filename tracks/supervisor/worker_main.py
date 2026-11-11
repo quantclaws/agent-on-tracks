@@ -29,6 +29,7 @@ from typing import Any
 
 from tracks import paths
 from tracks.executor.drive import DriveConfig, DriveResult, drive_once
+from tracks.project_runtime import new_run_metadata
 from tracks.supervisor import gate_exec
 from tracks.supervisor.db import ServiceDB
 from tracks.supervisor.waiting import WaitPolicy, classify_wait, enter_wait
@@ -265,7 +266,9 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
         with writer_lock(paths.tracks_home(repo)):
             if store.state(run_id).run_id is not None:
                 return  # already bootstrapped (idempotent re-drive)
-            store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
+            store.append(run_id, version, "story.requested", {
+                "raw_chars": len(raw), **new_run_metadata(repo),
+            })
             store.append(run_id, version, "stage.entered", {"stage": "M-START"})
             from tracks.executor.executor import Executor  # noqa: PLC0415
 
@@ -321,7 +324,7 @@ def _bootstrap_hotfix_run_plane(repo: Path, run_id: str, params: dict, journey: 
             )
             store.append(
                 run_id, version, "hotfix.requested",
-                {"issue": issue_number, "scenario": scenario},
+                {"issue": issue_number, "scenario": scenario, **new_run_metadata(repo)},
             )
             store.append(
                 run_id, version, "stage.entered", {"stage": HOTFIX_TRIAGE_STAGE}

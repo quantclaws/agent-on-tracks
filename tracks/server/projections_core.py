@@ -356,11 +356,14 @@ def _latest_result(evidence: list[dict]) -> str | None:
 
 
 def _chain_rows(repo_path: str, version: str | None, run_id: str) -> list[dict]:
+    acs = _registry_acs(repo_path, version)
+    if not acs:
+        return []
     events = _run_events(repo_path, run_id)
     state = project_state(events)
     tests = _plan_tests(repo_path, version)
     chain = []
-    for ac_id in _registry_acs(repo_path, version):
+    for ac_id in acs:
         nodes = list(tests.get(ac_id, []))
         evidence = _ac_evidence(events, nodes)
         chain.append(
@@ -469,18 +472,60 @@ def _material_revision(project: dict) -> str | None:
         return None
 
 
-def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
+_AWAITING_TODO_KINDS: dict[str, tuple[str, str]] = {
+    "triage": ("分诊", "triage decision required"),
+    "review": ("评审", "stage review decision required"),
+    "review_pending_threads": ("评审（待讨论结论）", "discussion threads pending resolution"),
+    "escalation": ("升级处理", "escalation decision required"),
+    "rollback": ("回拨决策", "rollback decision required"),
+    "hotfix_triage": ("Hotfix 分诊", "hotfix triage decision required"),
+}
+
+
+def _todo_item(
+    run_id: str, state: State, project: dict, kind: str, label: str, context: str,
+    action_ref: str, title: str | None, updated_ts: str | None,
+    *, object_label: str | None = None, revision: str | None = None,
+) -> dict:
+    """One human-decision row in the unified inbox (interfaces §1g.5)."""
+    version = state.version or project.get("version") or ""
+    stage = state.stage or kind
+    return {
+        "run_id": run_id, "kind": kind, "object": object_label or stage,
+        "revision": revision if revision is not None else state.preview_digest,
+        "version": version,
+        "title": title or run_id, "stage": stage, "kind_label": label,
+        "summary": context, "context": context,
+        "updated_ts": updated_ts or "", "action_ref": action_ref,
+    }
+
+
+def _todo_for(
+    run_id: str, state: State, project: dict,
+    title: str | None = None, updated_ts: str | None = None,
+) -> dict | None:
+    """A legitimate human decision for one run, or None (waits never list)."""
+    run_ref = f"/runs/{run_id}"
     if state.awaiting == "approval":
-        return {"run_id": run_id, "kind": "stage_approval", "object": state.stage or "approval",
-            "revision": _material_revision(project) or state.preview_digest,
-            "context": f"{state.stage or 'stage'} awaiting Human approval",
-            "action_ref": f"/runs/{run_id}/review",}
-    if state.awaiting == "triage":
-        return {"run_id": run_id, "kind": "triage", "object": state.stage or "triage",
-            "revision": None, "context": "triage decision required",
-            "action_ref": f"/runs/{run_id}/review",}
+        return _todo_item(
+            run_id, state, project, "stage_approval", "阶段批准",
+            f"{state.stage or 'stage'} awaiting Human approval",
+            run_ref, title, updated_ts,
+            object_label=state.stage or "approval",
+            revision=_material_revision(project) or state.preview_digest,
+        )
+    gate_kind = state.awaiting or ""
+    gate = _AWAITING_TODO_KINDS.get(gate_kind)
+    if gate is not None:
+        label, context = gate
+        return _todo_item(
+            run_id, state, project, gate_kind, label, context,
+            run_ref, title, updated_ts,
+        )
     if state.substate == "AWAITING_RELEASE":
-        return {"run_id": run_id, "kind": "release_decision", "object": state.stage or "release",
-            "revision": state.preview_digest, "context": "release candidate awaiting decision",
-            "action_ref": f"/runs/{run_id}/release",}
+        return _todo_item(
+            run_id, state, project, "release_decision", "发布决策",
+            "release candidate awaiting decision", run_ref,
+            title, updated_ts, object_label=state.stage or "release",
+        )
     return None

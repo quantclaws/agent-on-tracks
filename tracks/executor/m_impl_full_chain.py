@@ -524,9 +524,17 @@ class MImplFullChainMixin:
         # A layer whose only failures are waived exits non-zero; the
         # required-green proof is still complete (FR-0286 §5: the waiver
         # changes the blocking set, never the execution record).
-        serves_as_full_f = not evidence.blocking and (
+        full_f_eligible = self._full_f_eligible(
+            evidence.blocking,
+            evidence.waived_nodes,
+            run.command_exit_codes,
+            evidence.empty_pass_layers,
+        )
+        # IF-FULLF-001: keep both payload keys and make them agree -- a
+        # round serves as FULL_F only when it is FULL_F-eligible (INV-1).
+        serves_as_full_f = full_f_eligible and (
             (header.round_name == "FULL_1" and not header.ledger)
-            or header.round_name == "fallback_full"
+            or header.round_name in ("fallback_full", "FULL_F")
         )
         payload = {
             "round": header.round_name,
@@ -557,12 +565,7 @@ class MImplFullChainMixin:
                 "env": evidence.env_identity,
                 "selection_id": header.selection_id,
             },
-            "full_f_eligible": self._full_f_eligible(
-                evidence.blocking,
-                evidence.waived_nodes,
-                run.command_exit_codes,
-                evidence.empty_pass_layers,
-            ),
+            "full_f_eligible": full_f_eligible,
             "empty_pass_layers": evidence.empty_pass_layers,
             "command_cwds": run.command_cwds,
             "command_exit_codes": run.command_exit_codes,

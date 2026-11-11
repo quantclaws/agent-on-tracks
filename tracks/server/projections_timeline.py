@@ -39,6 +39,103 @@ def _stage_order() -> list[str]:
     return order
 
 
+_STAGE_ENTRY_TYPES = ("stage.entered", "stage.recovered")
+_STAGE_TYPES = frozenset({"stage.entered", "stage.exited", "stage.rolled_back",
+                          "stage.recovered"})
+
+
+def _synthesize_legacy_stage_rows(rows: list[dict]) -> list[dict]:
+    """Synthesize the release-tail stage transitions legacy runs never emitted.
+
+    IF-STAGE-001 §1f.3 (interfaces §1f item 3): a v0.12.0-shaped stream has
+    no explicit ``stage.exited/entered`` for M-RELEASE -> M-PUBLISH ->
+    M-MILESTONE. The read model composes them from the durable facts without
+    persisting anything, guarded by the *current* stage, so an explicit
+    transition always wins (interfaces: 显式事件优先于合成):
+
+    - ``publish.planned`` while current is M-RELEASE (or unknown: a seed
+      without explicit stage events) closes M-RELEASE and opens M-PUBLISH;
+    - ``milestone.trace_closed`` while current is M-PUBLISH (or unknown)
+      closes M-PUBLISH and opens M-MILESTONE;
+    - ``run.completed(terminal_state="released")`` while current is
+      M-MILESTONE (or unknown) closes M-MILESTONE (the client folds it as
+      ``done``).
+    """
+    out: list[dict] = []
+    current: str | None = None
+    closed = False
+    for row in rows:
+        etype = row.get("type")
+        payload = row.get("payload") or {}
+        stage = row.get("stage") or payload.get("stage")
+        transition = _legacy_transition(current, closed, etype, payload)
+        current, closed = _fold_stage_state(current, closed, etype, payload, stage)
+        if transition is not None:
+            from_stage, to_stage = transition
+            out.append(_synthetic_stage_row(row, "stage.exited", from_stage))
+            if to_stage is not None:
+                out.append(_synthetic_stage_row(row, "stage.entered", to_stage))
+                current, closed = to_stage, False
+            else:
+                closed = True
+        out.append(row)
+    return out
+
+
+def _fold_stage_state(current, closed, etype: str, payload: dict, stage):
+    """Advance the (current stage, visit closed) fold over one event row."""
+    if etype in _STAGE_ENTRY_TYPES:
+        return payload.get("stage") or stage, False
+    if etype == "stage.exited":
+        return current, (payload.get("stage") or stage) == current
+    if etype == "stage.rolled_back":
+        return payload.get("to_stage") or payload.get("to") or current, False
+    return current, closed
+
+
+def _legacy_transition(current, closed, etype: str, payload: dict):
+    """The missing stage pair/exit for one legacy trigger, or None.
+
+    ``current is None`` is the v0.12.0 seed shape with no explicit stage
+    events at all: the release-tail facts themselves identify the stage
+    (``publish.planned`` only happens in M-RELEASE, ``milestone.trace_closed``
+    after M-PUBLISH, ``run.completed(released)`` after M-MILESTONE), so the
+    fallback composes the whole visit chain. A non-None current always wins
+    over inference (explicit events are authoritative).
+    """
+    if closed:
+        return None
+    if current in (None, "M-RELEASE") and etype == "publish.planned":
+        return ("M-RELEASE", "M-PUBLISH")
+    if current in (None, "M-PUBLISH") and etype == "milestone.trace_closed":
+        return ("M-PUBLISH", "M-MILESTONE")
+    if (
+        current in (None, "M-MILESTONE")
+        and etype == "run.completed"
+        and payload.get("terminal_state") == "released"
+    ):
+        return ("M-MILESTONE", None)
+    return None
+
+
+def _synthetic_stage_row(trigger: dict, etype: str, stage: str) -> dict:
+    return {
+        "source": "tracks",
+        "seq": trigger.get("seq"),
+        "ts": trigger.get("ts"),
+        "type": etype,
+        "run_id": trigger.get("run_id"),
+        "command_id": trigger.get("command_id"),
+        "task_id": trigger.get("task_id"),
+        "ac_refs": [],
+        "summary": etype,
+        "payload": {"stage": stage},
+        "stage": stage,
+        "attempt": None,
+        "payload_ref": "",
+    }
+
+
 # -- public projections -----------------------------------------------------
 
 
@@ -58,8 +155,8 @@ def project_timeline(
         rows = _timeline_rows(conn, repo_path, run_id, slim=slim, include_internal=include_internal)
         rows = _filter_timeline(rows, command_id, task_id, ac_id)
         rows = _after_cursor(rows, after_seq)
-        if slim and len(rows) > _SLIM_MAX_ROWS:
-            rows = rows[-_SLIM_MAX_ROWS:]
+        if slim:
+            rows = _tail_rows(rows, lambda row: row.get("type"))
         return {"events": rows, "cursor": _cursor_of(rows), "stage_order": _stage_order()}
     finally:
         if conn is not None:
@@ -75,7 +172,7 @@ def _timeline_rows(
         _service_timeline_rows(conn, run_id, slim=slim, include_internal=include_internal)
     )
     rows.sort(key=_timeline_sort_key)
-    return rows
+    return _synthesize_legacy_stage_rows(rows)
 
 
 def _track_timeline_rows(repo_path: str, run_id: str, *, slim: bool) -> list[dict]:
@@ -126,7 +223,9 @@ def _service_timeline_rows(
         parsed = _json(raw)
         parsed = parsed if isinstance(parsed, dict) else {}
         if slim:
-            parsed = _slim_payload(type_, parsed)
+            parsed = _slim_payload(
+                type_, parsed, include_evidence=_keeps_evidence(type_)
+            )
         rows.append(
             {
                 "source": "service", "seq": int(seq), "ts": ts, "type": type_, "run_id": run,
@@ -161,11 +260,62 @@ _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
     # these made the slim face lose the edge whenever ``current`` did not
     # happen to be the source stage (recovery/truncation paths).
     "from_stage", "from", "operator_repair",
-    # verdict.failed evidence rides the same bounded verdict blob; the UI
-    # folds it into 技术详情 (never the default headline).
-    "evidence",
     "round", "verdict", "decision", "action", "check", "final", "commit_sha",
-    "area", "next"})
+    "area", "next", "terminal_state"})
+
+# FR-0359-02 (the arrival-green guard's failure fold) needs a cause string on
+# verdict.failed rows; AC-FR0335-02 forbids the full evidence blob in the
+# slim face (per-row <1024, response <50KB). Keep a bounded head plus an
+# explicit truncation marker: both contracts hold at once.
+_SLIM_EVIDENCE_MAX = 512
+_SLIM_EVIDENCE_MARKER = "…[truncated]"
+
+# Slim rows keep only stage-workflow facts (plus the selected-stage dispatch
+# identity the workflow diagram renders). Everything else stays in the
+# full-history audit face; the bounded tail below is the size backstop.
+_SLIM_WORKFLOW_TYPES = frozenset({
+    "stage.entered", "stage.exited", "stage.rolled_back", "stage.recovered",
+    "command.issued", "outcome.received", "red.validated",
+    "test.collected", "test.baseline_captured", "test.selected",
+    "test.written", "test.committed",
+    "environment.preparation_started", "environment.step_completed", "environment.prepared",
+    "candidate.frozen", "candidate.stale",
+    "local_gate.passed", "local_gate.failed",
+    "full.executed", "evidence.reused", "evidence.staled",
+    "design.committed", "story.committed", "spec.committed",
+    "acceptance.committed", "prism.verdict",
+    "release.previewed", "release.decided", "release.rejected",
+    "publish.planned", "publish.executed", "publish.failed",
+    "publish.blocked", "reconcile_conflict",
+    "milestone.trace_closed", "milestone.closed", "milestone.sealed",
+    "refs.cleaned", "run.completed", "run.interrupted",
+    "attention.required",
+    "human.triage", "human.review", "human.retry", "human.approval",
+    "human.return", "human.recover", "approval.recorded",
+    "issue.created", "issues.created", "review.round_started",
+})
+
+
+def _slim_workflow_type(type_: str) -> bool:
+    return type_ in _SLIM_WORKFLOW_TYPES or type_.startswith("verdict.")
+
+
+def _tail_rows(rows: list, type_of) -> list:
+    """Bound the slim tail but never drop a stage visit boundary.
+
+    The stage path / node states are derived from the full visit history
+    (AC-FR0335-01), so ``stage.*`` rows survive the tail cap; the bulkier
+    workflow rows keep only the newest ``_SLIM_MAX_ROWS``.
+    """
+    if len(rows) <= _SLIM_MAX_ROWS:
+        return rows
+    tail_start = len(rows) - _SLIM_MAX_ROWS
+    return [
+        row
+        for index, row in enumerate(rows)
+        if index >= tail_start or type_of(row) in _STAGE_TYPES
+    ]
+
 
 # Slim-mode service-plane noise exclusion (read-face load shedding only; the
 # writer is untouched): ``command.accepted`` + ``lease.acquired`` are the
@@ -176,10 +326,12 @@ _SLIM_KEYS = frozenset({"stage", "attempt", "to", "to_stage", "reason",
 _SLIM_EXCLUDED_SERVICE_TYPES = ("command.accepted", "lease.acquired")
 
 # Slim-mode backstop cap: even after the noise exclusion, the response keeps
-# only the newest N merged rows. The UI renders the stage path / current card
-# from recent workflow facts, so an unbounded tail is pure serialization cost;
-# the non-slim path (full-history audit face) is never capped.
-_SLIM_MAX_ROWS = 20000
+# only the newest N merged rows (stage visits always kept). The UI renders
+# the stage path / current card from recent workflow facts, so an unbounded
+# tail is pure serialization cost; the non-slim path (full-history audit
+# face) is never capped. 120 workflow rows stay well under the <50KB target
+# (IF-UIPERF-001) while covering the whole tail journey.
+_SLIM_MAX_ROWS = 120
 
 # command.issued params allowlist for slim mode: the dispatch identity the
 # stage workflow diagram renders (role/substate/attempt/review_round/…).
@@ -221,15 +373,50 @@ def _slim_command(command: object) -> dict:
     return kept
 
 
-def _slim_payload(type_: str, parsed: dict) -> dict:
+def _keeps_evidence(type_: str) -> bool:
+    """Only the gate-failure fold keeps a (bounded) evidence string."""
+    return type_ == "verdict.failed"
+
+
+def _bounded_evidence(value) -> str:
+    """One verdict.failed evidence string, bounded for the slim face.
+
+    Keeps the head of the failure output so the gate-failure fold still has a
+    cause (FR-0359-02) while staying below the per-row bound AC-FR0335-02
+    sets on the slim response. Non-strings are serialized first so the client
+    always renders a string.
+    """
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            text = str(value)
+    if len(text) <= _SLIM_EVIDENCE_MAX:
+        return text
+    keep = _SLIM_EVIDENCE_MAX - len(_SLIM_EVIDENCE_MARKER)
+    return text[:keep] + _SLIM_EVIDENCE_MARKER
+
+
+def _slim_payload(type_: str, parsed: dict, *, include_evidence: bool = True) -> dict:
     """Whitelisted slim payload for one event (slim branch only).
 
     Top-level scalars keep _SLIM_KEYS; a ``command.issued`` row additionally
     keeps ``command.kind`` + the _SLIM_COMMAND_PARAM_KEYS subset of
     ``command.params``. All other shapes (incl. service-plane command rows
     with the same structure) fall through to the scalar whitelist.
+
+    ``evidence`` stays out of the slim face for bulk rows (IF-UIPERF-001:
+    stage detail panels lazy-load large evidence). The one exception is
+    ``verdict.failed``: the gate failure fold must carry a bounded cause
+    (AC-FR0359-02) while the full blob stays out (AC-FR0335-02), so its
+    evidence is truncated to _SLIM_EVIDENCE_MAX. The default keeps the
+    historical helper scalar for direct callers.
     """
     slim = {key: parsed[key] for key in _SLIM_KEYS if key in parsed}
+    if include_evidence and "evidence" in parsed:
+        slim["evidence"] = _bounded_evidence(parsed["evidence"])
     if type_ == "outcome.received":
         # Outcome blobs name their conclusion via status/failure_class (this
         # run's 10 refs carry no ``verdict`` key); keep the small scalars so
@@ -245,14 +432,13 @@ def _slim_payload(type_: str, parsed: dict) -> dict:
 
 
 def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
-    """Track-side timeline rows; blobs are read only for workflow refs.
+    """Track-side timeline rows; blobs are read only for the retained tail.
 
-    Reads raw payloads straight from the events table. A ``{"$ref": ...}``
-    row whose type is a stage-workflow fact (``_SLIM_REF_TYPES`` or
-    ``verdict.*``) reads that one blob and emits the same slim row an inline
-    payload would; a missing/unreadable/non-dict blob degrades to the old
-    ``payload={}`` + ``payload_ref``. Every other ref type keeps ``payload={}``
-    and its blob unread, bounding the read face to the small workflow set.
+    Reads raw rows straight from the events table, keeps stage-workflow
+    types only (plus every stage visit boundary), bounds the tail, and only
+    then resolves ``$ref`` blobs for the rows that survive. A missing,
+    unreadable or non-dict blob degrades to ``payload={}`` + ``payload_ref``;
+    every blob outside the tail stays unread (IF-UIPERF-001 bounded read).
     """
     conn = _tracks_db(repo_path)
     try:
@@ -263,7 +449,9 @@ def _slim_track_rows(repo_path: str, run_id: str) -> list[dict]:
     finally:
         if conn is not None:
             conn.close()
-    return [_slim_track_row(repo_path, row) for row in rows]
+    workflow = [row for row in rows if _slim_workflow_type(row[3])]
+    retained = _tail_rows(workflow, lambda row: row[3])
+    return [_slim_track_row(repo_path, row) for row in retained]
 
 
 def _slim_track_row(repo_path: str, row: tuple) -> dict:
@@ -279,7 +467,13 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
     run, seq, ts, type_, command_id, task_id, raw = row
     workflow = type_ in _SLIM_REF_TYPES or type_.startswith("verdict.")
     blob = _load_payload(raw, repo_path) if workflow else {}
-    slim = _slim_payload(type_, blob) if blob else {}
+    slim = (
+        _slim_payload(
+            type_, blob, include_evidence=_keeps_evidence(type_)
+        )
+        if blob
+        else {}
+    )
     return _slim_row(
         (run, seq, ts, type_, command_id, task_id), blob, slim, str(parsed["$ref"])
     )
@@ -287,7 +481,9 @@ def _slim_ref_row(repo_path: str, row: tuple, parsed: dict) -> dict:
 
 def _slim_inline_row(row: tuple, parsed: dict) -> dict:
     run, seq, ts, type_, command_id, task_id, _raw = row
-    slim = _slim_payload(type_, parsed)
+    slim = _slim_payload(
+        type_, parsed, include_evidence=_keeps_evidence(type_)
+    )
     return _slim_row((run, seq, ts, type_, command_id, task_id), parsed, slim, "")
 
 

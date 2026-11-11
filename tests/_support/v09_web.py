@@ -7,6 +7,7 @@ Helpers build stdlib HTTP calls, parse serve stdout, and poll healthz.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -52,11 +53,29 @@ def start_serve(home: Path, repo: Path, port: int = 0) -> subprocess.Popen:
         stderr=subprocess.PIPE,
         text=True,
         cwd=str(_REPO_ROOT),
+        env=_serve_coverage_env(home),
     )
     assert proc.stdin is not None
     proc.stdin.write(_SERVE_PASSWORD + "\n")
     proc.stdin.flush()
     return proc
+
+
+def _serve_coverage_env(home: Path) -> dict[str, str] | None:
+    """Measure the real server only when the parent is collecting coverage."""
+    coverage = sys.modules.get("coverage")
+    if coverage is None or coverage.Coverage.current() is None:
+        return None
+    env = dict(os.environ)
+    env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
+    env["COVERAGE_FILE"] = str(
+        _REPO_ROOT / f".coverage.subprocess.serve.{os.getpid()}.{home.name}"
+    )
+    startup = str(_REPO_ROOT / "tests/_subprocess_coverage")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(_REPO_ROOT), startup, env.get("PYTHONPATH", "")]
+    )
+    return env
 
 
 def stop_serve(proc: subprocess.Popen, timeout: float = 10.0) -> None:

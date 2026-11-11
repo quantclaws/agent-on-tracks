@@ -205,6 +205,8 @@ def _on_full_executed(s: State, p: dict, ev: EventEnvelope) -> None:
 def _on_ledger_opened(s: State, p: dict, ev: EventEnvelope) -> None:
     """A newly opened ledger identity is non-terminal until PROVEN."""
     s.ledger_rebuilt = True
+    if str(p.get("node") or "") in s.ledger_waived_nodes:
+        return
     s.ledger_open += 1
     key = f"{p.get('node', '')}\0{p.get('failure_signature', '')}"
     s.ledger_entries[key] = {**p, "state": "OPEN"}
@@ -227,6 +229,7 @@ def _on_ledger_waived(s: State, p: dict, ev: EventEnvelope) -> None:
     node_refs = {str(node) for node in (p.get("node_refs") or []) if node}
     if not node_refs:
         return
+    s.ledger_waived_nodes = sorted(set(s.ledger_waived_nodes) | node_refs)
     for key, entry in list(s.ledger_entries.items()):
         if entry.get("state") not in ("OPEN", "CLASSIFIED", "FIXED", "STALE"):
             continue
@@ -238,6 +241,8 @@ def _on_ledger_waived(s: State, p: dict, ev: EventEnvelope) -> None:
 def _on_ledger_transitioned(s: State, p: dict, ev: EventEnvelope) -> None:
     """Project non-terminal ledger count across the closed transition set."""
     s.ledger_rebuilt = True
+    if str(p.get("node") or "") in s.ledger_waived_nodes:
+        return
     before = p.get("from")
     after = p.get("to")
     key = f"{p.get('node', '')}\0{p.get('failure_signature', '')}"

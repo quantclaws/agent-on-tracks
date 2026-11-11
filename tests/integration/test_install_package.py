@@ -150,6 +150,12 @@ def test_wheel_carries_capability_resources(v012_wheels):
         f"wheel is missing templates: {sorted(set(templates) - names)}"
     )
     assert "tracks/assets/opencode.json" in names
+    static = PROJECT_ROOT / "tracks" / "server" / "static"
+    static_members = {
+        path.relative_to(PROJECT_ROOT).as_posix()
+        for path in static.rglob("*") if path.is_file()
+    }
+    assert static_members <= names, f"wheel is missing Web assets: {sorted(static_members - names)}"
     assert not any(name.startswith("tests/") for name in names)
 
 

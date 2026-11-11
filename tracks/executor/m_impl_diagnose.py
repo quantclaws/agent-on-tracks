@@ -21,7 +21,33 @@ from tracks.executor.m_impl_anchor import (
 from tracks.executor.quality_gate import failed_summary_lines, host_test_env
 from tracks.executor.rgr import adopt_red_ref, create_red_ref
 from tracks.executor.test_select import TestSelectError, resolve_selected_command
-from tracks.project import ContractError, load_contract
+from tracks.project import ContractError, layout_paths, load_contract
+
+
+def _dirty_shield_paths(repo: Path) -> list[str]:
+    """Repo-relative dirty paths under the §layout.shield test domain.
+
+    A verification-only task must not complete on a tree whose Shield-domain
+    test assets are still uncommitted: the anchors can pass because the WIP is
+    present, yet ``freeze_candidate`` later fails on the dirty tree and no
+    writer phase owns the landing (hotfix #262 T-004 PRISM-PLAN-011). Failing
+    the verification with ``test_defect`` routes the asset set to SHIELD_FIX,
+    whose commit emits ``test.committed``.
+    """
+    dirs = [d.rstrip("/") for d in layout_paths(Path(repo), "shield") if d]
+    if not dirs:
+        return []
+    out = git(Path(repo), "status", "--porcelain", "--untracked-files=all", check=False)
+    dirty: set[str] = set()
+    for line in (out.stdout or "").splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if any(path == d or path.startswith(d + "/") for d in dirs):
+            dirty.add(path)
+    return sorted(dirty)
 
 
 def _red_classification_label(value: object) -> str:
@@ -605,6 +631,44 @@ class MImplDiagnoseMixin:
         )
         self._rebuild_task_log_projection()
 
+    def _verify_task_preconditions(self, state, cmd, tid: str, test_refs) -> bool:
+        if not isinstance(test_refs, list) or not test_refs:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "verification_failed",
+                    "reason": "verification-only task declares no test_refs",
+                    "task_id": tid,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return False
+        return self._verify_shield_assets_ready(state, cmd, tid)
+
+    def _verify_shield_assets_ready(self, state, cmd, tid: str) -> bool:
+        dirty_shield = _dirty_shield_paths(Path(self.repo))
+        if not dirty_shield:
+            return True
+        shown = ", ".join(dirty_shield[:8])
+        more = f" (+{len(dirty_shield) - 8} more)" if len(dirty_shield) > 8 else ""
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "test_defect",
+                "reason": (
+                    "verification-only task has uncommitted Shield test "
+                    f"assets: {shown}{more}; SHIELD_FIX must land them"
+                ),
+                "task_id": tid,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=tid,
+        )
+        return False
+
     def _do_verify_task(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """Runtime-executed acceptance for verification-only tasks (§1.0.3).
 
@@ -621,18 +685,7 @@ class MImplDiagnoseMixin:
         tid = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         meta = state.current_task_metadata or {}
         test_refs = meta.get("test_refs") or []
-        if not isinstance(test_refs, list) or not test_refs:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "verification_failed",
-                    "reason": "verification-only task declares no test_refs",
-                    "task_id": tid,
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-                task_id=tid,
-            )
+        if not self._verify_task_preconditions(state, cmd, tid, test_refs):
             return
         try:
             cmd_argv, result_path, run_cwd = self._selected_test_argv(

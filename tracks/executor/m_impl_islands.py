@@ -21,6 +21,7 @@ from tracks.executor.test_select import (
     rebuild_ledger,
     settle_stale_identities,
 )
+from tracks.kernel.events import Command
 from tracks.kernel.machine import State
 from tracks.project import ContractError
 
@@ -74,6 +75,43 @@ def _demo_registry_host() -> str | None:
 
 class MImplIslandsMixin:
     """M-IMPL island gate chain mixin."""
+
+    def _reverify_repaired_full_candidate(self, state: State) -> bool:
+        """Reobserve stale FULL failures after an accepted, clean repair.
+
+        OOB acceptance does not prove a fix. It permits the existing FULL
+        settlement/proof chain to measure the new candidate before Prism
+        diagnoses failures from the old one. The new execution_commit bounds
+        this to one rewalk per candidate, including across restarts.
+        """
+        if (
+            state.stage != "M-IMPL" or state.substate != "DIAGNOSE"
+            or state.status != "active" or state.awaiting or state.pending
+            or state.reviewer_dispatched or state.island_2_passed
+            or not state.tasks_total or state.tasks_completed < state.tasks_total
+            or (state.last_failure or {}).get("check") != "full_suite"
+        ):
+            return False
+        events = list(self.store.events(self.run_id))
+        full = next((e for e in reversed(events) if e.type == "full.executed"), None)
+        if full is None or full.payload.get("passed"):
+            return False
+        previous = full.payload.get("execution_commit")
+        current = self._repo_head_sha()
+        if not previous or not current or previous == current:
+            return False
+        accepted = any(
+            e.type == "oob.accepted" and e.seq > full.seq and e.payload.get("sha") == current
+            for e in events
+        )
+        if not accepted or self._dirty_snapshot():
+            return False
+        self.issue(Command(kind="check_island_2", params={
+            "stage": "M-IMPL", "reason": "repair_superseded_full_evidence",
+            "previous_execution_commit": previous, "candidate_sha": current,
+            "previous_full_seq": full.seq,
+        }))
+        return True
 
     def _do_check_island_1(self, cmd, state, task_id, reconcile):
         vdir = self._vdir()
@@ -160,7 +198,7 @@ class MImplIslandsMixin:
         ``event_log``) never receives the events.  Inject a store-emit flush
         so the demonstration lands on the public event outlet.
         """
-        callback = _resolve_island_gate_2(state.version or "")
+        callback = _resolve_island_gate_2(state.workflow_profile or state.version or "")
         if callback is None:
             return None
 

@@ -211,12 +211,12 @@ hotfix entry points that remain in executor.py."""
 
     def _valid_hotfix_unit_rows(self, unit_rows: list[dict]) -> bool:
         """Require each empty-Shield row to carry a registered interface."""
-        from tracks.executor.test_tasks import _extract_if_registry, resolve_inherited_baseline_docs
+        from tracks.executor.test_tasks import _plan_if_registry, resolve_inherited_baseline_docs
 
         _acc, interfaces = resolve_inherited_baseline_docs(self._vdir() / "test-plan.md")
         if not interfaces.is_file():
             return False
-        registry = _extract_if_registry(interfaces.read_text(encoding="utf-8"))
+        registry = _plan_if_registry(self._vdir() / "test-plan.md", interfaces)
         return bool(registry) and all(
             row.get("if_ids") and set(row["if_ids"]).issubset(registry) for row in unit_rows
         )

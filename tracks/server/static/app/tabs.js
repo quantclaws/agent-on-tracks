@@ -32,7 +32,7 @@ export function openTab(area, context = {}) {
   if (existing) {
     existing.title = context.title || existing.title;
     existing.context = { ...existing.context, ...context };
-    activateTab(area);
+    activateTab(area, context);
     return existing;
   }
   const window = {
@@ -41,7 +41,7 @@ export function openTab(area, context = {}) {
     context: { ...context },
   };
   windows.set(area, window);
-  activateTab(area);
+  activateTab(area, context);
   return window;
 }
 
@@ -54,7 +54,7 @@ function highlightTabbarItem(shell, area) {
   }
 }
 
-export async function activateTab(area) {
+export async function activateTab(area, { runId = null } = {}) {
   const window = windows.has(area) ? windows.get(area) : null;
   if (!window) return null;
   if (active && active !== window) {
@@ -78,9 +78,10 @@ export async function activateTab(area) {
   // and returns to the registry — EXCEPT when the re-click is the tab
   // machine's own first activation of a freshly opened deep-link window
   // (no prior activation yet): then the focus must survive.
-  if (area === "releases" && window.context && window.context.runId && window._activated) {
+  if (area === "releases" && window.context && window.context.runId && window._activated && !runId) {
     delete window.context.runId;
     delete window.context.runTitle;
+    delete window.context.selectedStage;
   }
   window._activated = true;
   const shell = document.querySelector("#workbench") || document;

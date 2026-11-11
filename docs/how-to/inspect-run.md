@@ -1,5 +1,7 @@
 # 查看一个 run
 
+Web 工作台的 Releases 页面显示当前运行卡片、13 个阶段、任务进度和逐轮执行详情。后台阶段变化会更新当前状态；点击历史阶段只改变正在查看的详情。Docs 提供版本文档，Todos 聚合需要人类处理的事项。
+
 ## 查看当前状态
 
 当 `trac run` 停下来，第一步通常不是再跑一次，而是先问 Runtime：现在究竟停在哪里？
@@ -20,10 +22,10 @@ no runs yet
 run 01K...: stage=M-ACC substate=HUMAN_REVIEW status=awaiting_human awaiting=review
 ```
 
-已经到达当前版本边界时：
+完成交付时：
 
 ```text
-run 01K...: completed terminal=boundary stage=M-TEST
+run 01K...: completed terminal=released stage=M-MILESTONE
 ```
 
 `status` 不接受 run ID，也没有 `--json`。它选择最近更新的真实 run，包括已经 completed 的 run；只有 backlog placeholder 会被排除。因此，如果项目里有多个历史 run，而你想查看指定一个，应该复制 run ID 后使用 replay。
@@ -88,7 +90,7 @@ unknown run: 01K2UNKNOWN...
 
 ## 常见异常
 
-**`boundary`** 不是错误。它表示当前版本已经走到已实现流程的末端，而下一个 stage 尚未注册。到达 boundary 后不应反复执行 `trac run` 期待它越过尚未实现的阶段。
+**`boundary`** 是历史流程的阶段终点，不能作为完整交付的成功标志。新安装项目将工作流标识单独保存在创建运行的事件中，不再根据产品版本号选择早期流程。历史运行仍按原有事件回放。
 
 **`awaiting_human`** 表示流程需要 Human 输入。查看 `awaiting=triage|review|approval|escalation`，再使用对应命令；重复运行 `trac run` 通常不会替 Human 做决定。
 

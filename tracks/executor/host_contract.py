@@ -4,8 +4,8 @@ The ``[host-contract.*]`` namespaced sections of the host's
 ``.tracks/projects/project.toml`` are the machine truth Archer materializes
 per host (architecture §1.0.3/§3.1): language/toolchain declaration,
 dependency install, local gates for M-VERIFY, build/artifact, post-install
-smoke, version scheme, M-SECURITY scan policy, required-CI binding and
-M-PUBLISH operation plans.
+smoke, version scheme, M-SECURITY scan policy, required-CI binding,
+process-boundary env escape hatch and M-PUBLISH operation plans.
 
 The Runtime only executes declared commands and consumes versioned
 ``tracks-gate-result`` normalized results; it never interprets host language
@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Literal
 
 import tomllib
+
+from tracks import paths
+from tracks.executor.host_env import host_process_env
 
 GATE_RESULT_PROTOCOL = "tracks-gate-result"
 GATE_RESULT_VERSION = 1
@@ -63,6 +66,7 @@ CONTRACT_TABLES = frozenset(
         "language",
         "toolchain",
         "install",
+        "bootstrap",
         "local_gate",
         "version_scheme",
         "build",
@@ -71,6 +75,7 @@ CONTRACT_TABLES = frozenset(
         "ci",
         "tracker",
         "operations",
+        "env_allowlist",
     }
 )
 OPERATION_JOURNEYS = frozenset({"feature", "post_release", "dev"})
@@ -182,6 +187,11 @@ class HostContract:
     build_timeout_seconds: int = 900
     smoke_result_channel: ResultChannel = "exit_code"
     smoke_timeout_seconds: int = 600
+    # IF-HOSTENV-001 escape hatch: host-declared non-secret variables that
+    # may cross the process boundary in addition to the base allowlist.
+    env_allowlist: tuple[str, ...] = ()
+    # Restart-safe environment/hook setup, executed before M-TEST collection.
+    bootstrap: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -275,6 +285,25 @@ def _load_version_bindings(scheme: dict) -> tuple[VersionBinding, ...]:
     return tuple(bindings)
 
 
+def _load_env_allowlist(table: dict) -> tuple[str, ...]:
+    """Parse the IF-HOSTENV-001 escape hatch (fail-closed on non-strings)."""
+    raw = table.get("env_allowlist")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        _fail_closed("[host-contract].env_allowlist must be an array of strings")
+    return tuple(raw)
+
+
+def _load_bootstrap(table: dict) -> tuple[str, ...]:
+    raw = table.get("bootstrap", [])
+    if not isinstance(raw, list) or any(
+        not isinstance(step, str) or not step.strip() for step in raw
+    ):
+        _fail_closed("[host-contract].bootstrap must be an array of nonempty commands")
+    return tuple(raw)
+
+
 def load_host_contract(path: Path) -> HostContract:
     """Parse the ``[host-contract.*]`` tables of a project.toml (fail-closed)."""
     with open(path, "rb") as handle:
@@ -329,7 +358,40 @@ def load_host_contract(path: Path) -> HostContract:
         build_timeout_seconds=int(build.get("timeout_seconds", 900)),
         smoke_result_channel=_optional_channel(table.get("smoke", {}), "smoke"),
         smoke_timeout_seconds=int(table.get("smoke", {}).get("timeout_seconds", 600)),
+        env_allowlist=_load_env_allowlist(table),
+        bootstrap=_load_bootstrap(table),
     )
+
+
+def contract_env_allowlist(repo: str | Path | None) -> tuple[str, ...]:
+    """Resolve ``[host-contract].env_allowlist`` for the host project *repo*.
+
+    Walks up from *repo* to the project root so sites whose cwd is a nested
+    section still see the single contract. A missing/unreadable/malformed
+    contract returns the empty tuple: the escape hatch can only widen what
+    the host explicitly declared, never fail open.
+    """
+    if repo is None:
+        return ()
+    root = Path(repo)
+    candidates = [
+        base.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        for base in (root, *root.parents)
+    ]
+    try:
+        relocated = paths.project_toml_path(paths.tracks_home(root))
+    except (OSError, ValueError):
+        relocated = None
+    if relocated is not None and relocated not in candidates:
+        candidates.append(relocated)
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            return tuple(load_host_contract(path).env_allowlist)
+        except (OSError, ValueError):
+            return ()
+    return ()
 
 
 def _optional_channel(table: dict, label: str) -> ResultChannel:
@@ -351,6 +413,8 @@ def validate_host_contract(contract: HostContract, repo: Path) -> tuple[str, ...
     """Report unknown placeholders across every declared command-bearing field."""
     errors: list[str] = []
     _scan_placeholders(errors, contract.install, BASE_PLACEHOLDERS, "install")
+    for step in contract.bootstrap:
+        _scan_placeholders(errors, step, BASE_PLACEHOLDERS, "bootstrap")
     for gate in contract.local_gates:
         _scan_placeholders(errors, gate.command, BASE_PLACEHOLDERS, f"local_gate[{gate.kind}]")
     for template in (
@@ -533,6 +597,9 @@ def _run_declared(decl: LocalGateDecl, argv: list[str], repo: Path):
             capture_output=True,
             timeout=decl.timeout_seconds,
             check=False,
+            env=host_process_env(
+                contract_allowlist=contract_env_allowlist(repo)
+            ),
         )
     except subprocess.TimeoutExpired:
         return None
@@ -702,8 +769,9 @@ def declared_install_interpreter(repo: Path | str) -> str:
     canonical ``[host-contract]`` table and returns its declared install
     interpreter; the reference-contract default on a missing/malformed
     contract, so construction never hardcodes the spelling (NFR-0147).
-    Lives on this leaf module (no internal imports) so every executor
-    consumer can import it without import-order hazards.
+    Lives on this module, whose only executor dependency is the leaf
+    ``host_env`` module, so every consumer can import it without
+    import-order hazards.
     """
     try:
         contract = load_host_contract(

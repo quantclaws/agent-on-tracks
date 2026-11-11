@@ -24,6 +24,10 @@ def _registered(issue_number: int) -> SimpleNamespace:
     )
 
 
+def _events_of(store, run_id: str, event_type: str) -> list:
+    return [event for event in store.events(run_id) if event.type == event_type]
+
+
 def test_release_rejected_when_registered_known_issue_unlisted(tmp_path, capsys):
     """AC-FR0286-05: an unfixed registered known issue absent from the
     preview's known_issues listing fails the release closed with an
@@ -31,7 +35,7 @@ def test_release_rejected_when_registered_known_issue_unlisted(tmp_path, capsys)
     from tests.unit.test_release_authorization_direct import _host
     from tracks.cli.main import cmd_release
 
-    repo, store, run_id, _candidate, _digest, _path, _preview = _host(tmp_path)
+    repo, store, run_id = _host(tmp_path)[:3]
     store.append(
         run_id,
         "v0.8",
@@ -41,8 +45,8 @@ def test_release_rejected_when_registered_known_issue_unlisted(tmp_path, capsys)
 
     rc = cmd_release(repo, "--action", "release")
     out, err = capsys.readouterr()
-    rejected = [e for e in store.events(run_id) if e.type == "release.rejected"]
-    decided = [e for e in store.events(run_id) if e.type == "release.decided"]
+    rejected = _events_of(store, run_id, "release.rejected")
+    decided = _events_of(store, run_id, "release.decided")
     store.close()
 
     assert rc == 1
@@ -96,4 +100,33 @@ def test_prism_final_status_renders_the_verify_final_block():
     assert (
         _prism_final_status([verdict({"verdict": "pass", "scope": "PRISM_PLAN"})])
         == "failed"
+    )
+    # AC-FR0274-02@v0.8 TRACKS-TRACE IF-BLOCKREV-001 pass-with-blocker is failed
+    assert (
+        _prism_final_status(
+            [
+                verdict(
+                    {
+                        "verdict": "pass",
+                        "scope": "verify_final",
+                        "findings": [{"severity": "blocker"}],
+                    }
+                )
+            ]
+        )
+        == "failed"
+    )
+    assert (
+        _prism_final_status(
+            [
+                verdict(
+                    {
+                        "verdict": "pass",
+                        "scope": "verify_final",
+                        "findings": [{"severity": "medium"}],
+                    }
+                )
+            ]
+        )
+        == "pass"
     )

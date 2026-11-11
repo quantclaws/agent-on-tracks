@@ -66,6 +66,9 @@ const EVENT_LABELS = {
   "verdict.failed": "校验未通过",
   "run.completed": "运行完成",
   "triage.recorded": "triage 裁决已记录",
+  "environment.preparation_started": "准备开发环境",
+  "environment.step_completed": "环境准备步骤完成",
+  "environment.prepared": "开发环境已就绪",
 };
 
 // 服务心跳事件（合并流每 ~5s 一次）：card-action 的“已等 X”以前一个
@@ -755,6 +758,8 @@ export function renderTimelineView(body, context = {}) {
   /* the gate-follow re-render target (scheduleGateRefresh): the in-place
    * refresh re-invokes this function over the same host and context. */
   lastTimelineMount = { body, context };
+  const generation = (body.__timelineGeneration || 0) + 1;
+  body.__timelineGeneration = generation;
   return (async () => {
     const encoded = encodeURIComponent(runId);
     // the heading renders FIRST from the cheap faces (no overview round
@@ -780,7 +785,7 @@ export function renderTimelineView(body, context = {}) {
     // A newer activation replaced this body while the fetches were in
     // flight: never let the stale mount close the newer run's stream or
     // append to a detached face (rapid run switching / landing focus).
-    if (!body.isConnected) return null;
+    if (!body.isConnected || body.__timelineGeneration !== generation) return null;
     if (!timeline || !detail) {
       // unknown run (404): readable degradation in place — no crash, no
       // blank tab (§1l.5). The releases window keeps its heading so the
@@ -808,7 +813,11 @@ export function renderTimelineView(body, context = {}) {
       const stream = connectEventStream({
         runId,
         event_cursor: (timeline && timeline.cursor) || null,
-        eventTypes: Array.from(new Set(events.map((event) => event.type))),
+        // Future results are absent from the initial snapshot. EventSource
+        // needs typed listeners before those first live frames arrive.
+        eventTypes: Array.from(new Set([
+          ...events.map((event) => event.type), ...LIVE_STATE_EVENTS,
+        ])),
         onEvent: (delivered) => {
           state.last =
             delivered.payload && delivered.payload.type
@@ -816,21 +825,23 @@ export function renderTimelineView(body, context = {}) {
               : { type: delivered.type };
           const line = body.querySelector('[data-testid="timeline-last-event"]');
           if (line) line.textContent = lastEventText(state.last);
+          if (LIVE_STATE_EVENTS.has(state.last.type)) {
+            scheduleLiveStateRefresh(body, context);
+          }
         },
       });
       detailStreams.set(runId, stream);
     }
 
-    // Upper face: the timeline panel (heading stays above it) — the page
-    // return nav, the current-node card (the single run-level operation
-    // zone), the horizontal stage track, the ac-chain and the last-event
+    // Upper face: the timeline panel (heading stays above it) — the current
+    // node card (the single run-level operation zone), the horizontal stage
+    // track, the ac-chain and the last-event
     // line. Lower face: the detail panel wrapping the fixed, read-only
     // detail pane (node detail + the selected stage's workflow).
     const upper = element("section", {
       class: "timeline-panel",
       "data-testid": "timeline-panel",
     });
-    upper.append(pageReturnEntry());
     upper.append(currentCard(detail, events, state, stageOrder(timeline)));
     if (detail && detail.branch) {
       // the hotfix run's branch identity (IF-HOTFIX-006): the entry
@@ -859,6 +870,11 @@ export function renderTimelineView(body, context = {}) {
     });
     lower.append(detailPane(detail, events, stageOrder(timeline)));
     body.append(lower);
+    if (context.selectedStage) {
+      const selected = Array.from(root.querySelectorAll("[data-testid^='timeline-node-']"))
+        .find((node) => node.getAttribute("data-testid") === `timeline-node-${context.selectedStage}`);
+      if (selected) selectNode(selected, context.selectedStage, detail, events);
+    }
     return null;
   })();
 }
@@ -1028,7 +1044,7 @@ function blockedBanner(detail, events, stages) {
  * The card always describes the CURRENT stage (detail.stage); selecting a
  * historical node only changes the read-only detail pane below. */
 function currentCard(detail, events, state, stages = []) {
-  const firstTs = events.length ? events[0].ts : null;
+  const firstTs = events && events.length ? events[0].ts : null;
   const ownerRaw = ownerRawOf(detail);
   const ownerDisplay = ownerOf(detail);
   const attempt = attemptCount(events);
@@ -1095,7 +1111,13 @@ function currentCard(detail, events, state, stages = []) {
   // guidance gates already mount the owning-surface entry inside their
   // action face; every other face gets exactly one explicit entry here.
   if (gateAction !== "guidance") {
-    card.append(element("div", { class: "card-links" }, [owningSurfaceEntry()]));
+    card.append(element("div", { class: "card-links" }, [
+      owningSurfaceEntry({
+        projectId: detail && detail.project_id,
+        version: detail && detail.version,
+        doc: owningDocForStage(stage),
+      }),
+    ]));
   }
   return card;
 }
@@ -1107,9 +1129,9 @@ function ownerRawOf(detail) {
 }
 
 function ownerOf(detail) {
-  const raw = ownerRawOf(detail);
-  if (/^supervisor(-\d+)?$/.test(raw)) return "监管进程";
-  return raw;
+  // v0.12 current-card owner is the dispatch owner, not the legacy run
+  // chrome label (test_static_ui_red pins the legacy string out).
+  return ownerRawOf(detail);
 }
 
 function attemptCount(events) {
@@ -2602,6 +2624,8 @@ function selectNode(node, stage, detail, events) {
   for (const other of view.querySelectorAll("[data-state-selected]") || []) {
     other.removeAttribute("data-state-selected");
     other.removeAttribute("data-selected");
+    other.removeAttribute("aria-selected");
+    other.removeAttribute("aria-current");
     const otherSelect = other.querySelector(".stage-node-select");
     if (otherSelect) otherSelect.setAttribute("aria-pressed", "false");
     other.classList.remove("stage-node-selected");
@@ -2612,6 +2636,8 @@ function selectNode(node, stage, detail, events) {
   // the visible selection face (same marker triple as the sidebar focus):
   // data-selected + class hook + an aria mark so the choice reads aloud.
   node.setAttribute("data-selected", "true");
+  node.setAttribute("aria-selected", "true");
+  node.setAttribute("aria-current", "step");
   node.classList.add("stage-node-selected");
   // the active legibility marker (§1l.1 data-state channel): the node's
   // own data-state already names it; expose the frozen alias attribute
@@ -2796,40 +2822,42 @@ function nodeDetail(stage, detail, events) {
  * the node; the return restores the same run and node context. The frozen
  * face pins detail-owning-surface: the jump link carries it (the owning
  * surface entry), so exactly one exists per pane. */
-function owningSurfaceEntry() {
+function owningDocForStage(stage) {
+  if (stage === "M-START" || stage === "M-STORY") return "story";
+  if (stage === "M-SPEC") return "spec";
+  if (stage === "M-ACC" || stage === "M-REQ-APPROVAL") return "acceptance";
+  if (stage === "M-DESIGN") return "architecture";
+  if (stage === "M-TEST") return "test-plan";
+  if (stage === "M-IMPL") return "interfaces";
+  return "architecture";
+}
+
+function owningSurfaceEntry({ projectId = null, version = null, doc = "architecture" } = {}) {
   const jump = element("a", {
     class: "owning-surface-link",
     "data-testid": "detail-owning-surface",
-    href: "#",
-    text: "查看所属文档",
+    href: version ? `#docs/${encodeURIComponent(version)}/${doc}` : "#docs",
+    text: `查看对应文档（${doc}.md）`,
   });
   jump.addEventListener("click", async (event) => {
     event.preventDefault();
-    // the owning surface entry opens the docs window in-page (same
-    // document — FR-0316) and the return restores the same run context:
-    // both legs ride the tab machine. The run id rides the operation-zone
-    // dataset so the return re-focuses the same run (run_id in the URL
-    // after).
+    // Open the exact version/document owning the current stage.
     const host = jump.closest("[data-run-id]");
     const runId = host ? host.getAttribute("data-run-id") : null;
+    const view = jump.closest(".view");
+    const selected = view && view.querySelector("[data-state-selected='true']");
+    const selectedStage = selected
+      ? selected.getAttribute("data-testid").replace("timeline-node-", "")
+      : null;
     const { openTab } = await import("./tabs.js");
-    openTab("docs", { feature: "docs", title: "docs" });
-    globalThis.setTimeout(async () => {
-      const { openTab: reopen } = await import("./tabs.js");
-      const releases = reopen("releases", {
-        feature: "releases",
-        title: "releases",
-        ...(runId ? { runId } : {}),
-      });
-      void releases;
-      if (runId) {
-        try {
-          globalThis.history.replaceState(null, "", `/runs/${encodeURIComponent(runId)}`);
-        } catch (error) {
-          /* non-fatal */
-        }
-      }
-    }, 300);
+    openTab("docs", {
+      feature: "docs",
+      title: `${version || "docs"} · ${doc}.md`,
+      ...(projectId ? { projectId } : {}),
+      ...(version ? { version } : {}),
+      doc,
+      returnToRun: runId ? { runId, selectedStage } : null,
+    });
   });
   const aliased = element("span", {
     class: "owning-surface-alias",
@@ -2854,20 +2882,6 @@ function owningSurfaceEntry() {
   docJump.removeAttribute("hidden");
   docJump.setAttribute("style", "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);");
   return element("p", { class: "owning-surface" }, [jump, aliased, docJump]);
-}
-
-/** Page-level navigation at the top of the timeline panel (run-agnostic):
- * the return restores the previous page, leaving run/node context intact. */
-function pageReturnEntry() {
-  // Deterministic in-app target: never history.back() (it can land outside
-  // Tracks). The overview is the run's home face.
-  const back = element("a", {
-    class: "owning-surface-return",
-    "data-testid": "owning-surface-return",
-    href: "/",
-    text: "← 返回运行总览",
-  });
-  return element("p", { class: "page-return" }, [back]);
 }
 
 /**
@@ -3263,7 +3277,10 @@ export function primaryActionFace(encoded, action, actionsEl, detail) {
     }
   } else {
     // guidance: no action endpoint — owning surface direction only (§1k.2).
-    mount.append(owningSurfaceEntry());
+    mount.append(owningSurfaceEntry({
+      version: detail && detail.version,
+      doc: owningDocForStage(detail && detail.stage),
+    }));
   }
   return wrap;
 }
@@ -3311,9 +3328,34 @@ function actionButton(encoded, path, params, label) {
 let followTimer = null;
 let lastTimelineMount = null;
 
+const LIVE_STATE_EVENTS = new Set([
+  "stage.entered", "stage.exited", "run.completed", "attention.required",
+  "outcome.received", "verdict.failed", "review.round_started", "task.started",
+  "task.completed", "candidate.frozen", "release.previewed", "phase0.blocked",
+  "environment.preparation_started", "environment.step_completed", "environment.prepared",
+  "sage.verdict", "lex.verdict", "prism.verdict", "verdict.passed",
+  "stage.rolled_back", "stage.recovered", "run.breaker_tripped", "phase0.sealed",
+  "human.triage", "human.review", "human.approval", "approval.recorded",
+  "human.return", "human.retry", "human.recover",
+]);
+
+function scheduleLiveStateRefresh(body, context) {
+  if (!body.isConnected) return;
+  globalThis.clearTimeout(body.__liveRefreshTimer);
+  body.__liveRefreshTimer = globalThis.setTimeout(() => {
+    if (!body.isConnected) return;
+    const selected = body.querySelector("[data-state-selected='true']");
+    if (selected) {
+      context.selectedStage = selected.getAttribute("data-testid").replace("timeline-node-", "");
+    }
+    body.replaceChildren();
+    renderTimelineView(body, context);
+  }, 300);
+}
+
 function rerenderTimeline() {
   const mount = lastTimelineMount;
-  if (!mount) return;
+  if (!mount || !mount.body.isConnected) return;
   mount.body.replaceChildren();
   renderTimelineView(mount.body, mount.context);
 }

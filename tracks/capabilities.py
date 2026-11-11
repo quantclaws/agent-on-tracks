@@ -32,6 +32,10 @@ _HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-\d+$")
 # complete at the M-TEST boundary instead of entering M-IMPL.
 M_IMPL_FEATURE_VERSION = "v0.5"
 
+# Installed projects select a workflow independently of their product version.
+# This identity is persisted on run creation so upgrades cannot change replay.
+FULL_WORKFLOW_PROFILE = "full-v1"
+
 
 def _version_tuple(version: str) -> tuple[int, int] | None:
     """Parse a project version into numeric ``(major, minor)``.
@@ -89,4 +93,4 @@ def supports_m_impl(version: str) -> bool:
     machinery; pre-v0.5 and malformed versions fail closed to the historical
     M-TEST boundary behavior.
     """
-    return version_at_least(version, M_IMPL_FEATURE_VERSION)
+    return version == FULL_WORKFLOW_PROFILE or version_at_least(version, M_IMPL_FEATURE_VERSION)

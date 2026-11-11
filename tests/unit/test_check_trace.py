@@ -66,6 +66,30 @@ def test_full_chain_pass():
     assert r.hard_errors == ()
 
 
+# AC-FR0080-03@v0.4 TRACKS-TRACE coverage belongs to the selected version
+def test_other_version_markers_cannot_cover_current_acceptance():
+    markers = {
+        ac: [f"{ac}@v0.4"]
+        for ac in ("AC-FR0010-01", "AC-FR0010-02", "AC-FR0020-01")
+    }
+    report = check_trace_full(STORY, SPEC, ACC, markers, current_version="v0.12")
+    assert report.status == "fail"
+    assert len(report.hard_errors) == 3
+    assert all("has no test marker bound" in error for error in report.hard_errors)
+
+
+# AC-FR0080-03@v0.4 TRACKS-TRACE mixed historical and current coverage
+def test_current_version_markers_cover_without_rejecting_history():
+    markers = {
+        ac: [f"{ac}@v0.4", f"{ac}@v0.12"]
+        for ac in ("AC-FR0010-01", "AC-FR0010-02", "AC-FR0020-01")
+    }
+    markers["AC-FR0999-01"] = ["AC-FR0999-01@v0.4"]
+    report = check_trace_full(STORY, SPEC, ACC, markers, current_version="v0.12")
+    assert report.status == "pass"
+    assert report.hard_errors == ()
+
+
 # AC-FR0080-02@v0.4 TRACKS-TRACE FR AC hard errors
 def test_fr_ac_hard_errors():
     """AC-FR0080-02@v0.4 FR without AC and AC referencing non-existent FR."""

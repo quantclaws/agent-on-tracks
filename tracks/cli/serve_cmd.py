@@ -47,6 +47,7 @@ from tracks.server.app import create_app
 from tracks.supervisor import intake as intake_worker
 from tracks.supervisor.db import ServiceDB
 from tracks.supervisor.lease import acquire_lease
+from tracks.supervisor.projects import register_project, repo_version
 from tracks.supervisor.recover import recover_on_startup
 from tracks.supervisor.scheduler import Scheduler
 from tracks.supervisor.service import CommandService
@@ -316,6 +317,14 @@ class _AnnouncingServer:
         outer = self
 
         class _Server(uvicorn.Server):
+            def handle_exit(self, sig: int, frame: Any) -> None:
+                # Stop scheduling immediately, before uvicorn drains open
+                # requests and eventually re-raises into _bridge_signal.
+                outer._stop.set()
+                if outer._wake is not None:
+                    outer._wake.notify()
+                super().handle_exit(sig, frame)
+
             async def startup(self, sockets: Any = None) -> None:
                 await super().startup(sockets)
                 if self.started:
@@ -1085,6 +1094,7 @@ def _serve(opts: dict, home: Path, db: ServiceDB) -> int:
     config = _build_config(opts, home)
     wake = _Wake()
     service = CommandService(home, db, config, on_accept=_human_accept_wake(wake))
+    _register_installed_projects(opts, db)
     scheduler = Scheduler(db)
     worker = WorkerManager(db, scheduler, config)
     supervisor = SimpleNamespace(db=db, scheduler=scheduler, worker=worker)
@@ -1103,6 +1113,19 @@ def _serve(opts: dict, home: Path, db: ServiceDB) -> int:
         )
         return 1
     return 0
+
+
+def _register_installed_projects(opts: dict, db: ServiceDB) -> None:
+    """An explicit --repo makes a fresh installed project available in the UI."""
+    for repo in opts["repo"]:
+        if project_runtime.find_project(repo) != repo:
+            continue
+        project_runtime.read_receipt(repo)
+        row = register_project(db.home, str(repo), repo_version(repo), "local-user")
+        if row.pop("fresh"):
+            db.append_event("project.registered", {
+                **row, "actor": "local-user", "source": "serve",
+            }, project_id=row["project_id"])
 
 
 def _start_cache_warmup(home: Path) -> threading.Thread:
