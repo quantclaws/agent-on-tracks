@@ -244,7 +244,10 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         return results, None
 
     def _collect_all_declared_layers(
-        self, *, capture_absent_ok: bool = False
+        self,
+        *,
+        capture_absent_ok: bool = False,
+        absent_ok_layers: frozenset[str] = frozenset(),
     ) -> tuple[dict[str, str] | None, str | None]:
         """D-41 FR-0250-01: run EVERY declared layer's ``collect`` command
         ([unit]/[integration]/[e2e]) and map each collected node id to its
@@ -258,12 +261,16 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         of a section's declared ``paths`` (resolved under the section cwd)
         are absent from disk, the declared layer normalizes to EMPTY without
         executing its collect command -- a valid contract may legitimately
-        declare paths a fresh tree does not have yet. The cwd itself must
-        exist and be a directory for that normalization: a missing/non-
-        directory section cwd is malformed infrastructure and routes a layer
-        collection error (baseline_defect at capture) WITHOUT subprocess. If
-        ANY declared path exists the command executes and rc=4 stays a
-        failure. Post-WRITE COLLECT never normalizes (default False)."""
+        declare paths a fresh tree does not have yet. ``absent_ok_layers``
+        applies the same absent-path normalization to named layers only (e.g.
+        post-WRITE M-TEST allows absent ``unit`` because ``tests/unit/`` is
+        Devon-owned and legitimately does not exist yet on a greenfield repo;
+        any deleted baseline unit nodes are still caught fail-closed by
+        ``classify_nodes`` as ``removed``). The cwd itself must exist and be
+        a directory for that normalization: a missing/non-directory section
+        cwd is malformed infrastructure and routes a layer collection error
+        WITHOUT subprocess. If ANY declared path exists the command executes
+        and rc=4 stays a failure."""
         try:
             contract = load_contract(self.repo)
             sections = _contract_sections(contract)
@@ -272,8 +279,9 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         node_layer: dict[str, str] = {}
         errors: list[str] = []
         for name, section in sections:
+            layer_absent_ok = capture_absent_ok or (name in absent_ok_layers)
             fatal_error = self._collect_declared_layer(
-                name, section, capture_absent_ok, node_layer, errors
+                name, section, layer_absent_ok, node_layer, errors
             )
             if fatal_error is not None:
                 return None, fatal_error
@@ -621,7 +629,13 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         ``per_node_blob`` for RED_CHECK's SELECT_R2 binding."""
         if reconcile and state.test_collected:
             return
-        node_layer, collect_error = self._collect_all_declared_layers()
+        # Shield only owns integration/e2e; tests/unit/ is Devon-owned and
+        # legitimately does not exist yet on a greenfield repo in M-TEST.
+        # If baseline had unit nodes and they disappeared, classify_nodes still
+        # flags them fail-closed as removed/asset_deleted.
+        node_layer, collect_error = self._collect_all_declared_layers(
+            absent_ok_layers=frozenset({"unit"})
+        )
         if collect_error is not None:
             self._emit_collected_failure(cmd, 0, [collect_error])
             return

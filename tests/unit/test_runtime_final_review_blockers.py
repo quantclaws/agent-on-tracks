@@ -395,6 +395,43 @@ def test_capture_section_cwd_absent_is_baseline_defect_not_empty_layer(
     )
 
 
+def test_post_write_collect_allows_absent_unit_dir_on_greenfield(monkeypatch, tmp_path):
+    """M-TEST post-WRITE collect: Shield only owns integration/e2e; an absent
+    Devon-owned tests/unit/ directory on a greenfield repo must normalize to
+    empty rather than failing collection with pytest rc=4."""
+    ex, _store, emitted, repo = _harness(monkeypatch, tmp_path)
+    (repo / "tests" / "e2e").mkdir(parents=True, exist_ok=True)
+    integ_node = "tests/integration/test_a.py::test_a"
+    (repo / "tests" / "integration" / "test_a.py").write_text(
+        "def test_a():\n    assert False\n", encoding="utf-8"
+    )
+    assert not (repo / "tests" / "unit").exists()
+    _patch_load_contract(
+        monkeypatch,
+        lambda r: _contract(
+            unit=_section(collect="_tracks_collect_unit", paths=("tests/unit/",)),
+            integration=_section(
+                collect="_tracks_collect_integration", paths=("tests/integration/",)
+            ),
+            e2e=_section(collect="_tracks_collect_e2e", paths=("tests/e2e/",)),
+        ),
+    )
+
+    def _dispatch(argv):
+        joined = " ".join(argv)
+        if "_tracks_collect_integration" in joined:
+            return _proc(argv, 0, stdout=integ_node + "\n")
+        if "_tracks_collect_e2e" in joined:
+            return _proc(argv, 5)
+        raise AssertionError(f"unexpected subprocess call for absent unit: {argv}")
+
+    _fake_subprocess(monkeypatch, _dispatch)
+
+    node_layer, err = ex._collect_all_declared_layers(absent_ok_layers=frozenset({"unit"}))
+    assert err is None, f"absent unit dir must not fail post-WRITE collect: {err}"
+    assert node_layer == {integ_node: "integration"}
+
+
 # -- FRB-E: baseline identity moves with dirty content and renamed files ------
 
 
