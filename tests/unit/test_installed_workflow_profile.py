@@ -116,3 +116,28 @@ def test_first_release_phase0_keeps_real_guard_validation(host_repo, registry_pr
             assert state.phase0_blocked_reason == "guard_registry_invalid"
     finally:
         store.close()
+
+
+def test_installed_product_version_without_kill_manifest_uses_file_trace(host_repo):
+    """Installed project versions (v0.1, v1.0) without kill-manifest/closure
+    bindings pass through produce_closure_evidence with no mutation duty;
+    _has_closure_duty must agree unless bindings or closure events exist."""
+    from tracks.cli.validate_cmd import _has_closure_duty
+
+    home = paths.tracks_home(host_repo)
+    store = Store(home)
+    try:
+        store.append("fresh", "v0.1", "story.requested", {
+            "raw_chars": 1, "workflow_profile": FULL_WORKFLOW_PROFILE,
+        })
+        assert not _has_closure_duty(host_repo, home, "v0.1")
+        km = host_repo / "tests" / "counterexamples" / "v0.1" / "kill-manifest.json"
+        km.parent.mkdir(parents=True, exist_ok=True)
+        km.write_text('{"bindings": []}', encoding="utf-8")
+        assert _has_closure_duty(host_repo, home, "v0.1")
+        km.unlink()
+        assert not _has_closure_duty(host_repo, home, "v0.1")
+        store.append("fresh", "v0.1", "mutation.manifest", {"ac": "AC-FR0001-01"})
+        assert _has_closure_duty(host_repo, home, "v0.1")
+    finally:
+        store.close()
