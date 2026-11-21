@@ -1002,7 +1002,9 @@ class MImplLedgerMixin:
             "devon",
         ):
             if self._flip_completion_pending(events, state, tid):
-                self._commit_task_red_unit_tests(tid, events)
+                commit_red = getattr(self, "_commit_task_red_unit_tests", None)
+                if callable(commit_red):
+                    commit_red(tid, events)
                 self._emit("task.completed", {"task_id": tid}, command_id=cmd.command_id)
             if state.writelock_held:
                 self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
@@ -1021,7 +1023,9 @@ class MImplLedgerMixin:
                 self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
             self._rebuild_task_log_projection()
             return
-        self._commit_task_red_unit_tests(tid, events)
+        commit_red = getattr(self, "_commit_task_red_unit_tests", None)
+        if callable(commit_red):
+            commit_red(tid, events)
         self._emit("task.completed", {"task_id": tid}, command_id=cmd.command_id)
         self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
         self._rebuild_task_log_projection()
