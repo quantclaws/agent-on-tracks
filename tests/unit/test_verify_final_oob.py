@@ -67,6 +67,31 @@ def test_real_adapter_maps_verify_final_to_structured_review_contract():
     assert payload["findings"] == [_finding()]
 
 
+def test_verify_final_reads_file_delivered_envelope(tmp_path):
+    """VERIFY_FINAL and M-SECURITY file-delivered envelopes must be parsed from
+    result_file.result_path when the final reply text is a one-line pointer."""
+    result_file = tmp_path / "inbox.json"
+    result_file.write_text(
+        json.dumps({
+            "envelope": {"version": 2, "kind": "prism:final"},
+            "payload": {
+                "verdict": "pass",
+                "review_summary": "All gates green.",
+                "review_body": "Full review body.",
+            },
+        }),
+        encoding="utf-8",
+    )
+    proc = _proc(f"result: {result_file}")
+    payload, error = OpencodeBackend._prism_review_payload_from(
+        proc, result_path=str(result_file)
+    )
+    assert error is None
+    assert payload is not None
+    assert payload["verdict"] == "pass"
+    assert payload["review_summary"] == "All gates green."
+
+
 def test_verify_final_assignment_declares_discussion_ref_contract():
     assignment = m_verify.build_prism_final_review_assignment(
         _CANDIDATE, {"full_f": "digest"}

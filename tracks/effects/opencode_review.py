@@ -12,6 +12,7 @@ from tracks.discuss.gate import adjudication_owner, check_ready, is_human_owner
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 from tracks.effects.devon_evidence import _result_file_payload
+from tracks.effects.envelope_reply import declared_result_path
 from tracks.kernel.envelope import (
     REVIEW_FINDING_FIELDS,
     REVIEW_SUMMARY_MAX,
@@ -157,11 +158,11 @@ class OpencodeReviewMixin:
 
     @classmethod
     def _structured_channel(cls, role: str, substate: str, assignment: dict | None) -> bool:
-        """M-TEST/M-IMPL review: the structured payload is REQUIRED on revise.
-        M-DESIGN keeps the doc-anchored channel (AC-FR0240-04)."""
+        """M-TEST/M-IMPL/M-VERIFY/M-SECURITY review: the structured payload is
+        REQUIRED on revise. M-DESIGN keeps the doc-anchored channel (AC-FR0240-04)."""
         return (
             cls._review_dispatch(role, substate, assignment)
-            and (assignment or {}).get("stage") in ("M-TEST", "M-IMPL", "M-VERIFY")
+            and (assignment or {}).get("stage") in ("M-TEST", "M-IMPL", "M-VERIFY", "M-SECURITY")
         )
 
     def _review_channel_failure(
@@ -177,7 +178,9 @@ class OpencodeReviewMixin:
         before the audits run (strict channel only; M-DESIGN never rejects)."""
         if not self._structured_channel(role, substate, assignment):
             return None
-        payload, error = self._prism_review_payload_from(proc)
+        payload, error = self._prism_review_payload_from(
+            proc, result_path=declared_result_path(assignment)
+        )
         if substate == "VERIFY_FINAL" and payload is None and error is None:
             error = "VERIFY_FINAL requires a valid pass/revise review payload"
         if error is None:
@@ -195,7 +198,9 @@ class OpencodeReviewMixin:
         discussion gate exempts such a revise from the doc-thread rule."""
         if not self._structured_channel(role, substate, assignment):
             return False
-        payload, error = self._prism_review_payload_from(proc)
+        payload, error = self._prism_review_payload_from(
+            proc, result_path=declared_result_path(assignment)
+        )
         return error is None and bool(payload and payload.get("findings"))
 
     def _merge_review_payload(
@@ -219,7 +224,9 @@ class OpencodeReviewMixin:
             return result
         if result.get("status") != "done":
             return result
-        payload, _ = self._prism_review_payload_from(proc)
+        payload, _ = self._prism_review_payload_from(
+            proc, result_path=declared_result_path(assignment)
+        )
         if payload is None:
             if (
                 self._structured_channel(role, substate, assignment)
@@ -318,16 +325,22 @@ class OpencodeReviewMixin:
     def _prism_review_payload_from(
         cls,
         proc: subprocess.CompletedProcess,
+        result_path: str | None = None,
     ) -> tuple[dict | None, str | None]:
-        """Extract + validate the structured review JSON from the reviewer's
-        final reply (SC-D35 §2.2, same final-text bare-JSON convention as
-        DIAGNOSE). Returns ``(payload, None)`` when valid, ``(None, error)``
+        """Extract + validate the structured review JSON — result FILE first
+        (matching #174 ``_diagnose_classification_from``), final reply text
+        fallback. Returns ``(payload, None)`` when valid, ``(None, error)``
         on a contract violation, and ``(None, None)`` when no payload was
         attempted (legal absence — callers decide whether that is allowed)."""
-        event = cls._final_text_event(proc)
-        part = event.get("part") if isinstance(event, dict) else None
-        text = part.get("text") if isinstance(part, dict) else None
-        payload, error = cls._review_payload_from_reply(text)
+        file_payload = _result_file_payload(result_path)
+        if isinstance(file_payload, dict) and "verdict" in file_payload:
+            payload: dict | None = file_payload
+            error: str | None = None
+        else:
+            event = cls._final_text_event(proc)
+            part = event.get("part") if isinstance(event, dict) else None
+            text = part.get("text") if isinstance(part, dict) else None
+            payload, error = cls._review_payload_from_reply(text)
         if error is not None or payload is None:
             return None, error
         if payload.get("verdict") not in ("pass", "revise"):
