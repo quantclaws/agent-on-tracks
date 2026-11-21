@@ -320,3 +320,98 @@ def test_redrive_reruns_missing_gates_for_the_frozen_candidate(tmp_path, capsys)
     assert "judge_full_f_reuse" not in issued
     assert "run_local_gates" in issued
     store.close()
+
+
+def test_run_parked_for_drive_stops_spin_on_security_ci_and_drift(tmp_path):
+    """Supervisor fresh-drive gating must park on unresolved security/CI
+    attentions, drifted candidates, and AWAITING_RELEASE — and unpark on
+    human.retry or a valid Tracks-Repair-Round repair commit."""
+    from tracks.executor.drive import run_parked_for_drive
+    from tracks.kernel.attention import latest_unresolved_attention
+
+    repo, store = _setup(tmp_path)
+    head = git(repo, "rev-parse", "HEAD").stdout.strip()
+    try:
+        store.append(_RUN, "v0.8", "story.requested", {"raw_chars": 1})
+        store.append(_RUN, "v0.8", "stage.entered", {"stage": "M-SECURITY"})
+        store.append(_RUN, "v0.8", "candidate.frozen", {"candidate_sha": head, "clean_tree": True})
+        store.append(
+            _RUN,
+            "v0.8",
+            "security.assessed",
+            {"candidate_sha": head, "status": "failed", "reason": "security_failed"},
+        )
+        store.append(
+            _RUN,
+            "v0.8",
+            "attention.required",
+            {
+                "area": "security",
+                "reason": "security_failed",
+                "stage": "M-SECURITY",
+                "candidate_sha": head,
+            },
+        )
+        assert latest_unresolved_attention(store.events(_RUN)) is not None
+        assert run_parked_for_drive(repo, _RUN) == "attention:security:security_failed"
+
+        # A failing security.assessed never resolves the attention; a passing one does.
+        store.append(
+            _RUN,
+            "v0.8",
+            "security.assessed",
+            {"candidate_sha": head, "status": "failed", "reason": "security_failed"},
+        )
+        assert run_parked_for_drive(repo, _RUN) == "attention:security:security_failed"
+        store.append(
+            _RUN,
+            "v0.8",
+            "security.assessed",
+            {"candidate_sha": head, "status": "passed"},
+        )
+        assert run_parked_for_drive(repo, _RUN) is None
+
+        # M-RELEASE AWAITING_RELEASE must not trigger idle drive_run spawns.
+        store.append(_RUN, "v0.8", "stage.entered", {"stage": "M-RELEASE"})
+        store.append(_RUN, "v0.8", "release.previewed", {"preview_digest": "sha256:abc"})
+        assert run_parked_for_drive(repo, _RUN) == "AWAIT_RELEASE"
+    finally:
+        store.close()
+
+
+def test_run_parked_for_drive_candidate_drift_unparks_on_repair_trailer(tmp_path):
+    """A drifted candidate parks run_parked_for_drive until HEAD carries the
+    Tracks-Repair-Round trailer for this run."""
+    from tracks.executor.drive import run_parked_for_drive
+
+    repo, store = _setup(tmp_path)
+    frozen = git(repo, "rev-parse", "HEAD").stdout.strip()
+    try:
+        store.append(_RUN, "v0.8", "story.requested", {"raw_chars": 1})
+        store.append(_RUN, "v0.8", "stage.entered", {"stage": "M-VERIFY"})
+        store.append(_RUN, "v0.8", "candidate.frozen", {"candidate_sha": frozen, "clean_tree": True})
+        store.append(
+            _RUN,
+            "v0.8",
+            "candidate.stale",
+            {"candidate_sha": frozen, "reason": "head_moved"},
+        )
+        assert run_parked_for_drive(repo, _RUN) == "candidate_stale"
+
+        # Unmarked commit keeps the run parked.
+        (repo / "README.md").write_text("# drift\n", encoding="utf-8")
+        git(repo, "add", "README.md")
+        git(repo, "commit", "-m", "unmarked drift")
+        assert run_parked_for_drive(repo, _RUN) == "candidate_stale"
+
+        # Commit with Tracks-Repair-Round trailer allows the re-walk.
+        git(
+            repo,
+            "commit",
+            "--amend",
+            "-m",
+            f"fix: repair CI\n\nTracks-Repair-Round: {_RUN}/1",
+        )
+        assert run_parked_for_drive(repo, _RUN) is None
+    finally:
+        store.close()

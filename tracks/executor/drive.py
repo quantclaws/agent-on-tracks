@@ -213,6 +213,18 @@ def drive_once(repo: Path, run_id: str, *, config: DriveConfig) -> DriveResult:
             # "halted without progress" defect: the supervisor hands it to
             # the gate channel while the driver holds no runtime lock.
             return _attention_result(run_id, state, attention)
+        if getattr(state, "candidate_stale", False):
+            return DriveResult(
+                kind="await_human",
+                run_id=run_id,
+                stage=state.stage,
+                wait=None,
+                failure=None,
+                detail=(
+                    f"run {run_id} candidate stale (HEAD moved past frozen "
+                    f"candidate) at {_detail_suffix(state)}"
+                ),
+            )
         # SM-01.3: a drive that ends BLOCKED parses as a human gate, not as
         # "no boundary reached". The resume preflight fires once per
         # run_loop; without this check the supervisor loop keeps re-entering
@@ -237,5 +249,75 @@ def drive_once(repo: Path, run_id: str, *, config: DriveConfig) -> DriveResult:
                 "run halted without progress (no durable boundary reached)",
             )
         return _boundary_result(run_id, state)
+    finally:
+        store.close()
+
+
+def _head_has_repair_trailer(repo: Path, run_id: str, frozen_sha: str) -> bool:
+    """True when HEAD moved past frozen_sha with a matching Tracks-Repair-Round trailer."""
+    import subprocess  # noqa: PLC0415
+
+    if not frozen_sha:
+        return False
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
+    )
+    if head.returncode != 0 or head.stdout.strip() in ("", frozen_sha):
+        return False
+    msg = subprocess.run(
+        ["git", "log", "-1", "--format=%B", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    prefix = f"Tracks-Repair-Round: {run_id}/"
+    return msg.returncode == 0 and any(
+        line.strip().startswith(prefix) for line in (msg.stdout or "").splitlines()
+    )
+
+
+def _state_park_reason(state) -> str | None:
+    if state.status == "completed":
+        return state.terminal_state or "completed"
+    if state.status == "awaiting_human" or state.awaiting:
+        return str(state.awaiting or state.substate or "awaiting_human")
+    if state.stage == "M-RELEASE" and state.substate == "AWAITING_RELEASE":
+        return "AWAIT_RELEASE"
+    if getattr(state, "phase0_status", None) == "BLOCKED":
+        return f"phase0:{getattr(state, 'phase0_blocked_reason', None) or 'blocked'}"
+    return None
+
+
+def _drift_or_attention_park_reason(repo: Path, run_id: str, state, events) -> str | None:
+    frozen = str(getattr(state, "candidate_sha", "") or "")
+    if getattr(state, "candidate_stale", False):
+        if _head_has_repair_trailer(repo, run_id, frozen):
+            return None
+        return "candidate_stale"
+    attention = latest_unresolved_attention(events)
+    if attention is None:
+        return None
+    if state.stage == "M-VERIFY" and _head_has_repair_trailer(repo, run_id, frozen):
+        return None
+    payload = attention.payload or {}
+    return f"attention:{payload.get('area', '?')}:{payload.get('reason', '?')}"
+
+
+def run_parked_for_drive(repo: Path, run_id: str) -> str | None:
+    """Return a non-empty park reason when ``trac serve`` should NOT spawn a
+    fresh ``drive_run`` (prevents busy-looping on unresolved operator
+    attentions, drifted candidates, or AWAITING_RELEASE)."""
+    home = paths.tracks_home(repo)
+    if not paths.db_path(home).exists():
+        return None
+    store = Store(home)
+    try:
+        state = store.state(run_id)
+        if state.run_id is None:
+            return None
+        return _state_park_reason(state) or _drift_or_attention_park_reason(
+            repo, run_id, state, store.events(run_id)
+        )
     finally:
         store.close()

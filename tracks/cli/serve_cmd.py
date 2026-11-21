@@ -41,7 +41,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from tracks import __version__, paths, project_runtime
+from tracks import __version__, project_runtime
 from tracks.server import auth
 from tracks.server.app import create_app
 from tracks.supervisor import intake as intake_worker
@@ -493,7 +493,7 @@ def _drive_accepted(
 
 
 def _run_awaiting(db: ServiceDB, run_id: str | None) -> str | None:
-    """Run-plane ``runs.awaiting`` for run_id, read-only (fail-open → None)."""
+    """Run-plane gate or operator-attention park for run_id (fail-open → None)."""
     if not run_id:
         return None
     try:
@@ -502,24 +502,11 @@ def _run_awaiting(db: ServiceDB, run_id: str | None) -> str | None:
         repo_path = (project or {}).get("repo_path") or ""
         if not repo_path:
             return None
-        runtime_db = paths.db_path(paths.tracks_home(Path(repo_path)))
-        if not runtime_db.exists():
-            return None
-        conn = sqlite3.connect(f"file:{runtime_db}?mode=ro", uri=True)
+        from tracks.executor.drive import run_parked_for_drive  # noqa: PLC0415
+
+        return run_parked_for_drive(Path(repo_path), str(run_id))
     except (sqlite3.Error, OSError, ValueError):
         return None
-    try:
-        try:
-            row = conn.execute(
-                "SELECT awaiting FROM runs WHERE run_id = ?", (str(run_id),)
-            ).fetchone()
-        except sqlite3.Error:
-            return None
-        if row is None or row[0] is None or str(row[0]) == "":
-            return None
-        return str(row[0])
-    finally:
-        conn.close()
 
 
 def _accept_fresh_drive(

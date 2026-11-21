@@ -104,6 +104,7 @@ RETRYABLE_ATTENTION_AREAS = frozenset(
         "gate_worktree",
         "version_gate",
         "ci_readback",
+        "security",
         "run_breaker",
     }
 )
@@ -150,6 +151,21 @@ def _ci_attention_resolved(
         and _ci_success_bound(_payload(event), candidate)
         for event in events
     )
+
+
+def _security_attention_resolved(
+    events: list, attention_seq: int, attention_payload: dict
+) -> bool:
+    candidate = attention_payload.get("candidate_sha")
+    for event in events:
+        if event.type != "security.assessed" or _seq(event) <= attention_seq:
+            continue
+        payload = _payload(event)
+        if str(payload.get("status") or "") not in ("pass", "passed"):
+            continue
+        if not candidate or payload.get("candidate_sha") == candidate:
+            return True
+    return False
 
 
 def _candidate_superseded(events: list, attention: Any) -> bool:
@@ -246,6 +262,10 @@ def attention_resolved(events: list, attention: Any) -> bool:
     stage = str(payload.get("stage") or "")
     area = str(payload.get("area") or "")
     if area == "ci_readback" and _ci_attention_resolved(
+        events, attention_seq, payload
+    ):
+        return True
+    if area == "security" and _security_attention_resolved(
         events, attention_seq, payload
     ):
         return True

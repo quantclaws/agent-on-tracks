@@ -211,10 +211,27 @@ blocked-publish payload."""
             command_id=cmd.command_id,
         )
         # A passing aggregate for the current candidate continues the chain
-        # (exit M-SECURITY -> M-RELEASE preview); the CI link and this
-        # re-driven command share the same idempotent advance.
+        # (exit M-SECURITY -> M-RELEASE preview); a failing/unknown aggregate
+        # lands an explicit operator attention so drive_once/serve parks once
+        # instead of re-running scans in a tight loop.
         if payload.get("status") in ("pass", "passed"):
             self._advance_after_security(cmd, candidate_sha)
+        else:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "security",
+                    "reason": str(payload.get("reason") or "security_failed"),
+                    "stage": "M-SECURITY",
+                    "candidate_sha": candidate_sha,
+                    "detail": f"security assessment status={payload.get('status')}",
+                    "next": (
+                        "resolve security scan findings or update environment "
+                        "dependencies, then trac retry"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
 
     def _assess_security_with_review(self, candidate_sha, contract, digest):
         """Scans and a candidate-bound Prism review jointly authorize security."""

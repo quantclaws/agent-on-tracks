@@ -178,6 +178,26 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
                         "trailer to re-walk"
                     ),
                 )
+                round_no = self._park_repair_budget_used() or 1
+                self._emit(
+                    "attention.required",
+                    {
+                        "area": "freeze",
+                        "reason": "candidate_drift",
+                        "stage": "M-VERIFY",
+                        "candidate_sha": frozen_sha,
+                        "detail": (
+                            f"HEAD {identity.candidate_sha[:12]} moved past "
+                            f"frozen candidate {frozen_sha[:12]}"
+                        ),
+                        "next": (
+                            f"amend or land the fix commit with trailer "
+                            f"'Tracks-Repair-Round: {self.run_id}/{round_no}', "
+                            "then trac retry"
+                        ),
+                    },
+                    command_id=cmd.command_id,
+                )
                 return None
             self._emit(
                 "candidate.stale",
