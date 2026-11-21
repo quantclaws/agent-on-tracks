@@ -27,6 +27,7 @@ from tests.e2e_live.harness import (
     run_logged,
     timeout_env,
 )
+from tests.e2e_live.installed_pilot_restart import restart_active_agent
 from tests.e2e_live.m_test_helpers import _events, _git
 
 pytestmark = [pytest.mark.e2e_live, pytest.mark.ui]
@@ -92,7 +93,12 @@ class InstalledWebPilot:
     def login(self):
         self.page.set_default_timeout(8000)
         self.page.goto(self.base + "/login", wait_until="domcontentloaded")
-        self.page.get_by_test_id("login-password").fill("tracks-synthetic-pilot")
+        workspace = self.page.get_by_test_id("tabbar-item-releases")
+        password = self.page.get_by_test_id("login-password")
+        expect(password.or_(workspace)).to_be_visible()
+        if workspace.is_visible():
+            return  # Restarting on another port retains the valid host cookie.
+        password.fill("tracks-synthetic-pilot")
         self.page.get_by_test_id("login-submit").click()
         try:
             # Reopening a project reuses its collected human identity.
@@ -194,6 +200,11 @@ class InstalledWebPilot:
             if stage == "M-RELEASE" and state.get("substate") == "AWAITING_RELEASE":
                 return state
             assert state.get("status") != "completed", "premature boundary completion"
+            if stage == "M-TEST" and state.get("substate") == "WRITE" and not (
+                self.install.artifact_dir / "pilot-interruption.json"
+            ).exists():
+                restart_active_agent(self)
+                continue
             review_seq = 0
             if kind in ("review", "review_pending_threads"):
                 peer = "sage.verdict" if stage == "M-STORY" else "lex.verdict"
@@ -237,6 +248,17 @@ class InstalledWebPilot:
         self.cli("check", "reach", "--json", timeout=300)
         events = _events(self.repo, self.run_id)
         assert any(e["type"] == "environment.prepared" for e in events)
+        interruption = json.loads(
+            (self.install.artifact_dir / "pilot-interruption.json").read_text()
+        )
+        assert interruption["run_id"] == self.run_id
+        assert all(interruption.get(key) is True for key in (
+            "all_owned_terminated", "same_pending_command_preserved", "no_replacement_workers_or_agents",
+        ))
+        assert sum(
+            e["type"] == "outcome.received"
+            and e["command_id"] == interruption["pending_command"] for e in events
+        ) == 1, "interrupted command must settle exactly once"
         ci = [e["payload"] for e in events if e["type"] == "ci.run_observed"][-1]
         assert ci["api_verified"] is True
         assert ci["head_sha"] == ci["candidate_sha"] == candidate

@@ -48,6 +48,18 @@ Crash recovery 使用原 command identity，不自动把这次中断记作 Agent
 
 ## 用户操作
 
+后台 Web 服务可以使用安装的 CLI 停止和重启：
+
+```bash
+trac serve --repo "$PWD" --stop
+trac serve --repo "$PWD" --background
+```
+
+停止时先退出 supervisor，再清理该服务的 worker 与独立 Agent 进程。Runtime
+保留事件、原 pending command 和失败次数；重新启动后，后台从同一命令进行
+reconcile，再继续工作流。进程检查失败时会保留 pidfile 并报告停止失败，便于
+核对现场。该生命周期入口适用于 macOS 和 Linux。
+
 如果 `trac run` 只是长时间等待 Agent，先观察 stderr。OpenCode backend 默认在事件流连续 1800 秒无输出时结束本次调用；`TRAC_AGENT_TIMEOUT` 调整的是无输出超时，不是整项工作的总时限。等待本身不表示 Runtime 已经失去状态。
 
 如果决定取消，按一次 Ctrl-C，等待 trac 和 Agent 子进程组退出。随后执行：
