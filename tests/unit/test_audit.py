@@ -215,6 +215,23 @@ def test_clean_host_two_allowed_nested_files_accepted(tmp_path):
     assert auditor.audit(baseline) is None  # both leaves are allowed
 
 
+def test_untracked_python_bytecode_and_tool_caches_ignored(tmp_path):
+    """Running pytest/ruff in a greenfield repo without .gitignore creates
+    untracked __pycache__/*.pyc and .pytest_cache/* outside Shield's write
+    scope; those ephemeral tool artifacts must not trigger false over-reach."""
+    repo = _repo(tmp_path)
+    allowed = [repo / "tests" / "integration"]
+    auditor = Auditor(repo, allowed=allowed)
+    baseline = auditor.baseline()
+
+    (repo / "tinycalc" / "__pycache__").mkdir(parents=True)
+    (repo / "tinycalc" / "__pycache__" / "cli.cpython-314.pyc").write_bytes(b"\x00pyc")
+    (repo / ".pytest_cache" / "v" / "cache").mkdir(parents=True)
+    (repo / ".pytest_cache" / "v" / "cache" / "nodeids").write_text("[]", encoding="utf-8")
+
+    assert auditor.audit(baseline) is None
+
+
 def test_allowed_nested_file_plus_rogue_over_reach_rolled_back(tmp_path):
     """One allowed nested file plus ``tests/rogue.py`` is over-reach; rollback
     removes only the rogue file (and the now-empty dir it alone occupied), never

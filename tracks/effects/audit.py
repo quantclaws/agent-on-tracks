@@ -31,6 +31,21 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     return proc
 
 
+_EPHEMERAL_CACHE_DIRS = frozenset(
+    {"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
+)
+_EPHEMERAL_BYTECODE_EXTS = frozenset({".pyc", ".pyo"})
+
+
+def _is_ephemeral_cache_artifact(path: str) -> bool:
+    """True for untracked Python bytecode / tool cache files created as a side
+    effect of running pytest/ruff/python in a host repo lacking ``.gitignore``."""
+    parts = Path(path).parts
+    if any(part in _EPHEMERAL_CACHE_DIRS for part in parts):
+        return True
+    return Path(path).suffix in _EPHEMERAL_BYTECODE_EXTS
+
+
 def _rel(repo: Path, path: Path) -> str:
     try:
         return str(Path(path).resolve().relative_to(repo.resolve()))
@@ -143,6 +158,8 @@ class Auditor:
                 # Rename: the next NUL entry is the old path (no XY prefix);
                 # keep the new path, skip the old.
                 i += 1
+            if xy == "??" and _is_ephemeral_cache_artifact(path):
+                continue
             files.add(path)
         return files
 
