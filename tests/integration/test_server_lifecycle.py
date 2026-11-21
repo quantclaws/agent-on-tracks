@@ -46,7 +46,7 @@ def _install_project(global_cli, target: Path, cwd: Path):
 def _start_background(global_cli, project: Path, cwd: Path) -> subprocess.CompletedProcess:
     env = global_cli.env({"TRAC_SERVE_PASSWORD": "v012-test-password"})
     return subprocess.run(
-        ["sh", "-c", f'"{global_cli.executable}" serve --repo "{project}" --background'],
+        ["sh", "-c", f'"{global_cli.executable}" serve --repo "{project}" --port 0 --background'],
         cwd=str(cwd),
         env=env,
         capture_output=True,

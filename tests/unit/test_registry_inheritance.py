@@ -2,7 +2,13 @@
 
 import pytest
 
-from tracks.executor.guard_registry import load_guard_registry
+from tracks.executor.guard_registry import (
+    GUARD_CATEGORIES,
+    GuardEntry,
+    GuardRegistry,
+    load_guard_registry,
+    validate_guard_registry,
+)
 from tracks.executor.registry_gate import registry_architecture
 
 
@@ -39,3 +45,36 @@ def test_explicit_delta_registry_must_validate_as_written(tmp_path, declaration)
     assert selected == delta
     with pytest.raises(ValueError):
         load_guard_registry(selected)
+
+
+def test_inherited_hotfix_registry_allows_config_digest_drift_but_requires_file(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nversion = '0.12.2'\n")
+    entries = tuple(
+        GuardEntry(
+            guard_id=f"g-{cat}",
+            category=cat,
+            tool="ruff",
+            tool_version="0.16.0",
+            command=("ruff", "check"),
+            config_paths=("pyproject.toml",),
+            config_sections=("tool.ruff",),
+            config_digest="sha256:" + "0" * 64,
+            scope=("tracks/",),
+            threshold="0 errors",
+            timeout_seconds=60,
+            failure_policy="fail_closed",
+            execution_points=("pre_commit",),
+            required_check="lint",
+        )
+        for cat in GUARD_CATEGORIES
+    )
+    registry = GuardRegistry(version=1, host="python", entries=entries, digest="sha256:abc")
+    # Default strict mode rejects byte drift.
+    assert any("config digest drift" in e for e in validate_guard_registry(registry, tmp_path))
+    # Inherited hotfix mode allows legitimate config edits while still enforcing file presence.
+    assert validate_guard_registry(registry, tmp_path, check_config_digest=False) == ()
+    (tmp_path / "pyproject.toml").unlink()
+    assert any(
+        "config file missing" in e
+        for e in validate_guard_registry(registry, tmp_path, check_config_digest=False)
+    )

@@ -255,7 +255,9 @@ def _config_file_digest_matches(repo: Path, path: str, digest: str) -> bool:
     return actual == digest[len("sha256:"):]
 
 
-def _entry_errors(e: GuardEntry, repo: Path) -> list[str]:
+def _entry_errors(
+    e: GuardEntry, repo: Path, *, check_config_digest: bool = True
+) -> list[str]:
     """Hard-error strings for a single guard entry."""
     errors: list[str] = []
     if not e.tool_version or not e.tool_version.strip():
@@ -270,6 +272,8 @@ def _entry_errors(e: GuardEntry, repo: Path) -> list[str]:
         if not (repo / declared_path).exists():
             errors.append(f"config file missing: {declared_path}")
             continue
+        if not check_config_digest:
+            continue
         try:
             if not _config_file_digest_matches(repo, declared_path, e.config_digest):
                 errors.append(f"config digest drift: {declared_path} ({e.guard_id})")
@@ -278,13 +282,18 @@ def _entry_errors(e: GuardEntry, repo: Path) -> list[str]:
     return errors
 
 
-def validate_guard_registry(registry: GuardRegistry, repo: Path) -> tuple[str, ...]:
+def validate_guard_registry(
+    registry: GuardRegistry,
+    repo: Path,
+    *,
+    check_config_digest: bool = True,
+) -> tuple[str, ...]:
     """Return hard-error strings for an inconsistent registry (IF-GUARD-001).
 
     Catches: missing/duplicate category, unpinned tool, ``--exit-zero``,
     non-fail_closed policy, missing required check, absent config file, and
-    config-digest drift against the on-disk config bytes.  Empty tuple when the
-    registry is complete and consistent (AC-FR0258-01/04; FR-0259 completeness).
+    (unless ``check_config_digest=False`` for inherited hotfix registries)
+    config-digest drift against the on-disk config bytes.
     """
     errors: list[str] = []
 
@@ -298,7 +307,7 @@ def validate_guard_registry(registry: GuardRegistry, repo: Path) -> tuple[str, .
         seen.add(cat)
 
     for e in registry.entries:
-        errors.extend(_entry_errors(e, repo))
+        errors.extend(_entry_errors(e, repo, check_config_digest=check_config_digest))
 
     return tuple(errors)
 

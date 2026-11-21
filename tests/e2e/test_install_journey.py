@@ -42,7 +42,7 @@ def _install(cli, target: Path, cwd: Path, *extra: str):
 def _start_background(cli, project: Path, cwd: Path) -> subprocess.CompletedProcess:
     env = cli.env({"TRAC_SERVE_PASSWORD": "v012-journey-password"})
     return subprocess.run(
-        ["sh", "-c", f'"{cli.executable}" serve --repo "{project}" --background'],
+        ["sh", "-c", f'"{cli.executable}" serve --repo "{project}" --port 0 --background'],
         cwd=str(cwd),
         env=env,
         capture_output=True,

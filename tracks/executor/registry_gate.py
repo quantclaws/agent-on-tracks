@@ -35,27 +35,38 @@ def registry_architecture(home: Path, version: str) -> Path:
     return paths.version_dir(home, base) / "architecture.md"
 
 
-def execute_registry_gate(gate, repo, architecture, scope) -> NormalizedGateResult:
+def execute_registry_gate(
+    gate,
+    repo,
+    architecture,
+    scope,
+    *,
+    check_config_digest: bool = True,
+) -> NormalizedGateResult:
     """Validate the registry before executing its declared categories in order."""
     registry = load_guard_registry(architecture)
-    errors = validate_guard_registry(registry, repo)
+    errors = validate_guard_registry(
+        registry, repo, check_config_digest=check_config_digest
+    )
     if errors:
         raise ValueError("guard_registry invalid: " + "; ".join(errors))
-    categories = gate.categories
     by_category = {entry.category: entry for entry in registry.entries}
-    if not categories or len(set(categories)) != len(categories):
+    if not gate.categories or len(set(gate.categories)) != len(gate.categories):
         raise ValueError("guard_registry categories must be nonempty and unique")
-    if set(categories) - by_category.keys():
+    if set(gate.categories) - by_category.keys():
         raise ValueError("guard_registry contains unknown requested categories")
     results = []
-    for category in categories:
+    for category in gate.categories:
         entry = by_category[category]
         command = entry.command if isinstance(entry.command, str) else shlex.join(entry.command)
         declaration = replace(gate, source="inline", command=command,
                               result_channel="exit_code", categories=(),
                               timeout_seconds=min(gate.timeout_seconds, entry.timeout_seconds))
-        result = execute_gate(declaration, repo, scope)
-        results.append({"guard_id": entry.guard_id, "category": category, **asdict(result)})
+        results.append({
+            "guard_id": entry.guard_id,
+            "category": category,
+            **asdict(execute_gate(declaration, repo, scope)),
+        })
     passed = all(result["status"] == "passed" for result in results)
     return NormalizedGateResult(
         gate_id=gate.kind, result_version=1, status="passed" if passed else "failed",

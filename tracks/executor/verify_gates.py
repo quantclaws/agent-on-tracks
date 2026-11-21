@@ -981,7 +981,17 @@ historical runs may use the imported compatibility contract."""
                 if not version:
                     raise ValueError("guard_registry requires the active version")
                 architecture = registry_architecture(self.store.home, version)
-                result = execute_registry_gate(gate, self.repo, architecture, scope)
+                inherited = (
+                    architecture
+                    != paths.version_dir(self.store.home, version) / "architecture.md"
+                )
+                result = execute_registry_gate(
+                    gate,
+                    self.repo,
+                    architecture,
+                    scope,
+                    check_config_digest=not inherited,
+                )
             else:
                 result = execute_gate(gate, self.repo, scope)
         except Exception as err:  # noqa: BLE001 -- fail closed per gate

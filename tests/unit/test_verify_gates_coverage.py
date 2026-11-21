@@ -740,8 +740,9 @@ def test_run_one_local_gate_registry_resolves_active_version(tmp_path: Path, mon
     host.store.home = host.repo / ".tracks"
     captured = {}
 
-    def _execute(gate, repo, architecture, scope):
+    def _execute(gate, repo, architecture, scope, **kwargs):
         captured["architecture"] = architecture
+        captured["check_config_digest"] = kwargs.get("check_config_digest", True)
         return SimpleNamespace(
             status="passed", command_echo=(), exit_code=0, summary={}
         )
@@ -752,6 +753,7 @@ def test_run_one_local_gate_registry_resolves_active_version(tmp_path: Path, mon
         _cmd(), "SHA", "D", None, State(version="v0.8"), 0, gate, {}
     ) is True
     assert captured["architecture"] == host.store.home / "projects/v0.8/architecture.md"
+    assert captured["check_config_digest"] is True
     assert host.emitted[0][0] == "local_gate.passed"
 
 
@@ -761,8 +763,8 @@ def test_hotfix_local_gate_inherits_base_registry(tmp_path: Path, monkeypatch):
     host.store.home = host.repo / ".tracks"
     captured = []
 
-    def execute(gate, repo, architecture, scope):
-        captured.append(architecture)
+    def execute(gate, repo, architecture, scope, **kwargs):
+        captured.append((architecture, kwargs.get("check_config_digest", True)))
         return SimpleNamespace(status="passed", command_echo=(), exit_code=0, summary={})
 
     monkeypatch.setattr(verify_gates, "execute_registry_gate", execute)
@@ -770,7 +772,7 @@ def test_hotfix_local_gate_inherits_base_registry(tmp_path: Path, monkeypatch):
     assert host._run_one_local_gate(
         _cmd(), "SHA", "D", None, State(version="v0.12-hotfix-262"), 0, gate, {}
     )
-    assert captured == [host.store.home / "projects/v0.12/architecture.md"]
+    assert captured == [(host.store.home / "projects/v0.12/architecture.md", False)]
 
 
 def test_run_one_local_gate_version_decl_delegates(tmp_path: Path):
