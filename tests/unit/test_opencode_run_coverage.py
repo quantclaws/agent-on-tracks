@@ -255,9 +255,10 @@ def test_build_cmd_session_model_debug(host, monkeypatch):
     host.debug = True
     monkeypatch.setattr(host, "_session_for", lambda name: {"session_id": "s1"})
     cmd = host._build_cmd("devon", "prompt")
-    assert cmd[:8] == [
+    assert cmd[:9] == [
         "opencode",
         "run",
+        "--standalone",
         "--agent",
         "devon",
         "--format",

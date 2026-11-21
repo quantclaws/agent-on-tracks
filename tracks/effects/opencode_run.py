@@ -217,6 +217,7 @@ class OpencodeRunMixin:
         cmd = [
             "opencode",
             "run",
+            "--standalone",
             "--agent",
             name,
             "--format",
