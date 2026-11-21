@@ -24,6 +24,8 @@ from tracks import paths
 from .opencode_core import OpencodeError, iter_json_events
 from .opencode_session import _last_ctx_tokens
 
+_NESTED_OPENCODE_ENV = frozenset({"OPENCODE", "OPENCODE_SESSION_ID", "OPENCODE_TERMINAL"})
+
 
 class OpencodeRunMixin:
     """opencode spawn/stream pipeline, failure matrix and manifest parsing."""
@@ -184,12 +186,21 @@ class OpencodeRunMixin:
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     def _spawn(self, cmd, env, log_fh, cwd=None):
-        """Spawn the OpenCode 2.x child with standard pipes."""
+        """Spawn the OpenCode 2.x child with standard pipes.
+
+        Align ``PWD`` with ``cwd`` and strip outer OpenCode session markers so
+        nested invocations (e.g. ``trac serve --repo <other>`` launched from
+        another repo or inside an OpenCode terminal) never inherit a stale
+        ``PWD`` or parent session context.
+        """
+        spawn_cwd = Path(cwd or self.repo)
+        child_env = {k: v for k, v in env.items() if k not in _NESTED_OPENCODE_ENV}
+        child_env["PWD"] = str(spawn_cwd.resolve())
         try:
             return subprocess.Popen(
                 cmd,
-                cwd=cwd or self.repo,
-                env=env,
+                cwd=spawn_cwd,
+                env=child_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=log_fh if log_fh else subprocess.PIPE,

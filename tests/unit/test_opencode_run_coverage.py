@@ -244,10 +244,22 @@ def test_spawn_forwards_cwd_and_log_fh(host, monkeypatch):
 
     monkeypatch.setattr(run_mod.subprocess, "Popen", _popen)
     cwd = host.repo / "sub"
-    assert host._spawn(["opencode"], {}, "logfh", cwd) is proc
+    env = {
+        "PWD": "/stale/other/repo",
+        "OPENCODE": "1",
+        "OPENCODE_SESSION_ID": "ses_parent",
+        "OPENCODE_TERMINAL": "1",
+        "OPENCODE_CONFIG": "/custom/config.json",
+    }
+    assert host._spawn(["opencode"], env, "logfh", cwd) is proc
     assert seen["cwd"] == cwd
     assert seen["stderr"] == "logfh"
     assert seen["stdout"] is run_mod.subprocess.PIPE
+    assert seen["env"]["PWD"] == str(cwd.resolve())
+    assert "OPENCODE" not in seen["env"]
+    assert "OPENCODE_SESSION_ID" not in seen["env"]
+    assert "OPENCODE_TERMINAL" not in seen["env"]
+    assert seen["env"]["OPENCODE_CONFIG"] == "/custom/config.json"
 
 
 def test_build_cmd_session_model_debug(host, monkeypatch):
