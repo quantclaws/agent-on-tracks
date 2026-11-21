@@ -236,7 +236,7 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     # closure exit (§2c), which needs no version directory; early versions
     # resolve nothing and keep their classic behaviour untouched.
     checker, release_builder = _trace_callbacks(home, version)
-    if checker is not None:
+    if checker is not None and _has_closure_duty(repo, home, version):
         return _cmd_check_trace_v07(
             repo, home, version, checker, use_json, release_builder
         )
@@ -299,6 +299,42 @@ def _merge_baseline_repair(entry: dict, payload: dict) -> None:
     digest = bound_node.get("digest")
     if isinstance(digest, str) and digest:
         entry["baseline_candidate"] = digest
+
+
+_CLOSURE_DUTY_EVENTS = frozenset(
+    {
+        "phase0.baseline_repaired",
+        "mutation.manifest",
+        "mutation.experiment",
+        "closure_evidence.failed",
+    }
+)
+
+
+def _has_closure_duty(repo: Path, home: Path, version: str) -> bool:
+    """Whether *version* declared or entered candidate-bound mutation closure.
+
+    Mirrors ``closure_evidence._do_produce_closure_evidence`` capability
+    gating: an installed project's own product version (e.g. ``v0.1``,
+    ``v1.0`` running under ``workflow_profile=full-v1``) that ships neither
+    ``kill-manifest.json`` nor ``closure-bindings.json`` and emitted no
+    mutation/baseline-repair events passed through closure production and
+    therefore validates via real bidirectional doc<->test traceability.
+    """
+    if version_extensions.resolve_capability(base_version(version), "trace") is not None:
+        return True
+    if (repo / "tests" / "counterexamples" / version / "kill-manifest.json").is_file():
+        return True
+    if (paths.projects_dir(home) / version / "closure-bindings.json").is_file():
+        return True
+    store = Store(home)
+    try:
+        return any(
+            ev.type in _CLOSURE_DUTY_EVENTS
+            for ev in _version_events(store, version)
+        )
+    finally:
+        store.close()
 
 
 def _trace_callbacks(home: Path, version: str) -> tuple:
