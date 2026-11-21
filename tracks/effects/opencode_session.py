@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,7 +41,6 @@ _SHIELD_MTEST_WRITE = frozenset({"WRITE", "NO_DIFF_EXPLAIN"})
 _ARCHER_DESIGN = frozenset({"DRAFT", "RESPOND"})
 
 _COMPACT_PCT_DEFAULT = 85
-_MODELS_JSON_BLOCK = re.compile(r"^(\S+/\S+)\s*\n(\{.*?\n\})", re.MULTILINE | re.DOTALL)
 
 
 def _session_key(role: str, substate: str, assignment: dict | None) -> str:
@@ -258,72 +255,35 @@ class OpencodeSessionMixin:
             )
         except (OSError, json.JSONDecodeError):
             return None
-        agents = cfg.get("agent") if isinstance(cfg, dict) else None
+        agents = cfg.get("agents") if isinstance(cfg, dict) else None
         if not isinstance(agents, dict):
             return None
         for key in (name, name.lower()):
             entry = agents.get(key)
-            if isinstance(entry, dict) and entry.get("model"):
-                return str(entry["model"])
+            if not isinstance(entry, dict):
+                continue
+            declared = entry.get("model")
+            if isinstance(declared, str) and declared:
+                return declared.split("#", 1)[0]
+            if isinstance(declared, dict) and declared.get("providerID") and declared.get("model"):
+                return f"{declared['providerID']}/{declared['model']}"
         return None
-
-    def _model_ctx_limits(self) -> dict[str, int]:
-        """provider/model -> limit.context from ``opencode models
-        --verbose`` (the models.dev catalog; process-cached). Parse failure
-        is fail-open: no limits -> no compaction, the overflow health check
-        still backstops."""
-        cached = getattr(self, "_model_limits", None)
-        if cached is not None:
-            return cached
-        limits: dict[str, int] = {}
-        try:
-            proc = subprocess.run(
-                ["opencode", "models", "--verbose"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            for match in _MODELS_JSON_BLOCK.finditer(proc.stdout or ""):
-                try:
-                    info = json.loads(match.group(2))
-                except json.JSONDecodeError:
-                    continue
-                limit = (info.get("limit") or {}).get("context")
-                if isinstance(limit, int) and limit > 0:
-                    limits[match.group(1)] = limit
-        except (OSError, subprocess.SubprocessError):
-            limits = {}
-        self._model_limits = limits
-        return limits
 
     @staticmethod
     def _absolute_ctx_ceiling() -> int:
-        """#132 OOB: the fallback compaction ceiling when the model window
-        cannot be resolved (TRAC_AGENT_MODEL unset — opencode-config default
-        model, unknown here). ``TRAC_SESSION_COMPACT_ABS_TOKENS`` overrides;
-        non-positive disables the fallback (legacy fail-open)."""
+        """High-water cold-start ceiling (OpenCode 2.x handles routine compaction
+        natively via compaction.auto=true; Tracks drops sessions above this cap)."""
         try:
             return int(os.environ.get("TRAC_SESSION_COMPACT_ABS_TOKENS", "200000"))
         except ValueError:
             return 200_000
 
     def _compact_limit(self, model: str | None) -> tuple[int, str] | None:
-        """The compaction threshold source: the model's context window when
-        resolvable, else the absolute ceiling. Returns (limit, label) or
-        None when both are unavailable (legacy fail-open).
-
-        #132 OOB (2026-09-27): with TRAC_AGENT_MODEL unset the effective model
-        # is opencode-config-resolved and invisible here, so the old fail-open
-        # skip disabled layer 3 entirely in the DEFAULT configuration (run
-        # 01M3E7SAANXKW1V73W8B8Q3G86: 319K/400K-token sessions,
-        # compacted=false throughout, TPM wall)."""
-        resolved = self._model_ctx_limits().get(model or "")
-        if resolved:
-            return resolved, f"{model} window"
         ceiling = self._absolute_ctx_ceiling()
         if ceiling <= 0:
             return None
-        return ceiling, "absolute ceiling (model window unresolved)"
+        label = f"{model} ceiling" if model else "absolute ceiling"
+        return ceiling, label
 
     def _maybe_compact(self, key: str, model: str | None) -> None:
         """Pre-dispatch threshold check (D-42 layer 3): compact at >= 85% of
@@ -352,46 +312,11 @@ class OpencodeSessionMixin:
             return
         print(
             f"  [session] {key}: ctx {ctx} >= {pct}% of {window_label} "
-            f"({limit}) — compacting",
+            f"({limit}) — resetting session for cold-start",
             file=sys.stderr,
             flush=True,
         )
-        if entry.get("compacted"):
-            # Already compacted at this size and it did not shrink below
-            # the threshold on the last measurement.
-            self._clear_session(key)
-            return
-        if self._run_compact(sid):
-            entry["compacted"] = True
-            self._save_sessions()
-        else:
-            print(
-                f"  [session] {key}: compact failed — dropping session "
-                "(next dispatch cold-starts)",
-                file=sys.stderr,
-                flush=True,
-            )
-            self._clear_session(key)
-
-    def _run_compact(self, session_id: str) -> bool:
-        """Invoke opencode's built-in compact command on the session.
-        Fail-closed: any non-zero exit or error event means failure (the
-        caller drops the session — correctness never depends on compaction
-        succeeding)."""
-        try:
-            proc = subprocess.run(
-                [
-                    "opencode", "run", "--session", session_id,
-                    "--command", "compact", "--dir", str(self.repo),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        out = proc.stdout or ""
-        return proc.returncode == 0 and '"type":"error"' not in out
+        self._clear_session(key)
 
     # -- dispatch entry ---------------------------------------------------------
 

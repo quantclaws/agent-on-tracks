@@ -361,7 +361,7 @@ def seed_rounds_without_blobs(
 
 
 def write_thinking_log(repo: Path, version: str, dispatch_ts: list[str]) -> Path:
-    logs = repo / ".opencode" / "logs"
+    logs = repo / ".tracks" / "runtime" / "opencode-logs"
     logs.mkdir(parents=True, exist_ok=True)
     path = logs / "session-1.jsonl"
     template = (

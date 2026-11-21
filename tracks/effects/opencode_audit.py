@@ -21,6 +21,7 @@ from tracks.scaffold import _scaffold_declared_paths
 from .opencode_core import OpencodeError
 
 _OPENCODE_PREFIX = ".opencode/"
+_TRACKS_RUNTIME_PREFIX = ".tracks/runtime/"
 _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 
 
@@ -305,7 +306,9 @@ class OpencodeAuditMixin:
             path
             for path in new_files
             if path not in docset
-            and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
+            and not path.startswith(
+                (_OPENCODE_PREFIX, _TRACKS_RUNTIME_PREFIX, _GROUND_TRUTH_PREFIX)
+            )
             and path not in declared
         )
 

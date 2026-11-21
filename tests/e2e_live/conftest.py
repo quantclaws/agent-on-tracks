@@ -110,16 +110,16 @@ def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
 def _host_config(config: dict[str, str]) -> dict:
     return {
         "$schema": "https://opencode.ai/config.json",
-        "permission": {
-            "external_directory": "deny",
-            "bash": {"*": "allow"},
-            "edit": {"*": "allow"},
-        },
-        "provider": {
+        "permissions": [
+            {"action": "external_directory", "resource": "*", "effect": "deny"},
+            {"action": "shell", "resource": "*", "effect": "allow"},
+            {"action": "edit", "resource": "*", "effect": "allow"},
+        ],
+        "providers": {
             config["TRAC_LIVE_PROVIDER"]: {
-                "npm": "@ai-sdk/openai-compatible",
+                "package": "aisdk:@ai-sdk/openai-compatible",
                 "name": f"{config['TRAC_LIVE_PROVIDER']} (live e2e)",
-                "options": {
+                "settings": {
                     "baseURL": config["TRAC_LIVE_BASE_URL"],
                     "apiKey": "{env:TRAC_LIVE_API_KEY}",
                 },

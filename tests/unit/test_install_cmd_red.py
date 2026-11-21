@@ -372,9 +372,11 @@ def test_ac_0354_01_same_version_reinstall_converges(tmp_path, capsys):
     assert second_files == first_files
     assert not list((target / ".tracks").glob(".install-staging-*"))
     assert read_receipt(target)["version"] == "9.9.9"
-    assert json.loads((target / "opencode.json").read_text(encoding="utf-8"))[
-        "agent"
-    ].keys() >= {"Archer", "Devon", "Shield"}
+    seeded_cfg = json.loads((target / "opencode.json").read_text(encoding="utf-8"))
+    assert isinstance(seeded_cfg.get("permissions"), list)
+    assert {"action": "external_directory", "resource": "*", "effect": "deny"} in seeded_cfg[
+        "permissions"
+    ]
 
 
 # AC-FR0348-01@v0.12 TRACKS-TRACE installed runtime metadata cannot dirty a release candidate

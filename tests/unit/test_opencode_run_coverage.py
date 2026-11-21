@@ -1,8 +1,8 @@
-"""Behavior coverage for the Opencode subprocess/JSON mixin.
+"""Behavior coverage for the Opencode subprocess/JSON mixin (OpenCode 2.x).
 
 Drives spawn/await/finalize failure windows, stdin/stderr pumps, stdout
-streaming (manifest detection, drain, inactivity stall), exit
-classification, manifest extraction/validation and the lenient JSON
+streaming (manifest detection, live-NDJSON tee, drain, inactivity stall),
+exit classification, manifest extraction/validation and the lenient JSON
 helpers (ARCH §7, B17/#20, B18, D-39).
 """
 
@@ -38,9 +38,19 @@ class _Host(OpencodeSessionMixin, OpencodeRunMixin):
         }
 
 
+class _FakeStdout:
+    """Pipe stand-in: ``_stream_stdout`` only needs a readable fd."""
+
+    def __init__(self, fd=9):
+        self._fd = fd
+
+    def fileno(self):
+        return self._fd
+
+
 class _Proc:
-    def __init__(self, *, poll_value=None, returncode=0, stdout="", stderr=""):
-        self.pid = 4242
+    def __init__(self, *, poll_value=None, returncode=0, stdout=None, stderr="", pid=4242):
+        self.pid = pid
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
@@ -89,7 +99,7 @@ def test_run_spawn_error_closes_log(host, tmp_path, monkeypatch):
 def test_run_happy_path_wires_pumps(host, monkeypatch):
     proc = _Proc()
     sentinel = subprocess.CompletedProcess(["opencode"], 0, "", "")
-    monkeypatch.setattr(host, "_spawn", lambda *a: (proc, None))
+    monkeypatch.setattr(host, "_spawn", lambda *a: proc)
     monkeypatch.setattr(host, "_start_stdin_pump", lambda *a: "stdin-writer")
     monkeypatch.setattr(host, "_start_stderr_pump", lambda *a: ("stderr-reader", []))
     captured = {}
@@ -114,55 +124,45 @@ def test_await_run_keyboard_interrupt_closes_log(host, monkeypatch):
 
     log = _Log()
     monkeypatch.setattr(host, "_kill_group", lambda pid: None)
-    monkeypatch.setattr(host, "_stream_stdout", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(host, "_stream_stdout", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(KeyboardInterrupt):
-        host._await_run(["opencode"], _Proc(), None, log, None, [], None, None, 10, key="devon")
+        host._await_run(["opencode"], _Proc(), log, None, None, [], None, 10, key="devon")
     assert log.closed is True
-
-
-def test_spawn_pty_success_returns_master(host, monkeypatch):
-    proc = _Proc()
-    closed = []
-    monkeypatch.delenv("TRAC_AGENT_PTY", raising=False)
-    monkeypatch.setattr(run_mod.pty, "openpty", lambda: (10, 11))
-    monkeypatch.setattr(run_mod.subprocess, "Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(run_mod.os, "close", lambda fd: closed.append(fd))
-    result, master = host._spawn(["opencode"], {}, None)
-    assert result is proc and master == 10
-    assert closed == [11]
 
 
 def test_await_run_keyboard_interrupt_kills_and_reraises(host, monkeypatch):
     killed = []
     monkeypatch.setattr(host, "_kill_group", lambda pid: killed.append(pid))
-    monkeypatch.setattr(host, "_stream_stdout", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr(host, "_stream_stdout", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
     proc = _Proc()
     with pytest.raises(KeyboardInterrupt):
-        host._await_run(["opencode"], proc, None, None, None, [], None, None, 10, key="devon")
+        host._await_run(["opencode"], proc, None, None, None, [], None, 10, key="devon")
     assert killed == [4242]
 
 
 def test_await_run_finalize_error_recovers_and_raises(host, monkeypatch):
     seen = []
-    monkeypatch.setattr(host, "_stream_stdout", lambda *a: ([], False, False))
+    monkeypatch.setattr(host, "_stream_stdout", lambda *a, **k: ([], False, False))
     monkeypatch.setattr(host, "_finalize_run", lambda *a: (_ for _ in ()).throw(OpencodeError("timeout", "t")))
     monkeypatch.setattr(host, "_recover_run_error", lambda exc, name, key=None: seen.append((exc.failure_class, name)))
     with pytest.raises(OpencodeError):
-        host._await_run(["opencode"], _Proc(), None, None, None, [], None, None, 10, key="devon")
+        host._await_run(["opencode"], _Proc(), None, None, None, [], None, 10, key="devon")
     assert seen == [("timeout", "devon")]
 
 
 def test_await_run_success_records_session(host, monkeypatch):
-    recorded = []
-    proc = subprocess.CompletedProcess(["opencode"], 0, '{"sessionID": "s1"}\n', "")
-    monkeypatch.setattr(host, "_stream_stdout", lambda *a: ([], False, False))
+    recorded, ctx = [], []
+    proc = _Proc(stdout='{"sessionID": "s1"}\n')
+    monkeypatch.setattr(host, "_stream_stdout", lambda *a, **k: ([], False, False))
     monkeypatch.setattr(host, "_finalize_run", lambda *a: proc)
     monkeypatch.setattr(host, "_record_session", lambda name, sid: recorded.append((name, sid)))
+    monkeypatch.setattr(host, "_record_ctx_tokens", lambda name, tokens: ctx.append((name, tokens)))
     assert (
-        host._await_run(["opencode"], proc, None, None, None, [], None, None, 10, key="devon")
+        host._await_run(["opencode"], proc, None, None, None, [], None, 10, key="devon")
         is proc
     )
     assert recorded == [("devon", "s1")]
+    assert ctx == [("devon", None)]
 
 
 def test_recover_run_error_records_and_clears_on_overflow(host, monkeypatch):
@@ -181,7 +181,7 @@ def test_finalize_run_kills_and_returns_completed(host, monkeypatch):
     monkeypatch.setattr(host, "_kill_group", lambda pid: killed.append(pid))
     proc = _Proc(poll_value=None, returncode=0)
     result = host._finalize_run(
-        ["opencode"], proc, None, None, None, ["err-line"], None, None, ["out\n"], True, False, 10
+        ["opencode"], proc, None, None, ["err-line"], None, None, ["out\n"], True, False, 10
     )
     assert killed == [4242]
     assert result.stdout == "out\n"
@@ -195,7 +195,7 @@ def test_finalize_run_reads_log_file(host, tmp_path, monkeypatch):
     monkeypatch.setattr(host, "_kill_group", lambda pid: None)
     proc = _Proc(poll_value=0, returncode=0)
     result = host._finalize_run(
-        ["opencode"], proc, None, fh, log, [], None, None, [], True, False, 10
+        ["opencode"], proc, fh, log, [], None, None, [], True, False, 10
     )
     assert result.stderr == "logged\n"
 
@@ -205,7 +205,7 @@ def test_finalize_run_stall_raises_timeout(host, monkeypatch):
     proc = _Proc(poll_value=0, returncode=0)
     with pytest.raises(OpencodeError) as exc:
         host._finalize_run(
-            ["opencode"], proc, None, None, None, [], None, None, ["partial"], False, True, 7
+            ["opencode"], proc, None, None, [], None, None, ["partial"], False, True, 7
         )
     assert exc.value.failure_class == "timeout"
     assert exc.value.stdout == "partial"
@@ -216,32 +216,38 @@ def test_finalize_run_stall_raises_timeout(host, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_spawn_pipe_mode_returns_none_master(host, monkeypatch):
-    monkeypatch.setenv("TRAC_AGENT_PTY", "0")
-    sentinel = object()
-    monkeypatch.setattr(host, "_spawn_pipe", lambda *a: sentinel)
-    assert host._spawn(["opencode"], {}, None) == (sentinel, None)
+def test_spawn_returns_proc_directly(host, monkeypatch):
+    """OpenCode 2.x: plain pipes, no PTY — ``_spawn`` returns the Popen."""
+    proc = _Proc()
+    monkeypatch.setattr(run_mod.subprocess, "Popen", lambda *a, **k: proc)
+    assert host._spawn(["opencode"], {}, None) is proc
 
 
-def test_spawn_pty_missing_binary_closes_fds(host, monkeypatch):
-    closed = []
-    monkeypatch.delenv("TRAC_AGENT_PTY", raising=False)
-    monkeypatch.setattr(run_mod.pty, "openpty", lambda: (10, 11))
-    monkeypatch.setattr(run_mod.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
-    monkeypatch.setattr(run_mod.os, "close", lambda fd: closed.append(fd))
+def test_spawn_missing_binary_raises_opencode_missing(host, monkeypatch):
+    monkeypatch.setattr(
+        run_mod.subprocess,
+        "Popen",
+        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()),
+    )
     with pytest.raises(OpencodeError) as exc:
         host._spawn(["opencode"], {}, None)
     assert exc.value.failure_class == "opencode_missing"
-    assert 10 in closed and 11 in closed
 
 
-def test_spawn_pipe_success_and_missing(host, monkeypatch):
-    proc = object()
-    monkeypatch.setattr(run_mod.subprocess, "Popen", lambda *a, **k: proc)
-    assert host._spawn_pipe(["opencode"], {}, None) is proc
-    monkeypatch.setattr(run_mod.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError()))
-    with pytest.raises(OpencodeError):
-        host._spawn_pipe(["opencode"], {}, None)
+def test_spawn_forwards_cwd_and_log_fh(host, monkeypatch):
+    seen = {}
+    proc = _Proc()
+
+    def _popen(cmd, **kwargs):
+        seen.update(kwargs)
+        return proc
+
+    monkeypatch.setattr(run_mod.subprocess, "Popen", _popen)
+    cwd = host.repo / "sub"
+    assert host._spawn(["opencode"], {}, "logfh", cwd) is proc
+    assert seen["cwd"] == cwd
+    assert seen["stderr"] == "logfh"
+    assert seen["stdout"] is run_mod.subprocess.PIPE
 
 
 def test_build_cmd_session_model_debug(host, monkeypatch):
@@ -249,11 +255,30 @@ def test_build_cmd_session_model_debug(host, monkeypatch):
     host.debug = True
     monkeypatch.setattr(host, "_session_for", lambda name: {"session_id": "s1"})
     cmd = host._build_cmd("devon", "prompt")
+    assert cmd[:8] == [
+        "opencode",
+        "run",
+        "--agent",
+        "devon",
+        "--format",
+        "json",
+        "--archived",
+        "--auto",
+    ]
+    assert "--dir" not in cmd
     assert "--session" in cmd and "s1" in cmd
     assert "--model" in cmd and "gpt-x" in cmd
-    assert "--print-logs" in cmd and "DEBUG" in cmd
-    assert cmd[-3:] == ["--print-logs", "--log-level", "DEBUG"]
+    assert cmd[-3:] == ["--print-logs", "--log-level", "debug"]
+    assert "DEBUG" not in cmd
     assert "prompt" in cmd
+
+
+def test_build_cmd_no_session_no_model_no_debug(host):
+    cmd = host._build_cmd("devon", "prompt")
+    assert "--session" not in cmd
+    assert "--model" not in cmd
+    assert "--print-logs" not in cmd
+    assert cmd[-1] == "prompt"
 
 
 class _FakeStdin:
@@ -285,15 +310,6 @@ def test_stdin_pump_thread_writes_to_stdin(host):
     t.join(timeout=5)
     assert stdin.written == ["hello"]
     assert stdin.closed is True
-
-
-def test_stdin_pump_pty_master_write(host, monkeypatch):
-    written = []
-    monkeypatch.setattr(run_mod.os, "write", lambda fd, data: written.append((fd, data)))
-    proc = SimpleNamespace()
-    t = host._start_stdin_pump(proc, "hi", master_fd=9)
-    t.join(timeout=5)
-    assert written == [(9, b"hi")]
 
 
 def test_stdin_pump_swallows_write_errors(host):
@@ -345,11 +361,34 @@ def test_stderr_pump_swallows_oserror(host):
 # ---------------------------------------------------------------------------
 
 
+def test_open_stream_log_creates_runtime_log(host, monkeypatch):
+    monkeypatch.delenv("TRACKS_HOME", raising=False)
+    stream_fh = host._open_stream_log(4242)
+    assert stream_fh is not None
+    log_path = Path(stream_fh.name)
+    stream_fh.close()
+    assert log_path.parent.name == "opencode-logs"
+    assert log_path.parent.parent.name == "runtime"
+    assert log_path.name.startswith("stream-") and log_path.name.endswith(".jsonl")
+    assert "4242" in log_path.name
+    gitignore = log_path.parent.parent / ".gitignore"
+    assert gitignore.read_text(encoding="utf-8") == "*\n"
+
+
+def test_open_stream_log_returns_none_on_oserror(host, monkeypatch):
+    monkeypatch.setattr(
+        run_mod.paths,
+        "tracks_home",
+        lambda repo: (_ for _ in ()).throw(OSError("no home")),
+    )
+    assert host._open_stream_log(1) is None
+
+
 def test_stream_stdout_manifest_found(host, monkeypatch):
     line = _manifest_line()
     monkeypatch.setattr(run_mod.select, "select", lambda *a: ([9], [], []))
     monkeypatch.setattr(run_mod.os, "read", lambda fd, n: line.encode())
-    chunks, found, stalled = host._stream_stdout(_Proc(), 10, master_fd=9)
+    chunks, found, stalled = host._stream_stdout(_Proc(stdout=_FakeStdout()), 10)
     assert found is True and stalled is False
     assert chunks == [line]
 
@@ -357,21 +396,27 @@ def test_stream_stdout_manifest_found(host, monkeypatch):
 def test_stream_stdout_oserror_breaks(host, monkeypatch):
     monkeypatch.setattr(run_mod.select, "select", lambda *a: ([9], [], []))
     monkeypatch.setattr(run_mod.os, "read", lambda fd, n: (_ for _ in ()).throw(OSError("gone")))
-    assert host._stream_stdout(_Proc(), 10, master_fd=9) == ([], False, False)
+    assert host._stream_stdout(_Proc(stdout=_FakeStdout()), 10) == ([], False, False)
 
 
 def test_stream_stdout_drains_on_exit(host, monkeypatch):
     monkeypatch.setattr(run_mod.select, "select", lambda *a: ([], [], []))
     monkeypatch.setattr(run_mod.os, "read", lambda fd, n: b"")
-    chunks, found, stalled = host._stream_stdout(_Proc(poll_value=0), 10, master_fd=9)
+    proc = _Proc(poll_value=0, stdout=_FakeStdout())
+    chunks, found, stalled = host._stream_stdout(proc, 10)
     assert (chunks, found, stalled) == ([], False, False)
+
+
+def test_stream_stdout_without_stdout_returns_empty(host):
+    assert host._stream_stdout(_Proc(), 10) == ([], False, False)
 
 
 def test_stream_stdout_inactivity_stall(host, monkeypatch):
     monotonic = iter([0.0, 100.0])
     monkeypatch.setattr(run_mod.select, "select", lambda *a: ([], [], []))
     monkeypatch.setattr(run_mod.time, "monotonic", lambda: next(monotonic))
-    assert host._stream_stdout(_Proc(poll_value=None), 10, master_fd=9) == ([], False, True)
+    proc = _Proc(poll_value=None, stdout=_FakeStdout())
+    assert host._stream_stdout(proc, 10) == ([], False, True)
 
 
 def test_stream_stdout_keeps_unterminated_tail(host, monkeypatch):
@@ -379,9 +424,54 @@ def test_stream_stdout_keeps_unterminated_tail(host, monkeypatch):
     monkeypatch.setattr(run_mod.select, "select", lambda *a: ([9], [], []))
     monkeypatch.setattr(run_mod.os, "read", lambda fd, n: next(reads))
     monkeypatch.setattr(run_mod.time, "monotonic", lambda: 0.0)
-    proc = _Proc(poll_value=0)
-    chunks, found, stalled = host._stream_stdout(proc, 10, master_fd=9)
+    proc = _Proc(poll_value=0, stdout=_FakeStdout())
+    chunks, found, stalled = host._stream_stdout(proc, 10)
     assert chunks == ["partial"]
+
+
+def test_stream_stdout_tees_live_ndjson_into_runtime_log(host, monkeypatch):
+    """Live OpenCode 2.x NDJSON is teed to .tracks/runtime/opencode-logs/."""
+    monkeypatch.delenv("TRACKS_HOME", raising=False)
+    lines = [
+        json.dumps(
+            {
+                "type": "step_start",
+                "timestamp": 1700000000000,
+                "sessionID": "ses_1",
+                "part": {"type": "step-start", "id": "p1"},
+            }
+        )
+        + "\n",
+        json.dumps(
+            {
+                "type": "tool_use",
+                "timestamp": 1700000001000,
+                "partID": "prt_1",
+                "sessionID": "ses_1",
+                "part": {
+                    "type": "tool",
+                    "tool": "read",
+                    "state": {"input": {"path": "a.py"}, "output": "body"},
+                },
+            }
+        )
+        + "\n",
+    ]
+    stream_fh = host._open_stream_log(4242)
+    assert stream_fh is not None
+    log_path = Path(stream_fh.name)
+    reads = iter([line.encode() for line in lines] + [b""])
+    monkeypatch.setattr(run_mod.select, "select", lambda *a: ([9], [], []))
+    monkeypatch.setattr(run_mod.os, "read", lambda fd, n: next(reads))
+    try:
+        chunks, found, stalled = host._stream_stdout(
+            _Proc(stdout=_FakeStdout()), 10, stream_fh=stream_fh
+        )
+    finally:
+        stream_fh.close()
+    assert (found, stalled) == (False, False)
+    assert chunks == lines
+    assert log_path.read_text(encoding="utf-8") == "".join(lines)
 
 
 def test_process_stdout_chunk_splits_lines_and_normalizes_crlf():

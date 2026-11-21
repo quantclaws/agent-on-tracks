@@ -15,7 +15,7 @@ Input/output bodies live in content-addressed blobs under
 ``agent_io`` (``input_ref``/``output_ref``) — blobs are permanent, so a
 round whose blob is gone only degrades that face (``input`` null /
 ``output`` ``{"unavailable": true}``). The thinking tail is parsed from
-the newest opencode logs (``<repo>/.opencode/logs/*.jsonl``) through the
+the newest OpenCode 2.x logs (``<repo>/.tracks/runtime/opencode-logs/*.jsonl``) through the
 intake face's shared incremental cache (``intake_activity._ingest`` /
 ``_log_files``, ``_FileState.runs`` version→sessions association) — logs
 rotate, so a round whose session already scrolled out of the cache

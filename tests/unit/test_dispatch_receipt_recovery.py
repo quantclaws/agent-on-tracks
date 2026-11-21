@@ -231,7 +231,7 @@ def test_pid_record_failure_reaps_spawned_child(tmp_path, monkeypatch, failure):
     killed = []
     joined = []
     proc = SimpleNamespace(pid=123, wait=lambda timeout: joined.append(timeout))
-    monkeypatch.setattr(backend, "_spawn", lambda *a: (proc, None))
+    monkeypatch.setattr(backend, "_spawn", lambda *a: proc)
     monkeypatch.setattr(backend, "_kill_group", killed.append)
 
     def fail(pid):

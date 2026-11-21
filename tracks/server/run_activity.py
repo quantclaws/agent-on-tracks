@@ -1,13 +1,12 @@
-"""Read-only run activity timeline from opencode event logs (OOB face).
+"""Read-only run activity timeline from OpenCode 2.x JSONL event streams.
 
 ``GET /api/runs/{run_id}/activity`` replays the dispatched-agent session(s)
 of the run's current stage: the supervisor's dispatched opencode subprocess
-writes its event log to ``<repo>/.opencode/logs/*.jsonl`` (``OPENCODE_LOGGER_DIR``,
-relative to the dispatch cwd = the project repo). Rows mentioning
-``.tracks/projects/<version>/`` mark the session; every part row of that
-session at or after the run's current ``stage.entered`` timestamp becomes a
-timeline item — i.e. what the presently working agent has done since the
-stage began.
+streams its NDJSON events to ``<repo>/.tracks/runtime/opencode-logs/*.jsonl``.
+Rows mentioning ``.tracks/projects/<version>/`` mark the session; every part
+row of that session at or after the run's current ``stage.entered`` timestamp
+becomes a timeline item — i.e. what the presently working agent has done since
+the stage began.
 
 Mechanism: the parse state, log-file selection (newest 3), sort order,
 thinking tail quota (30) and response tail quota (200) are shared with the

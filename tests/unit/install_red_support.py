@@ -95,13 +95,18 @@ def hermetic_git_identity(monkeypatch):
 
 
 def default_opencode_config() -> dict:
-    """The interfaces §1a.2 default harness config (per-agent permissions)."""
-    permission = {"*": "deny", "{env:TMPDIR}tracks/*": "allow"}
+    """Default OpenCode V2 harness config (ordered permissions rules)."""
     return {
-        "agent": {
-            role: {"permission": {"external_directory": dict(permission)}}
-            for role in AGENTS
-        }
+        "$schema": "https://opencode.ai/config.json",
+        "permissions": [
+            {"action": "external_directory", "resource": "*", "effect": "deny"},
+            {
+                "action": "external_directory",
+                "resource": "{env:TMPDIR}tracks/*",
+                "effect": "allow",
+            },
+        ],
+        "compaction": {"auto": True},
     }
 
 

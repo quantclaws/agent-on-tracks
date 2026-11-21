@@ -11,12 +11,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import pty
 import select
 import signal
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tracks import paths
@@ -38,23 +38,15 @@ class OpencodeRunMixin:
     def _run(
         self, name: str, prompt: str, cwd: Path | None = None, key: str | None = None
     ) -> subprocess.CompletedProcess:
-        """Run opencode agent with streaming stdout and manifest detection.
-
-        opencode 1.18 ``run --format json`` deadlocks on a pipe stdout (it
-        interacts with the controlling terminal); the child therefore gets a
-        pty for stdin/stdout so events actually flow. ``TRAC_AGENT_PTY=0``
-        restores the legacy pipe behaviour. ``key`` is the D-42 work-unit
-        session key (defaults to the agent name for direct/test callers).
-        """
+        """Run OpenCode 2.x agent with streaming JSON stdout and manifest detection."""
         key = key or name
         self._maybe_compact(key, self._effective_model(name))
         cmd = self._build_cmd(name, prompt, key=key)
-        env = {**os.environ, "OPENCODE_LOGGER_DIR": ".opencode/logs"}
+        env = dict(os.environ)
         log_path = self._debug_log_path(name) if self.debug else None
         log_fh = open(log_path, "w", buffering=1) if log_path else None  # noqa: SIM115
-        master_fd = None
         try:
-            proc, master_fd = self._spawn(cmd, env, log_fh, cwd)
+            proc = self._spawn(cmd, env, log_fh, cwd)
         except OpencodeError:
             if log_fh:
                 log_fh.close()
@@ -64,40 +56,27 @@ class OpencodeRunMixin:
             try:
                 self._record_dispatch_pid(proc.pid)
             except BaseException:
-                # A failed durable PID write or cancellation must not leave
-                # the already-spawned child running without its audit record.
                 self._kill_group(proc.pid)
                 with contextlib.suppress(Exception):
                     proc.wait(timeout=5)
-                self._close_master(master_fd)
                 if log_fh:
                     log_fh.close()
                 raise
 
         stdin_writer = self._start_stdin_pump(
-            proc, os.environ.get("TRAC_AGENT_CONSOLE_INPUT"), master_fd
+            proc, os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         )
         stderr_reader, stderr_lines = self._start_stderr_pump(proc, log_fh)
-
         timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "1800"))
         return self._await_run(
-            cmd,
-            proc,
-            master_fd,
-            log_fh,
-            log_path,
-            stderr_lines,
-            stdin_writer,
-            stderr_reader,
-            timeout,
-            key=key,
+            cmd, proc, log_fh, log_path, stderr_lines,
+            stdin_writer, stderr_reader, timeout, key=key,
         )
 
     def _await_run(
         self,
         cmd,
         proc,
-        master_fd,
         log_fh,
         log_path,
         stderr_lines,
@@ -106,32 +85,33 @@ class OpencodeRunMixin:
         timeout,
         key=None,
     ):
-        """Stream to completion, finalize, and record the resumable session.
-
-        ``key`` is the resolved D-42 session key (the caller already did
-        ``key or name``)."""
+        """Stream to completion, finalize, and record the resumable session."""
+        stream_fh = self._open_stream_log(proc.pid)
         try:
-            stdout_chunks, manifest_found, stalled = self._stream_stdout(proc, timeout, master_fd)
+            stdout_chunks, manifest_found, stalled = self._stream_stdout(
+                proc, timeout, stream_fh=stream_fh
+            )
         except KeyboardInterrupt:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
                 proc.wait(timeout=5)
-            self._close_master(master_fd)
             if log_fh:
                 log_fh.close()
             raise
+        finally:
+            if stream_fh is not None:
+                with contextlib.suppress(OSError):
+                    stream_fh.close()
 
         try:
             proc = self._finalize_run(
-                cmd, proc, master_fd, log_fh, log_path, stderr_lines,
+                cmd, proc, log_fh, log_path, stderr_lines,
                 stdin_writer, stderr_reader, stdout_chunks, manifest_found,
                 stalled, timeout,
             )
         except OpencodeError as exc:
             self._recover_run_error(exc, key)
             raise
-        # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写），
-        # 并测量本回合上下文尺寸（D-42 压缩闭环的派发后探测点）。
         self._record_session(key, self._extract_session_id(proc.stdout or ""))
         self._record_ctx_tokens(key, _last_ctx_tokens(proc.stdout or ""))
         return proc
@@ -168,7 +148,6 @@ class OpencodeRunMixin:
         self,
         cmd,
         proc,
-        master_fd,
         log_fh,
         log_path,
         stderr_lines,
@@ -180,9 +159,7 @@ class OpencodeRunMixin:
         timeout,
     ):
         """Kill/join/close, then classify. A stalled stream is infrastructure,
-        not an agent outcome: the lenient _check_json signal branch would
-        otherwise accept the partial JSON events as a complete outcome and
-        burn agent attempts on impl_defect loops (run 01KZTHE7 T-017)."""
+        not an agent outcome."""
         if manifest_found or proc.poll() is None:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
@@ -190,7 +167,6 @@ class OpencodeRunMixin:
 
         self._join_pump_threads(stdin_writer, stderr_reader, log_fh)
 
-        self._close_master(master_fd)
         if log_fh:
             log_fh.close()
             stderr = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
@@ -208,55 +184,47 @@ class OpencodeRunMixin:
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     def _spawn(self, cmd, env, log_fh, cwd=None):
-        """Spawn the opencode child. Returns (proc, master_fd_or_None).
-
-        opencode 1.18 ``run --format json`` deadlocks on a pipe stdout (it
-        interacts with the controlling terminal), so the child gets a pty for
-        stdin/stdout unless ``TRAC_AGENT_PTY=0`` restores legacy pipes.
-        """
-        if os.environ.get("TRAC_AGENT_PTY", "1") == "0":
-            return self._spawn_pipe(cmd, env, log_fh), None
-        master_fd, slave_fd = pty.openpty()
-        try:
-            proc = subprocess.Popen(
-                cmd, cwd=cwd or self.repo, env=env,
-                stdin=slave_fd, stdout=slave_fd,
-                stderr=log_fh if log_fh else subprocess.PIPE,
-                text=True, start_new_session=True,
-            )
-        except FileNotFoundError as err:
-            self._close_master(master_fd)
-            with contextlib.suppress(OSError):
-                os.close(slave_fd)
-            raise OpencodeError("opencode_missing", "opencode executable not found") from err
-        os.close(slave_fd)
-        return proc, master_fd
-
-    def _spawn_pipe(self, cmd, env, log_fh, cwd=None):
-        """Legacy pipe-mode spawn (no pty)."""
+        """Spawn the OpenCode 2.x child with standard pipes."""
         try:
             return subprocess.Popen(
-                cmd, cwd=cwd or self.repo, env=env,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                cmd,
+                cwd=cwd or self.repo,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
                 stderr=log_fh if log_fh else subprocess.PIPE,
-                text=True, start_new_session=True,
+                text=True,
+                start_new_session=True,
             )
         except FileNotFoundError as err:
             raise OpencodeError("opencode_missing", "opencode executable not found") from err
 
-    @staticmethod
-    def _close_master(master_fd):
-        """Close the pty master fd when open (idempotent no-op otherwise)."""
-        if master_fd is not None:
-            with contextlib.suppress(OSError):
-                os.close(master_fd)
+    def _open_stream_log(self, pid: int):
+        """Open a live NDJSON activity log under .tracks/runtime/opencode-logs/."""
+        try:
+            runtime_dir = paths.tracks_home(self.repo) / "runtime"
+            log_dir = runtime_dir / "opencode-logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            gitignore = runtime_dir / ".gitignore"
+            if not gitignore.exists():
+                gitignore.write_text("*\n", encoding="utf-8")
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            return open(log_dir / f"stream-{ts}-{pid}.jsonl", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        except OSError:
+            return None
 
     def _build_cmd(self, name: str, prompt: str, key: str | None = None) -> list[str]:
-        cmd = ["opencode", "run", "--agent", name, "--format", "json",
-               "--dir", str(self.repo), "--auto", prompt]
-        # D-42：按工作单元键续传（同键一律续传——infra/format/revise 统一，
-        # FR-11 证据注入纠偏；压缩闭环控尺寸。设计：
-        # .tracks/projects/v0.9/oob/2026-09-19-session-lifecycle.md）。
+        cmd = [
+            "opencode",
+            "run",
+            "--agent",
+            name,
+            "--format",
+            "json",
+            "--archived",
+            "--auto",
+            prompt,
+        ]
         session = (self._session_for(key or name) or {}).get("session_id")
         if session:
             cmd.extend(["--session", session])
@@ -264,30 +232,21 @@ class OpencodeRunMixin:
         if model:
             cmd.extend(["--model", model])
         if self.debug:
-            cmd.extend(["--print-logs", "--log-level", "DEBUG"])
+            cmd.extend(["--print-logs", "--log-level", "debug"])
         return cmd
 
     @staticmethod
-    def _start_stdin_pump(proc, console_input, master_fd=None):
-        """Write console_input to the child's stdin in a background thread.
-
-        PTY mode writes to master_fd (the child reads the slave side) and must
-        not close it: _stream_stdout keeps reading from it afterwards.
-        """
+    def _start_stdin_pump(proc, console_input):
+        """Write console_input to the child's stdin in a background thread."""
         if console_input is None:
-            # PTY mode owns stdin through master_fd, but closing an exposed
-            # proc.stdin handle still signals EOF for pipe-mode/test doubles.
             with contextlib.suppress(AttributeError, OSError, ValueError):
                 proc.stdin.close()
             return None
 
         def _write():
             try:
-                if master_fd is not None and getattr(proc, "stdin", None) is None:
-                    os.write(master_fd, console_input.encode("utf-8", "replace"))
-                else:
-                    proc.stdin.write(console_input)
-                    proc.stdin.flush()
+                proc.stdin.write(console_input)
+                proc.stdin.flush()
             except (OSError, ValueError):
                 pass
             finally:
@@ -319,18 +278,14 @@ class OpencodeRunMixin:
         t.start()
         return t, stderr_lines
 
-    def _stream_stdout(self, proc, inactivity_timeout, master_fd=None):
-        """Stream child output via os.read, detecting manifest in real-time.
-
-        Reads from master_fd in PTY mode (proc.stdout is None there) or from
-        proc.stdout in legacy pipe mode. Timeout is inactivity-based: fires
-        only when no output is received for the given seconds. Returns
-        (chunks, manifest_found, stalled); a stall must surface as an infra
-        timeout, never as a truncated-but-accepted outcome.
-        """
+    def _stream_stdout(self, proc, inactivity_timeout, stream_fh=None):
+        """Stream child stdout via os.read, detecting manifest and teeing live logs."""
         chunks: list[str] = []
         buf = ""
-        read_fd = master_fd if master_fd is not None else proc.stdout.fileno()
+        stdout_obj = getattr(proc, "stdout", None)
+        if stdout_obj is None:
+            return chunks, False, False
+        read_fd = stdout_obj.fileno()
         last_activity = time.monotonic()
         stalled = False
         while True:
@@ -343,33 +298,35 @@ class OpencodeRunMixin:
                     break
                 if not raw:
                     break
-                buf, found = self._process_stdout_chunk(raw, buf, chunks)
+                buf, found = self._process_stdout_chunk(raw, buf, chunks, stream_fh)
                 if found:
                     return chunks, True, False
             elif proc.poll() is not None:
-                self._drain_stdout(proc, chunks, read_fd)
+                self._drain_stdout(proc, chunks, read_fd, stream_fh)
                 break
             elif time.monotonic() - last_activity > inactivity_timeout:
                 stalled = True
                 break
-        # An unterminated final line (no trailing newline) is truncation
-        # evidence: keep it so _check_json can classify the stream.
         if buf:
             chunks.append(buf)
+            self._tee_stream(stream_fh, buf)
         return chunks, False, stalled
 
     @staticmethod
-    def _process_stdout_chunk(raw, buf, chunks):
-        """Decode chunk, extract complete lines, check for manifest.
-        Returns (updated_buf, manifest_found)."""
-        text = raw.decode("utf-8", errors="replace")
-        # pty ONLCR turns \n into \r\n; normalize back so downstream
-        # line-wise JSON parsing sees the same stream as pipe mode.
-        buf += text.replace("\r\n", "\n")
+    def _tee_stream(stream_fh, text: str) -> None:
+        if stream_fh is not None and text:
+            with contextlib.suppress(OSError):
+                stream_fh.write(text)
+
+    @staticmethod
+    def _process_stdout_chunk(raw, buf, chunks, stream_fh=None):
+        """Decode chunk, extract complete lines, tee to live log, check manifest."""
+        buf += raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
         while "\n" in buf:
             line, buf = buf.split("\n", 1)
             line += "\n"
             chunks.append(line)
+            OpencodeRunMixin._tee_stream(stream_fh, line)
             if OpencodeRunMixin._line_has_manifest(line):
                 return buf, True
         return buf, False
@@ -396,19 +353,19 @@ class OpencodeRunMixin:
         return isinstance(msg, str) and msg.strip()
 
     @staticmethod
-    def _drain_stdout(proc, chunks, read_fd=None):
+    def _drain_stdout(proc, chunks, read_fd=None, stream_fh=None):
         """Read remaining output after process exit."""
         try:
-            if read_fd is not None:
-                while True:
-                    raw = os.read(read_fd, 65536)
-                    if not raw:
-                        break
-                    chunks.append(raw.decode("utf-8", errors="replace").replace("\r\n", "\n"))
-            else:
+            if read_fd is None:
                 remaining = proc.stdout.read()
                 if remaining:
                     chunks.append(remaining)
+                    OpencodeRunMixin._tee_stream(stream_fh, remaining)
+                return
+            while raw := os.read(read_fd, 65536):
+                text = raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
+                chunks.append(text)
+                OpencodeRunMixin._tee_stream(stream_fh, text)
         except (OSError, ValueError):
             pass
 

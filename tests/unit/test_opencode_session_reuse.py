@@ -177,7 +177,7 @@ def test_sessions_file_content_shape(tmp_path):
     assert data["Devon"]["ctx_tokens"] is None
 
 
-# -- D-42 会话生命周期：工作单元键 / 压缩闭环 --------------------------------------
+# -- D-42 会话生命周期：工作单元键 / 高水位重置 --------------------------------------
 
 
 def test_session_key_work_units():
@@ -252,58 +252,52 @@ def test_record_ctx_tokens_resets_compacted_flag_after_shrink(tmp_path):
     assert b._session_for("k")["ctx_tokens"] == 100_000
 
 
-def test_maybe_compact_compacts_at_threshold(tmp_path, monkeypatch):
-    """达到 85% 阈值触发压缩并标记；压缩失败弃会话。"""
+def test_maybe_compact_resets_session_at_high_water(tmp_path, monkeypatch):
+    """OpenCode 2.x: Tracks drops the session at >= 85% of the absolute
+    ceiling (native ``compaction.auto`` handles routine compaction)."""
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_PCT", raising=False)
     b = _backend(tmp_path)
-    calls = []
-
-    def fake_compact(sid):
-        calls.append(sid)
-        return True
-
-    monkeypatch.setattr(b, "_run_compact", fake_compact)
-    monkeypatch.setattr(
-        b, "_model_ctx_limits", lambda: {"napi/hy4": 1_000_000}
-    )
     b._record_session("devon:task:T-001", "ses_d")
-    b._record_ctx_tokens("devon:task:T-001", 860_000)  # >= 85% of 1M
+    b._record_ctx_tokens("devon:task:T-001", 170_000)  # 85% of 200K
     b._maybe_compact("devon:task:T-001", "napi/hy4")
-    assert calls == ["ses_d"]
-    assert b._session_for("devon:task:T-001")["compacted"] is True
-
-    # 压缩失败 → 弃会话
-    b._record_session("devon:task:T-002", "ses_e")
-    b._record_ctx_tokens("devon:task:T-002", 860_000)
-    monkeypatch.setattr(b, "_run_compact", lambda sid: False)
-    b._maybe_compact("devon:task:T-002", "napi/hy4")
-    assert b._session_for("devon:task:T-002") is None
+    assert b._session_for("devon:task:T-001") is None
+    assert _backend(tmp_path)._session_for("devon:task:T-001") is None
 
 
-def test_maybe_compact_below_threshold_or_unknown_model_is_noop(tmp_path, monkeypatch):
-    monkeypatch.setenv("TRAC_SESSION_COMPACT_ABS_TOKENS", "0")
+def test_maybe_compact_below_threshold_keeps_session(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_PCT", raising=False)
     b = _backend(tmp_path)
-    monkeypatch.setattr(
-        b, "_model_ctx_limits", lambda: {"napi/hy4": 1_000_000}
-    )
-    monkeypatch.setattr(b, "_run_compact", lambda sid: (_ for _ in ()).throw(AssertionError))
     b._record_session("k", "ses_f")
-    b._record_ctx_tokens("k", 500_000)  # 50%：不动
+    b._record_ctx_tokens("k", 169_000)  # just under 85% of 200K
     b._maybe_compact("k", "napi/hy4")
     assert b._session_for("k")["session_id"] == "ses_f"
-    # 模型未知 + 绝对上限兜底关闭（=0）：保持旧 fail-open 不压缩。
-    # #132 OOB (2026-09-27)：默认（未关）时未知模型改走绝对上限——
-    # 见 test_maybe_compact_absolute_ceiling_when_model_unresolved。
-    b._maybe_compact("k", None)
-    assert b._session_for("k")["session_id"] == "ses_f"
 
 
-def test_maybe_compact_clears_when_already_compacted_at_size(tmp_path, monkeypatch):
-    """上次压缩未把尺寸压回阈值下：本次直接弃会话，不再压缩。"""
+def test_maybe_compact_skips_without_session_or_ctx(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
     b = _backend(tmp_path)
-    monkeypatch.setattr(b, "_model_ctx_limits", lambda: {"m": 1_000_000})
+    b._maybe_compact("missing", "m")  # no entry at all
+    b._record_session("no-ctx", "ses_n")
+    b._maybe_compact("no-ctx", "m")  # ctx_tokens is None
+    assert b._session_for("no-ctx")["session_id"] == "ses_n"
+    entry = b._session_for("no-ctx")
+    for bad in (0, -5, "120000"):
+        entry["ctx_tokens"] = bad
+        b._save_sessions()
+        b._maybe_compact("no-ctx", "m")
+        assert b._session_for("no-ctx")["session_id"] == "ses_n"
+
+
+def test_maybe_compact_clears_even_when_compacted_flag_set(tmp_path, monkeypatch):
+    """The V1 compact-then-measure loop guard is gone; a high-water session is
+    dropped regardless of the stale ``compacted`` marker."""
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
+    b = _backend(tmp_path)
     b._record_session("k", "ses_g")
     entry = b._session_for("k")
-    entry["ctx_tokens"] = 860_000
+    entry["ctx_tokens"] = 190_000
     entry["compacted"] = True
     b._save_sessions()
     b._maybe_compact("k", "m")
@@ -335,6 +329,45 @@ def test_clear_workunit_session_disabled_reuse_is_false(tmp_path, monkeypatch):
 
 
 def test_effective_model_reads_per_agent_config(tmp_path):
+    """OpenCode 2.x config key is ``agents`` (not V1 ``agent``)."""
+    b = _backend(tmp_path)
+    cfg = tmp_path / ".opencode"
+    cfg.mkdir()
+    (cfg / "opencode.json").write_text(
+        json.dumps({"agents": {"Archer": {"model": "napi/hy4"}}}),
+        encoding="utf-8",
+    )
+    assert b._effective_model("Archer") == "napi/hy4"
+    assert b._effective_model("Unknown") is None
+    b.model = "explicit/override"
+    assert b._effective_model("Archer") == "explicit/override"
+
+
+def test_effective_model_strips_variant_and_accepts_dict(tmp_path):
+    b = _backend(tmp_path)
+    cfg = tmp_path / ".opencode"
+    cfg.mkdir()
+    (cfg / "opencode.json").write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "archer": {"model": "napi/hy4#thinking"},
+                    "Sage": {"model": {"providerID": "napi", "model": "hy4"}},
+                    "Scribe": {"model": 42},
+                    "Lex": "nope",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert b._effective_model("Archer") == "napi/hy4"
+    assert b._effective_model("Sage") == "napi/hy4"
+    assert b._effective_model("Scribe") is None
+    assert b._effective_model("Lex") is None
+
+
+def test_effective_model_ignores_legacy_agent_key(tmp_path):
+    """Zero 1.x compatibility: a V1 ``agent`` block resolves to nothing."""
     b = _backend(tmp_path)
     cfg = tmp_path / ".opencode"
     cfg.mkdir()
@@ -342,10 +375,18 @@ def test_effective_model_reads_per_agent_config(tmp_path):
         json.dumps({"agent": {"Archer": {"model": "napi/hy4"}}}),
         encoding="utf-8",
     )
-    assert b._effective_model("Archer") == "napi/hy4"
-    assert b._effective_model("Unknown") is None
-    b.model = "explicit/override"
-    assert b._effective_model("Archer") == "explicit/override"
+    assert b._effective_model("Archer") is None
+
+
+def test_effective_model_missing_or_bad_config(tmp_path):
+    b = _backend(tmp_path)
+    assert b._effective_model("Archer") is None  # no .opencode/opencode.json
+    cfg = tmp_path / ".opencode"
+    cfg.mkdir()
+    (cfg / "opencode.json").write_text("{ not json", encoding="utf-8")
+    assert b._effective_model("Archer") is None
+    (cfg / "opencode.json").write_text(json.dumps({"agents": []}), encoding="utf-8")
+    assert b._effective_model("Archer") is None
 
 
 # -- #132 OOB（2026-09-27）：分类接线 + 绝对上限兜底 ------------------------------
@@ -392,43 +433,54 @@ def test_classify_run_transient_provider_keeps_session(tmp_path):
 
 
 def test_maybe_compact_absolute_ceiling_when_model_unresolved(tmp_path, monkeypatch):
-    """model 窗口不可解析（默认双层解析，TRAC_AGENT_MODEL 未设）→ 绝对上限
-    兜底触发压缩，而不是 fail-open 跳过（run 01M3E7SAANXKW1V73W8B8Q3G86：
-    319K/400K token 会话从未压缩）。"""
+    """model 窗口不可解析时，绝对上限兜底（run 01M3E7SAANXKW1V73W8B8Q3G86：
+    319K/400K token 会话从未压缩）。OpenCode 2.x: 超限直接弃会话冷启动。"""
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
     b = _backend(tmp_path)
     b._record_session("Archer", "ses_big")
     b._record_ctx_tokens("Archer", 250_000)
-    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
     b._maybe_compact("Archer", None)
-    assert b._session_for("Archer")["compacted"] is True
+    assert b._session_for("Archer") is None
 
 
 def test_maybe_compact_abs_ceiling_zero_restores_fail_open(tmp_path, monkeypatch):
-    """TRAC_SESSION_COMPACT_ABS_TOKENS=0 → 恢复旧 fail-open（逃生开关）。"""
+    """TRAC_SESSION_COMPACT_ABS_TOKENS=0 → 旧 fail-open（逃生开关）。"""
     monkeypatch.setenv("TRAC_SESSION_COMPACT_ABS_TOKENS", "0")
     b = _backend(tmp_path)
     b._record_session("Archer", "ses_big")
     b._record_ctx_tokens("Archer", 250_000)
-    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
     b._maybe_compact("Archer", None)
     entry = b._session_for("Archer")
     assert entry["session_id"] == "ses_big"
     assert entry["compacted"] is False
 
 
-def test_maybe_compact_abs_ceiling_resolved_model_still_wins(tmp_path, monkeypatch):
-    """模型窗口可解析时沿用窗口阈值，绝对上限不介入。"""
+def test_maybe_compact_pct_env_overrides_threshold(tmp_path, monkeypatch):
+    """TRAC_SESSION_COMPACT_PCT 可调阈值（默认 85）。"""
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
+    monkeypatch.setenv("TRAC_SESSION_COMPACT_PCT", "50")
     b = _backend(tmp_path)
     b._record_session("Archer", "ses_mid")
-    b._record_ctx_tokens("Archer", 250_000)
-    monkeypatch.setattr(
-        b, "_model_ctx_limits", lambda: {"napi/hy4": 1_048_576}
-    )
-    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
+    b._record_ctx_tokens("Archer", 100_000)  # 50% of 200K
     b._maybe_compact("Archer", "napi/hy4")
-    entry = b._session_for("Archer")
-    # 250K < 85% × 1M 窗口 → 不压缩
-    assert entry["compacted"] is False
+    assert b._session_for("Archer") is None
+
+
+def test_maybe_compact_bad_pct_env_falls_back_to_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRAC_SESSION_COMPACT_ABS_TOKENS", raising=False)
+    monkeypatch.setenv("TRAC_SESSION_COMPACT_PCT", "not-a-number")
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_mid")
+    b._record_ctx_tokens("Archer", 100_000)  # under 85% of 200K
+    b._maybe_compact("Archer", "napi/hy4")
+    assert b._session_for("Archer")["session_id"] == "ses_mid"
+
+
+def test_maybe_compact_disabled_reuse_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRAC_AGENT_SESSION_REUSE", "0")
+    b = _backend(tmp_path)
+    b._maybe_compact("Archer", None)  # no registry access at all
+    assert b._session_for("Archer") is None
 
 
 def test_classify_run_routes_by_work_unit_key_and_preserves_class(tmp_path):

@@ -44,15 +44,17 @@ def test_generated_live_host_config_denies_external_directory():
 
     generated = _host_config(config)
 
-    assert generated["permission"]["external_directory"] == "deny"
+    assert {
+        "action": "external_directory",
+        "resource": "*",
+        "effect": "deny",
+    } in generated["permissions"]
 
 
-def test_generated_live_host_config_allows_noninteractive_bash_and_edit():
-    """Headless opencode hangs forever when its first bash/edit tool call lands
-    in interactive ``ask`` state (no tty can ever approve). The generated host
-    config must pre-approve bash/edit so non-interactive runs never block on
-    permission prompts, while external_directory stays denied by default and no
-    other permission keys are emitted."""
+def test_generated_live_host_config_allows_noninteractive_shell_and_edit():
+    """Headless opencode hangs when shell/edit falls into interactive ask.
+    The generated V2 host config must pre-approve shell/edit while denying
+    external_directory."""
     config = {
         "TRAC_LIVE_PROVIDER": "provider",
         "TRAC_LIVE_MODEL": "model",
@@ -62,11 +64,12 @@ def test_generated_live_host_config_allows_noninteractive_bash_and_edit():
 
     generated = _host_config(config)
 
-    permission = generated["permission"]
-    assert permission["external_directory"] == "deny"
-    assert permission["bash"] == {"*": "allow"}
-    assert permission["edit"] == {"*": "allow"}
-    assert set(permission) == {"external_directory", "bash", "edit"}
+    permissions = generated["permissions"]
+    assert permissions == [
+        {"action": "external_directory", "resource": "*", "effect": "deny"},
+        {"action": "shell", "resource": "*", "effect": "allow"},
+        {"action": "edit", "resource": "*", "effect": "allow"},
+    ]
 
 
 def _ready_spec(repo):

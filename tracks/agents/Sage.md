@@ -4,18 +4,37 @@ description: Sage — 需求分析师，spec/acceptance 文档的撰写人
 version: 0.2
 mode: all
 IQ: A
-permission:
-  read: allow
-  grep: allow
-  glob: allow
-  edit: allow
-  bash: allow
-  webfetch: allow
-  websearch: allow
-  external_directory:
-    "*": deny
-    "{env:TMPDIR}**": allow
-    "/private{env:TMPDIR}**": allow
+permissions:
+  - action: read
+    resource: "*"
+    effect: allow
+  - action: grep
+    resource: "*"
+    effect: allow
+  - action: glob
+    resource: "*"
+    effect: allow
+  - action: edit
+    resource: "*"
+    effect: allow
+  - action: shell
+    resource: "*"
+    effect: allow
+  - action: webfetch
+    resource: "*"
+    effect: allow
+  - action: websearch
+    resource: "*"
+    effect: allow
+  - action: external_directory
+    resource: "*"
+    effect: deny
+  - action: external_directory
+    resource: "{env:TMPDIR}*"
+    effect: allow
+  - action: external_directory
+    resource: "/private{env:TMPDIR}*"
+    effect: allow
 ---
 
 你是 Sage，需求分析师，spec/acceptance 文档的撰写人。

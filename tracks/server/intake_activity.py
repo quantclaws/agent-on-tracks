@@ -1,11 +1,10 @@
-"""Read-only intake activity timeline from opencode event logs (OOB face).
+"""Read-only intake activity timeline from OpenCode 2.x JSONL event streams.
 
 ``GET /api/projects/{pid}/intakes/{intake_id}/activity`` replays the Scribe
-intake-evaluation session whose dispatched opencode subprocess wrote its
-event log to ``<repo>/.opencode/logs/*.jsonl`` (``OPENCODE_LOGGER_DIR``,
-relative to the dispatch cwd = the project repo). Rows carrying
-``intakes/<intake_id>/`` mark the session; every part row of that session
-becomes a timeline item.
+intake-evaluation session whose dispatched opencode subprocess streamed its
+NDJSON events to ``<repo>/.tracks/runtime/opencode-logs/*.jsonl``. Rows
+carrying ``intakes/<intake_id>/`` mark the session; every part row of that
+session becomes a timeline item.
 
 Polling-grade read path: a module-level cache keeps per-file parse state
 (size / consumed offset / trailing partial line / items by session / intake
@@ -20,9 +19,11 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from tracks import paths as tracks_paths
 
 _MAX_FILES = 3  # newest log files scanned per request
 _CACHE_FILES = 6  # cached file states (module-level incremental cache)
@@ -63,12 +64,23 @@ def _ts_key(ts: str) -> float:
         return 0.0
 
 
+def _ts_text(ts: Any) -> str:
+    if isinstance(ts, str):
+        return ts
+    if isinstance(ts, (int, float)) and ts > 0:
+        seconds = ts / 1000.0 if ts > 1e11 else float(ts)
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+    return ""
+
+
 def _tool_label(name: str, given: dict[str, Any]) -> str:
-    target = given.get("filePath")
+    target = given.get("path") or given.get("filePath")
     if name == "read" and isinstance(target, str) and target:
         return f"读取 {target}"
     command = given.get("command")
-    if name == "bash" and isinstance(command, str) and command.strip():
+    if name == "shell" and isinstance(command, str) and command.strip():
         return f"执行 {' '.join(command.split())[:80]}"
     pattern = given.get("pattern")
     if name in ("grep", "glob") and isinstance(pattern, str) and pattern:
@@ -99,8 +111,8 @@ def _tool_item(part: dict[str, Any], ts_text: str) -> dict[str, Any]:
 
 
 def _part_item(part: dict[str, Any], ts: Any) -> dict[str, Any] | None:
-    """One timeline item from a ``message.part.updated`` part (None = skip)."""
-    ts_text = ts if isinstance(ts, str) else ""
+    """One timeline item from an OpenCode 2.x JSONL event part (None = skip)."""
+    ts_text = _ts_text(ts)
     ptype = part.get("type")
     if ptype == "text":
         return {
@@ -140,21 +152,20 @@ def _part_item(part: dict[str, Any], ts: Any) -> dict[str, Any] | None:
 
 
 def _envelope(line: str) -> tuple[str, dict[str, Any], Any] | None:
-    """The (sessionID, props, timestamp) of one log line (None = skip)."""
+    """The (sessionID, part, timestamp) of one OpenCode 2.x NDJSON line."""
     try:
         obj = json.loads(line)
     except ValueError:
         return None
     if not isinstance(obj, dict):
         return None
-    payload = obj.get("payload")
-    props = payload.get("properties") if isinstance(payload, dict) else None
-    if not isinstance(props, dict):
+    part = obj.get("part")
+    if not isinstance(part, dict):
         return None
-    session = props.get("sessionID")
+    session = obj.get("sessionID") or part.get("sessionID")
     if not isinstance(session, str) or not session:
         return None
-    return session, props, obj.get("timestamp")
+    return session, part, obj.get("timestamp")
 
 
 def _mark_intakes(line: str, session: str, state: _FileState) -> None:
@@ -170,17 +181,14 @@ def _mark_intakes(line: str, session: str, state: _FileState) -> None:
 
 
 def _fold_part(
-    props: dict[str, Any], ts: Any, session: str, state: _FileState
+    part: dict[str, Any], ts: Any, session: str, state: _FileState
 ) -> None:
-    """Fold one ``message.part.updated`` part into the session bucket."""
-    part = props.get("part")
-    if not isinstance(part, dict):
-        return
+    """Fold one OpenCode 2.x event part into the session bucket."""
     item = _part_item(part, ts)
     if item is None:
         return
     bucket = state.items.setdefault(session, {})
-    key = part.get("id")
+    key = part.get("id") or part.get("partID")
     if not isinstance(key, str) or not key:
         key = f"noid-{len(bucket)}"
     if len(bucket) >= _MAX_ITEMS_SESSION and key not in bucket:
@@ -189,21 +197,15 @@ def _fold_part(
 
 
 def _parse_line(line: str, state: _FileState) -> None:
-    """Fold one log line into the file state (session mark and/or item)."""
-    if (
-        "message.part.updated" not in line
-        and "intakes/" not in line
-        and ".tracks/projects/" not in line
-    ):
+    """Fold one OpenCode 2.x NDJSON log line into the file state."""
+    if not line.lstrip().startswith("{"):
         return
     found = _envelope(line)
     if found is None:
         return
-    session, props, ts = found
+    session, part, ts = found
     _mark_intakes(line, session, state)
-    if "message.part.updated" not in line:
-        return
-    _fold_part(props, ts, session, state)
+    _fold_part(part, ts, session, state)
 
 
 def _reset_state(state: _FileState) -> None:
@@ -270,7 +272,8 @@ def _ingest(path: Path) -> _FileState:
 def _log_files(repo: Path) -> list[Path]:
     """The newest ``_MAX_FILES`` ``*.jsonl`` logs, oldest-first."""
     try:
-        files = [p for p in (repo / ".opencode" / "logs").glob("*.jsonl") if p.is_file()]
+        log_dir = tracks_paths.tracks_home(repo) / "runtime" / "opencode-logs"
+        files = [p for p in log_dir.glob("*.jsonl") if p.is_file()]
     except OSError:
         return []
 

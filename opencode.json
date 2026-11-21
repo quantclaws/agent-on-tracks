@@ -1,11 +1,33 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "permission": {
-    "external_directory": {
-      "*": "deny",
-      "/tmp/tracks/**": "allow",
-      "/private/tmp/tracks/**": "allow"
+  "permissions": [
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "external_directory",
+      "resource": "/tmp/tracks/*",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "/private/tmp/tracks/*",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "{env:TMPDIR}*",
+      "effect": "allow"
+    },
+    {
+      "action": "external_directory",
+      "resource": "/private{env:TMPDIR}*",
+      "effect": "allow"
     }
-  },
-  "plugin": ["./.opencode/local-plugins/opencode-prompt-tracker.js", "opencode-logger"]
+  ],
+  "compaction": {
+    "auto": true
+  }
 }

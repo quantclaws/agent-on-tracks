@@ -1,61 +1,33 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "Archer": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
+  "permissions": [
+    {
+      "action": "external_directory",
+      "resource": "*",
+      "effect": "deny"
     },
-    "Scribe": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
+    {
+      "action": "external_directory",
+      "resource": "/tmp/tracks/*",
+      "effect": "allow"
     },
-    "Sage": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
+    {
+      "action": "external_directory",
+      "resource": "/private/tmp/tracks/*",
+      "effect": "allow"
     },
-    "Lex": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
+    {
+      "action": "external_directory",
+      "resource": "{env:TMPDIR}tracks/*",
+      "effect": "allow"
     },
-    "Prism": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
-    },
-    "Devon": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
-    },
-    "Shield": {
-      "permission": {
-        "external_directory": {
-          "*": "deny",
-          "{env:TMPDIR}tracks/*": "allow"
-        }
-      }
+    {
+      "action": "external_directory",
+      "resource": "/private{env:TMPDIR}tracks/*",
+      "effect": "allow"
     }
+  ],
+  "compaction": {
+    "auto": true
   }
 }

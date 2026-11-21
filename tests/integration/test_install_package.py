@@ -85,18 +85,16 @@ def test_scaffold_package_resources_declared():
     config = json.loads(
         (PROJECT_ROOT / "tracks" / "assets" / "opencode.json").read_text(encoding="utf-8")
     )
-    agents = config.get("agent")
-    assert isinstance(agents, dict), "the default opencode.json carries agent blocks"
-    assert set(agents) == set(_AGENT_ROLES), (
-        f"the seven tracks agents must be declared: {sorted(agents)}"
-    )
-    for role, block in agents.items():
-        permission = (block.get("permission") or {}).get("external_directory")
-        assert permission == {"*": "deny", "{env:TMPDIR}tracks/*": "allow"}, (
-            f"{role} must deny all external dirs except the tracks temp root: {permission!r}"
-        )
+    permissions = config.get("permissions")
+    assert isinstance(permissions, list), "the default opencode.json carries V2 permissions rules"
+    assert {"action": "external_directory", "resource": "*", "effect": "deny"} in permissions
+    assert {
+        "action": "external_directory",
+        "resource": "{env:TMPDIR}tracks/*",
+        "effect": "allow",
+    } in permissions
     serialized = json.dumps(config)
-    for forbidden in ('"model"', '"provider"', '"plugin"'):
+    for forbidden in ('"model"', '"provider"', '"providers"', '"plugin"', '"plugins"', '"agent"'):
         assert forbidden not in serialized, (
             f"the default harness config must not ship {forbidden}"
         )
