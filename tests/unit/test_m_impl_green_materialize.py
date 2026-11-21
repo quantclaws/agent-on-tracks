@@ -309,6 +309,42 @@ def test_commit_green_does_not_include_red_test_diff_in_g(tmp_path):
     )
 
 
+def test_complete_task_commits_devon_red_unit_tests_to_release_branch(tmp_path):
+    """After G is committed and task completes, Devon's RED unit tests must be
+    committed onto the release branch so downstream worktrees, remote CI, and
+    the final release include them (while G itself stays B + impl_diff only)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task(repo)
+    executor = Executor(store, repo, "RUN")
+    r_sha = _run_red(executor, store)
+    unit_file = repo / "tests" / "unit" / "test_app.py"
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_file.write_text("def test_app():\n    assert True\n", encoding="utf-8")
+    _stage_green(executor, store, r_sha)
+    payload = _commit_green(executor, store)
+
+    # G itself stays product-only; unit test is still untracked before completion.
+    assert "tests/unit/test_app.py" not in _git(
+        repo, "ls-tree", "-r", "--name-only", payload["g_sha"]
+    )
+    assert _git(repo, "status", "--porcelain", "--", "tests/unit/test_app.py")
+
+    executor._do_complete_task(
+        Command("complete_task", {"task_id": task["task_id"]}, command_id="C-DONE"),
+        store.state("RUN"),
+        task["task_id"],
+        False,
+    )
+
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head != payload["g_sha"]
+    assert "tests/unit/test_app.py" in _git(repo, "ls-tree", "-r", "--name-only", head)
+    assert _git(repo, "status", "--porcelain", "--", "tests/unit/test_app.py") == ""
+    msg = _git(repo, "log", "-1", "--format=%B", head)
+    assert f"Tracks-Task: {task['task_id']}" in msg
+    assert f"Tracks-R: {r_sha}" in msg
+
+
 # -- idempotent recovery ------------------------------------------------------
 
 

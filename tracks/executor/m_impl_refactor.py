@@ -196,3 +196,68 @@ class MImplRefactorMixin:
                 },
                 command_id=cmd.command_id,
             )
+
+    def _commit_task_red_unit_tests(self, task_id: str | None, events: list) -> str | None:
+        """Persist Devon's RED unit tests onto the release branch at task completion.
+
+        ``G`` (``GREEN: <task_id>``) deliberately contains only ``B + impl_diff``
+        so R-before-G lineage stays product-only while RED unit tests live in
+        the detached ``refs/trac/rgr/.../red`` ref and as untracked files on
+        disk. Committing those RED unit-test paths once the task passes
+        ``PRISM_FINAL`` guarantees subsequent task worktrees, remote CI runs,
+        and the final release all include Devon's unit tests.
+        """
+        if not task_id:
+            return None
+        r_sha = self._latest_task_red_sha(task_id, events)
+        if not r_sha:
+            return None
+        to_commit = self._pending_red_unit_paths(r_sha)
+        if not to_commit:
+            return None
+        git(self.repo, "add", "--", *to_commit, check=False)
+        from tracks.executor.executor import _scoped_commit_if_staged
+
+        message = (
+            f"M-IMPL: commit unit tests for {task_id}\n\n"
+            f"Tracks-Task: {task_id}\n"
+            f"Tracks-R: {r_sha}"
+        )
+        proc = _scoped_commit_if_staged(
+            self.repo, message, paths=to_commit, hooks=True
+        )
+        if proc is None or proc.returncode != 0:
+            return None
+        return git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip() or None
+
+    @staticmethod
+    def _latest_task_red_sha(task_id: str, events: list) -> str | None:
+        for ev in reversed(events):
+            payload = ev.payload if isinstance(ev.payload, dict) else {}
+            if (
+                ev.type == "red.checkpointed"
+                and payload.get("task_id") == task_id
+                and payload.get("sanction") != "shield_fix"
+                and isinstance(payload.get("r_sha"), str)
+                and payload["r_sha"].strip()
+            ):
+                return payload["r_sha"].strip()
+        return None
+
+    def _pending_red_unit_paths(self, r_sha: str) -> list[str]:
+        diff = git(self.repo, "diff", "--name-only", f"{r_sha}^", r_sha, check=False)
+        if diff.returncode != 0:
+            return []
+        raw_dirs = getattr(self, "_devon_red_test_dirs", None)
+        dirs = (raw_dirs() if callable(raw_dirs) else None) or ["tests/unit/"]
+        allowed = tuple(d.rstrip("/") + "/" for d in dirs if isinstance(d, str) and d.strip())
+        pending: list[str] = []
+        for rel in sorted({ln.strip() for ln in diff.stdout.splitlines() if ln.strip()}):
+            if not any(rel.startswith(prefix) for prefix in allowed):
+                continue
+            if not (self.repo / rel).is_file():
+                continue
+            status = git(self.repo, "status", "--porcelain", "--", rel, check=False)
+            if status.returncode == 0 and status.stdout.strip():
+                pending.append(rel)
+        return pending
